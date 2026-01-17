@@ -6,7 +6,5 @@ build/
 *.tmp
 *.temp
 
-prompt.txt
-
 subfolder_name/
 subfolder_name/filename.txt
