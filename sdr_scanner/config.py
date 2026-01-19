@@ -32,10 +32,6 @@ class RecordingConfig(BaseModel):
 	disk_flush_interval_seconds: float = Field(default=5.0, gt=0.0)
 	audio_sample_rate: int = Field(default=16000, gt=0)
 	audio_output_dir: str = './audio'
-	broadcast_wav_format: bool = True
-	default_description: str | None = None
-	originator: str = 'SDR Scanner'
-	include_coding_history: bool = True
 	fade_in_ms: float | None = Field(default=None, ge=0.0)
 	fade_out_ms: float | None = Field(default=None, ge=0.0)
 

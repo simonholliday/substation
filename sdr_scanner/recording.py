@@ -5,6 +5,7 @@ Channel recording management with Broadcast WAV format support
 import asyncio
 import collections
 import datetime
+import json
 import logging
 import numpy
 import numpy.typing
@@ -33,11 +34,7 @@ class ChannelRecorder:
 		buffer_size_seconds: float,
 		disk_flush_interval_seconds: float,
 		audio_output_dir: str,
-		modulation: str = "Unknown",
-		broadcast_wav_format: bool = True,
-		description: str = "",
-		originator: str = "SDR Scanner",
-		include_coding_history: bool = True
+		modulation: str = "Unknown"
 	) -> None:
 		"""
 		Initialize a channel recorder
@@ -51,10 +48,6 @@ class ChannelRecorder:
 			disk_flush_interval_seconds: How often to flush to disk
 			audio_output_dir: Output directory path
 			modulation: Modulation type (e.g., 'NFM', 'AM')
-			broadcast_wav_format: Enable Broadcast WAV format with BEXT chunk
-			description: Description string for BEXT metadata
-			originator: Originator string for BEXT metadata
-			include_coding_history: Include coding history in BEXT
 		"""
 		self.channel_freq = channel_freq
 		self.channel_index = channel_index
@@ -62,7 +55,6 @@ class ChannelRecorder:
 		self.audio_sample_rate = audio_sample_rate
 		self.disk_flush_interval = disk_flush_interval_seconds
 		self.modulation = modulation
-		self.broadcast_wav_format = broadcast_wav_format
 
 		# Calculate maximum buffer size in samples
 		max_buffer_samples = int(buffer_size_seconds * audio_sample_rate)
@@ -80,12 +72,6 @@ class ChannelRecorder:
 		seconds_since_midnight = (self.start_time - midnight).total_seconds()
 		self.time_reference = int(seconds_since_midnight * audio_sample_rate)
 
-		# Broadcast WAV metadata
-		self.description = description if description else f"{band_name.upper()} Channel {channel_index} - {channel_freq/1e6:.5f} MHz"
-		self.originator = originator
-		self.originator_reference = str(uuid.uuid4())[:32]  # Truncate to 32 chars
-		self.include_coding_history = include_coding_history
-
 		date_str = self.start_time.strftime("%Y-%m-%d")
 		time_str = self.start_time.strftime("%H-%M-%S")
 		filename = f"{date_str}_{time_str}_{band_name}_{channel_index}.wav"
@@ -95,48 +81,52 @@ class ChannelRecorder:
 		os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
 
 		# Open WAV file for writing using soundfile (supports Broadcast WAV)
-		if self.broadcast_wav_format:
-			# Prepare BEXT metadata for soundfile
-			# Note: soundfile uses 'extra_info' parameter for BEXT chunk
-			coding_history = ""
-			if self.include_coding_history:
-				coding_history = (
-					f"A=PCM,F={audio_sample_rate},W=16,M=mono,T={modulation};"
-					f"Frequency={channel_freq/1e6:.5f}MHz\r\n"
-				)
 
-			# Open file with soundfile
-			self.wav_file = soundfile.SoundFile(
-				self.filepath,
-				mode='w',
-				samplerate=audio_sample_rate,
-				channels=1,
-				subtype='PCM_16',
-				format='WAV'
-			)
+		self.wav_file = soundfile.SoundFile(
+			self.filepath,
+			mode='w',
+			samplerate=audio_sample_rate,
+			channels=1,
+			subtype='PCM_16',
+			format='WAV'
+		)
 
-			# Store BEXT metadata to write on close
-			self.bext_metadata = {
-				'description': self.description,
-				'originator': self.originator,
-				'originator_reference': self.originator_reference,
-				'origination_date': self.start_time.strftime('%Y-%m-%d'),
-				'origination_time': self.start_time.strftime('%H:%M:%S'),
-				'time_reference': self.time_reference,
-				'version': 1,
-				'coding_history': coding_history
-			}
-		else:
-			# Fallback to standard WAV (backward compatibility)
-			self.wav_file = soundfile.SoundFile(
-				self.filepath,
-				mode='w',
-				samplerate=audio_sample_rate,
-				channels=1,
-				subtype='PCM_16',
-				format='WAV'
-			)
-			self.bext_metadata = None
+		# Prepare BEXT metadata for soundfile
+		# Note: soundfile uses 'extra_info' parameter for BEXT chunk
+
+		# Broadcast WAV metadata
+
+		bwf_description_data = {
+			"band": band_name,
+			"channel_index": channel_index,
+			"channel_freq": channel_freq,
+		}
+
+		bwf_description = json.dumps(bwf_description_data, separators=(",", ":"), ensure_ascii=True)
+
+		if len(bwf_description) > 256:
+			logger.warning("BWF description exceeds 256 characters and will be truncated.")
+
+		bwf_originator = "SDR Scanner"
+		bwf_originator_reference = str(uuid.uuid4())[:32]  # Truncate to 32 chars
+
+		bwf_coding_history = (
+			f"A=PCM,F={audio_sample_rate},W=16,M=mono,T={modulation};"
+			f"Frequency={channel_freq/1e6:.5f}MHz\r\n"
+		)
+
+		# Store BEXT metadata to write on close
+
+		self.bext_metadata = {
+			'description': bwf_description,
+			'originator': bwf_originator,
+			'originator_reference': bwf_originator_reference,
+			'origination_date': self.start_time.strftime('%Y-%m-%d'),
+			'origination_time': self.start_time.strftime('%H:%M:%S'),
+			'time_reference': self.time_reference,
+			'version': 1,
+			'coding_history': bwf_coding_history
+		}
 
 		# Track total samples written (for logging)
 		self.total_samples_written = 0
@@ -152,28 +142,35 @@ class ChannelRecorder:
 
 		logger.info(f"Started recording channel {channel_index} (f = {channel_freq/1e6:.5f} MHz) to {self.filepath}")
 
-	def append_audio(self, samples: numpy.typing.NDArray[numpy.float32]) -> None:
+	def append_audio (self, samples: numpy.typing.NDArray[numpy.float32]) -> None:
+
 		"""
 		Append audio samples to the buffer (non-blocking)
 
 		Args:
 			samples: Audio samples as float32 in range [-1.0, 1.0]
 		"""
+
 		if self.closing:
 			return
 
 		with self._buffer_lock:
+
 			if self.max_buffer_samples <= 0:
 				return
 
 			incoming_len = len(samples)
+
 			if incoming_len == 0:
 				return
 
 			if incoming_len >= self.max_buffer_samples:
+
 				dropped = self.audio_buffer_samples + (incoming_len - self.max_buffer_samples)
+
 				if dropped > 0:
 					logger.warning(f"Channel {self.channel_index}: Buffer overflow, dropping {dropped} oldest samples")
+
 				self.audio_buffer.clear()
 				self.audio_buffer_samples = 0
 				samples = samples[-self.max_buffer_samples:]
@@ -182,17 +179,21 @@ class ChannelRecorder:
 				return
 
 			overflow = self.audio_buffer_samples + incoming_len - self.max_buffer_samples
+
 			if overflow > 0:
+
 				self._drop_oldest_samples(overflow)
 				logger.warning(f"Channel {self.channel_index}: Buffer overflow, dropping {overflow} oldest samples")
 
 			self.audio_buffer.append(samples)
 			self.audio_buffer_samples += incoming_len
 
-	def _drop_oldest_samples(self, count: int) -> None:
+	def _drop_oldest_samples (self, count:int) -> None:
+
 		"""
 		Drop a number of samples from the start of the chunked buffer.
 		"""
+
 		remaining = count
 		while remaining > 0 and self.audio_buffer:
 			chunk = self.audio_buffer[0]
@@ -205,57 +206,71 @@ class ChannelRecorder:
 				self.audio_buffer_samples -= remaining
 				remaining = 0
 
-	async def _flush_to_disk_periodically(self) -> None:
+	async def _flush_to_disk_periodically (self) -> None:
+
 		"""
 		Async task that periodically flushes buffer to disk
 		Runs until cancelled
 		"""
+
 		try:
+
 			while not self.closing:
+
 				await asyncio.sleep(self.disk_flush_interval)
 				await self._flush_buffer_to_disk()
 
 		except asyncio.CancelledError:
+
 			# Task cancelled - do final flush before exiting
 			await self._flush_buffer_to_disk()
 			raise
 
-	async def _flush_buffer_to_disk(self) -> None:
+	async def _flush_buffer_to_disk (self) -> None:
+
 		"""
 		Flush accumulated buffer samples to disk in executor (non-blocking)
 		"""
+
 		with self._buffer_lock:
+
 			if self.audio_buffer_samples == 0:
 				return
+
 			if len(self.audio_buffer) == 1:
 				samples_to_write = self.audio_buffer[0]
 			else:
 				samples_to_write = numpy.concatenate(list(self.audio_buffer)).astype(numpy.float32, copy=False)
+
 			self.audio_buffer.clear()
 			self.audio_buffer_samples = 0
 
 		await asyncio.get_running_loop().run_in_executor(None, self._write_samples_to_wav, samples_to_write)
 
-	def _write_samples_to_wav(self, samples: numpy.typing.NDArray[numpy.float32]) -> None:
+	def _write_samples_to_wav (self, samples:numpy.typing.NDArray[numpy.float32]) -> None:
+
 		"""
 		Write audio samples to WAV file (runs in executor thread)
 
 		Args:
 			samples: Audio samples as float32 in range [-1.0, 1.0]
 		"""
+
 		# soundfile expects float32 samples in range [-1.0, 1.0] for PCM_16 output
+
 		# It will automatically convert to int16 internally
 		with self._write_lock:
 
 			# Write to WAV file (soundfile handles float32 to int16 conversion)
 			self.wav_file.write(samples)
-
 			self.total_samples_written += len(samples)
 
-	async def close(self) -> None:
+	async def close (self) -> None:
+
 		"""
 		Close the recorder, flush remaining buffer, and finalize WAV file
 		"""
+
 		self.closing = True
 
 		# Cancel flush task if running
@@ -266,6 +281,10 @@ class ChannelRecorder:
 
 			try:
 				await asyncio.wait_for(asyncio.wrap_future(self.flush_task), timeout=5)
+			except asyncio.TimeoutError:
+				pass
+			except asyncio.CancelledError:
+				pass
 			except Exception:
 				pass
 
@@ -275,33 +294,36 @@ class ChannelRecorder:
 		# Close WAV file (this writes headers)
 		self.wav_file.close()
 
-		# Write BEXT chunk if BWF format enabled
-		if self.broadcast_wav_format and self.bext_metadata:
+		# Write BEXT chunk for Broadcast Wave Format
+		if self.bext_metadata:
 			self._write_bext_chunk()
 
 		duration_seconds = self.total_samples_written / self.audio_sample_rate
 		logger.info(f"Stopped recording channel {self.channel_index} (f = {self.channel_freq/1e6:.5f} MHz) - Duration: {duration_seconds:.1f}s, File: {self.filepath}")
 
-	def _write_bext_chunk(self) -> None:
+	def _write_bext_chunk (self) -> None:
+
 		"""
 		Write BEXT chunk to WAV file for Broadcast Wave Format
 		This modifies the WAV file in-place after closing
 		"""
+
 		# Safety check (should never happen due to check in close())
 		if not self.bext_metadata:
 			return
 
 		# Read the existing WAV file
 		with open(self.filepath, 'rb') as f:
+
 			riff_header = f.read(12)  # 'RIFF' + size + 'WAVE'
+
 			if riff_header[:4] != b'RIFF' or riff_header[8:12] != b'WAVE':
 				logger.warning(f"File {self.filepath} is not a valid WAV file, cannot add BEXT chunk")
 				return
 
 			remaining_data = f.read()
 
-		# Build BEXT chunk
-		# BEXT chunk format (EBU Tech 3285)
+		# Build BEXT chunk (EBU Tech 3285)
 		description = self.bext_metadata['description'].encode('ascii', errors='replace')[:256].ljust(256, b'\x00')
 		originator = self.bext_metadata['originator'].encode('ascii', errors='replace')[:32].ljust(32, b'\x00')
 		originator_ref = self.bext_metadata['originator_reference'].encode('ascii', errors='replace')[:32].ljust(32, b'\x00')
@@ -351,6 +373,7 @@ class ChannelRecorder:
 
 		# Write the modified WAV file
 		with open(self.filepath, 'wb') as f:
+
 			# Write RIFF header with updated size
 			f.write(b'RIFF')
 			f.write(struct.pack('<I', new_riff_size))

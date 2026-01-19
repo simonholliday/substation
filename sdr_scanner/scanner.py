@@ -87,12 +87,6 @@ class RadioScanner:
 
 		self.can_demod = self.modulation in sdr_scanner.dsp.demodulation.DEMODULATORS
 
-		# Broadcast WAV format parameters
-		self.broadcast_wav_format = self.recording_config.broadcast_wav_format
-		self.default_description = self.recording_config.default_description
-		self.originator = self.recording_config.originator
-		self.include_coding_history = self.recording_config.include_coding_history
-
 		# Check if recording is possible (enabled and demodulator available)
 		self.can_record = self.recording_enabled and self.can_demod
 
@@ -830,11 +824,7 @@ class RadioScanner:
 			buffer_size_seconds=self.buffer_size_seconds,
 			disk_flush_interval_seconds=self.disk_flush_interval,
 			audio_output_dir=self.audio_output_dir,
-			modulation=self.modulation,
-			broadcast_wav_format=self.broadcast_wav_format,
-			description=self.default_description,
-			originator=self.originator,
-			include_coding_history=self.include_coding_history
+			modulation=self.modulation
 		)
 
 		# Start the async flush task using the provided event loop
@@ -1041,4 +1031,7 @@ class RadioScanner:
 				except Exception as e:
 					logger.warning(f"Error cancelling async read: {e}")
 
-			await self._cleanup_sdr()
+			try:
+				await asyncio.shield(self._cleanup_sdr())
+			except asyncio.CancelledError:
+				pass
