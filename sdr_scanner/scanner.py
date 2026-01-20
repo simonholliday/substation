@@ -832,14 +832,16 @@ class RadioScanner:
 		# Estimate noise floor
 		noise_floor_db = self._estimate_noise_floor(psd_db)
 
-		# Bulk energy check: if entire spectrum is near noise floor, skip per-channel analysis
-		# (exclude DC spike area which often has energy)
+		# Bulk energy check: skip per-channel analysis if the entire spectrum is quiet.
+		# We use a threshold that's strictly lower than the lowest possible detection threshold.
+		bulk_threshold_db = max(2.0, self.snr_threshold_off_db - 2.0)
+		
 		if self.dc_mask is not None:
 			max_power = numpy.max(psd_db[self.dc_mask])
 		else:
 			max_power = numpy.max(psd_db)
 			
-		if max_power < noise_floor_db + 2.0 and not any(self.channel_states.values()):
+		if max_power < noise_floor_db + bulk_threshold_db and not any(self.channel_states.values()):
 			# Fast path: spectrum is quiet and no channels are currently active
 			self.sample_counter += len(samples)
 			return
