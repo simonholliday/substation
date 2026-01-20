@@ -12,6 +12,27 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 import sdr_scanner.constants
 
 
+def _normalize_label(value: typing.Any) -> typing.Any:
+	if value is None:
+		return value
+	if isinstance(value, str):
+		return value.strip().upper()
+	return value
+
+
+def _normalize_gain(value: typing.Any) -> typing.Any:
+	if value is None:
+		return 'auto'
+	if isinstance(value, str):
+		text = value.strip().lower()
+		if text == 'auto':
+			return 'auto'
+		try:
+			return float(text)
+		except ValueError as exc:
+			raise ValueError("sdr_gain_db must be a number or 'auto'") from exc
+	return float(value)
+
 class ScannerConfig(BaseModel):
 	"""Scanner-level configuration."""
 
@@ -50,27 +71,13 @@ class BandTypeConfig(BaseModel):
 
 	@field_validator('modulation', mode='before')
 	@classmethod
-	def _normalize_label(cls, value: typing.Any) -> typing.Any:
-		if value is None:
-			return value
-		if isinstance(value, str):
-			return value.strip().upper()
-		return value
+	def _validate_label(cls, value: typing.Any) -> typing.Any:
+		return _normalize_label(value)
 
 	@field_validator('sdr_gain_db', mode='before')
 	@classmethod
-	def _normalize_gain(cls, value: typing.Any) -> typing.Any:
-		if value is None:
-			return 'auto'
-		if isinstance(value, str):
-			text = value.strip().lower()
-			if text == 'auto':
-				return 'auto'
-			try:
-				return float(text)
-			except ValueError as exc:
-				raise ValueError("sdr_gain_db must be a number or 'auto'") from exc
-		return float(value)
+	def _validate_gain(cls, value: typing.Any) -> typing.Any:
+		return _normalize_gain(value)
 
 
 class BandConfig(BaseModel):
@@ -90,27 +97,13 @@ class BandConfig(BaseModel):
 
 	@field_validator('modulation', 'type', mode='before')
 	@classmethod
-	def _normalize_label(cls, value: typing.Any) -> typing.Any:
-		if value is None:
-			return value
-		if isinstance(value, str):
-			return value.strip().upper()
-		return value
+	def _validate_label(cls, value: typing.Any) -> typing.Any:
+		return _normalize_label(value)
 
 	@field_validator('sdr_gain_db', mode='before')
 	@classmethod
-	def _normalize_gain(cls, value: typing.Any) -> typing.Any:
-		if value is None:
-			return 'auto'
-		if isinstance(value, str):
-			text = value.strip().lower()
-			if text == 'auto':
-				return 'auto'
-			try:
-				return float(text)
-			except ValueError as exc:
-				raise ValueError("sdr_gain_db must be a number or 'auto'") from exc
-		return float(value)
+	def _validate_gain(cls, value: typing.Any) -> typing.Any:
+		return _normalize_gain(value)
 
 	@model_validator(mode='after')
 	def _validate_band(self) -> 'BandConfig':

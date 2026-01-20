@@ -6,7 +6,10 @@ import rtlsdr
 import typing
 
 
-class RtlSdrDevice:
+from .base import BaseDevice
+
+
+class RtlSdrDevice(BaseDevice):
 	"""
 	Wrapper for RTL-SDR devices
 

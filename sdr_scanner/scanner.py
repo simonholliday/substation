@@ -575,54 +575,38 @@ class RadioScanner:
 			segment = samples[start:end]
 			yield segment * self.window
 
-	def _calculate_psd_welch(self, samples: numpy.typing.NDArray[numpy.complex64]) -> numpy.typing.NDArray[numpy.float64]:
+	def _calculate_psd_data(self, samples: numpy.typing.NDArray[numpy.complex64]) -> tuple[numpy.typing.NDArray[numpy.float64], list[numpy.typing.NDArray[numpy.float64]]]:
 		"""
-		Calculate Power Spectral Density using Welch's method (averaged segments).
-		More stable than single FFT, reduces noise variance.
-
-		Args:
-			samples: Complex IQ samples
+		Calculate both averaged Welch PSD and per-segment PSDs.
+		Reuses FFT segments to save CPU cycles.
 
 		Returns:
-			psd_db: Averaged power spectral density (dB), already shifted
+			(psd_welch_db, segment_psds_db)
 		"""
-		# Accumulator for averaged PSD
+		segment_psds_db = []
 		psd_accumulator = numpy.zeros(self.fft_size, dtype=numpy.float64)
 		n_segments = 0
 
 		for windowed in self._iter_windowed_segments(samples):
 			fft_result = numpy.fft.fft(windowed)
-			psd_accumulator += numpy.abs(fft_result) ** 2
+			mag_sq = numpy.abs(fft_result) ** 2
+			
+			# For Welch averaging (linear scale)
+			psd_accumulator += mag_sq
+			
+			# For transition localization (dB scale)
+			psd_db = 10 * numpy.log10(mag_sq + 1e-12)
+			segment_psds_db.append(numpy.fft.fftshift(psd_db))
 			n_segments += 1
 
 		if n_segments == 0:
-			raise ValueError("Not enough samples for Welch PSD")
+			raise ValueError("Not enough samples for PSD calculation")
 
-		# Average and convert to dB
+		# Average and convert to dB for Welch
 		psd_avg = psd_accumulator / n_segments
-		psd_db = 10 * numpy.log10(psd_avg + 1e-12)
+		psd_welch_db = numpy.fft.fftshift(10 * numpy.log10(psd_avg + 1e-12))
 
-		# Shift to center frequency
-		psd_db_shifted = numpy.fft.fftshift(psd_db)
-
-		return psd_db_shifted
-
-	def _calculate_psd_segments (self, samples:numpy.typing.NDArray[numpy.complex64]) -> list[numpy.typing.NDArray[numpy.float64]]:
-
-		"""
-		Calculate per-segment PSDs for transition localization.
-		Uses the same segment size and overlap as Welch.
-		"""
-
-		segment_psd = []
-
-		for windowed in self._iter_windowed_segments(samples):
-
-			fft_result = numpy.fft.fft(windowed)
-			psd_db = 10 * numpy.log10(numpy.abs(fft_result) ** 2 + 1e-12)
-			segment_psd.append(numpy.fft.fftshift(psd_db))
-
-		return segment_psd
+		return psd_welch_db, segment_psds_db
 
 	def _find_transition_index (self, samples:numpy.typing.NDArray[numpy.complex64], channel_freq:float, turning_on: bool, segment_psd: list[numpy.typing.NDArray[numpy.float64]] | None) -> int:
 
@@ -755,53 +739,30 @@ class RadioScanner:
 		# Use median of noise samples - robust to outliers
 		return numpy.median(noise_samples)
 
-	def _extract_channel_iq_with_state (self, samples:numpy.typing.NDArray[numpy.complex64],channel_freq:float, state_dict:dict[float, numpy.typing.NDArray[numpy.complex128]], sample_offset:int=0) -> numpy.typing.NDArray[numpy.complex64]:
-
+	def _extract_channel_iq(self, samples: numpy.typing.NDArray[numpy.complex64], channel_freq: float, sample_offset: int = 0) -> numpy.typing.NDArray[numpy.complex64]:
 		"""
 		Extract IQ samples for a specific channel by frequency shifting and filtering.
-		Uses the provided filter state dict to keep independent pipelines.
+		Uses internal filter state to maintain continuity across blocks.
 		"""
-
-		# Frequency shift to baseband using continuous phase (prevents clicks at block boundaries)
-
+		# Frequency shift to baseband using continuous phase
 		freq_offset = channel_freq - self.center_freq
 		n_samples = len(samples)
 		t = (self.sample_counter + sample_offset + numpy.arange(n_samples)) / self.sample_rate
 		samples_shifted = samples * numpy.exp(-2j * numpy.pi * freq_offset * t)
 
-		# Initialize filter state if needed (for continuous filtering across blocks)
-
-		if channel_freq not in state_dict:
-
-			# Initialize to zero state to avoid transients from arbitrary first sample
+		# Initialize filter state if needed
+		if channel_freq not in self.channel_filter_zi:
 			zi = scipy.signal.sosfilt_zi(self.channel_filter_sos)
-			state_dict[channel_freq] = (zi * 0.0).astype(numpy.complex128)
+			self.channel_filter_zi[channel_freq] = (zi * 0.0).astype(numpy.complex128)
 
-		# Low-pass filter with state preservation (prevents transients at block boundaries)
-
-		filtered, state_dict[channel_freq] = scipy.signal.sosfilt(
+		# Low-pass filter with state preservation
+		filtered, self.channel_filter_zi[channel_freq] = scipy.signal.sosfilt(
 			self.channel_filter_sos,
 			samples_shifted,
-			zi=state_dict[channel_freq]
+			zi=self.channel_filter_zi[channel_freq]
 		)
 
 		return filtered
-
-	def _extract_channel_iq (self, samples:numpy.typing.NDArray[numpy.complex64], channel_freq:float, sample_offset:int=0) -> numpy.typing.NDArray[numpy.complex64]:
-
-		"""
-		Extract IQ samples for a specific channel by frequency shifting and filtering
-
-		Args:
-			samples: Full bandwidth IQ samples from SDR
-			channel_freq: Center frequency of channel to extract
-			sample_offset: Offset into the chunk for phase continuity
-
-		Returns:
-			Filtered IQ samples centered at baseband for the channel
-		"""
-
-		return self._extract_channel_iq_with_state(samples, channel_freq, self.channel_filter_zi, sample_offset=sample_offset)
 
 	def _start_channel_recording (self, channel_freq: float, channel_index: int, loop: asyncio.AbstractEventLoop) -> None:
 
@@ -857,112 +818,89 @@ class RadioScanner:
 	def _process_samples(self, samples: numpy.typing.NDArray[numpy.complex64], loop: asyncio.AbstractEventLoop) -> None:
 		"""
 		Process samples to detect active channels
-
-		Args:
-			samples: Complex IQ samples from SDR
-			loop: Event loop for creating async tasks
 		"""
-		# Check for ADC saturation/clipping
-		# RTL-SDR outputs samples normalized to roughly [-1, 1]
-		# Values consistently near 1.0 indicate clipping
 		clipping_threshold = 0.95
 		sample_magnitude = numpy.abs(samples)
 		clipping_percentage = numpy.sum(sample_magnitude > clipping_threshold) / len(samples) * 100
 
-		if clipping_percentage > 0.1:  # More than 0.1% of samples clipping
-			logger.warning(f"ADC SATURATION DETECTED: {clipping_percentage:.1f}% of samples clipping")
-			logger.warning("Consider reducing gain or using an RF attenuator")
+		if clipping_percentage > 0.1:
+			logger.warning(f"ADC SATURATION: {clipping_percentage:.1f}% samples clipping. Reduce gain.")
 
-		# Calculate PSD using Welch averaging
-		psd_db = self._calculate_psd_welch(samples)
+		# Compute all PSD data once (Welch and segments)
+		psd_db, segment_psds = self._calculate_psd_data(samples)
 
-		# Estimate noise floor from inter-channel gaps
+		# Estimate noise floor
 		noise_floor_db = self._estimate_noise_floor(psd_db)
 
+		# Bulk energy check: if entire spectrum is near noise floor, skip per-channel analysis
+		# (exclude DC spike area which often has energy)
+		if self.dc_mask is not None:
+			max_power = numpy.max(psd_db[self.dc_mask])
+		else:
+			max_power = numpy.max(psd_db)
+			
+		if max_power < noise_floor_db + 2.0 and not any(self.channel_states.values()):
+			# Fast path: spectrum is quiet and no channels are currently active
+			self.sample_counter += len(samples)
+			return
+
 		channel_metrics: dict[float, dict[str, typing.Any]] = {}
-		transitions = []
+		any_transitions = False
 
-		# Determine next state for each channel
-		for channel_index, channel_freq in enumerate(self.channels):
-			channel_power_db = self._get_channel_power(psd_db, channel_freq)
-			snr_db = channel_power_db - noise_floor_db
+		# Determine state for each channel
+		for idx, channel_freq in enumerate(self.channels):
+			snr_db = self._get_channel_power(psd_db, channel_freq) - noise_floor_db
 			current_state = self.channel_states[channel_freq]
-
-			if current_state:
-				rf_active = snr_db > self.snr_threshold_off_db
-			else:
-				rf_active = snr_db > self.snr_threshold_db
-
-			is_active = rf_active
+			
+			threshold = self.snr_threshold_off_db if current_state else self.snr_threshold_db
+			is_active = snr_db > threshold
 
 			channel_metrics[channel_freq] = {
-				'index': channel_index,
+				'index': idx,
 				'snr_db': snr_db,
 				'is_active': is_active,
 				'current_state': current_state
 			}
-
+			
 			if is_active != current_state:
-				transitions.append(channel_freq)
+				any_transitions = True
 
-		segment_psd = None
-		if transitions and self.can_record:
-			# Only compute per-segment PSDs when transitions occur.
-			segment_psd = self._calculate_psd_segments(samples)
-
-		# Apply state changes and feed audio, trimming transition chunks if needed.
+		# Process each channel (state changes and recording)
 		for channel_freq in self.channels:
-
-			metrics = channel_metrics[channel_freq]
-			channel_index = metrics['index']
-			snr_db = metrics['snr_db']
-			is_active = metrics['is_active']
-			current_state = metrics['current_state']
-
-			trim_start, trim_end, sample_offset, turning_on, turning_off = self._prepare_channel_transition(
-				samples, channel_freq, channel_index, snr_db,
-				is_active, current_state, segment_psd, loop
+			m = channel_metrics[channel_freq]
+			is_active = m['is_active']
+			current_state = m['current_state']
+			
+			trim_start, trim_end, offset, turning_on, turning_off = self._prepare_channel_transition(
+				samples, channel_freq, m['index'], m['snr_db'],
+				is_active, current_state, segment_psds, loop
 			)
 
-			# Feed audio samples to active recordings (include trimmed transition chunks).
 			if (is_active or turning_off) and channel_freq in self.channel_recorders:
 				if trim_end > trim_start:
-					channel_iq = self._extract_channel_iq(
-						samples[trim_start:trim_end],
-						channel_freq,
-						sample_offset=sample_offset
-					)
+					channel_iq = self._extract_channel_iq(samples[trim_start:trim_end], channel_freq, sample_offset=offset)
+					demod_func = sdr_scanner.dsp.demodulation.DEMODULATORS[self.modulation]
+					demod_state = None if turning_on else self.channel_demod_state.get(channel_freq)
 
-					demodulator = sdr_scanner.dsp.demodulation.DEMODULATORS[self.modulation]
-					demod_state = None if turning_on else self.channel_demod_state.get(channel_freq, None)
+					audio, new_state = demod_func(channel_iq, self.sample_rate, self.audio_sample_rate, state=demod_state)
 
-					audio_samples, new_state = demodulator(channel_iq, self.sample_rate, self.audio_sample_rate, state=demod_state)
-
-					if turning_on and self.fade_in_ms > 0:
-
-						audio_samples = sdr_scanner.dsp.filters.apply_fade(audio_samples, self.audio_sample_rate, self.fade_in_ms, 0.0)
-
-					elif turning_off and self.fade_out_ms > 0:
-
-						audio_samples = sdr_scanner.dsp.filters.apply_fade(audio_samples, self.audio_sample_rate, 0.0, self.fade_out_ms)
+					if turning_on and self.fade_in_ms:
+						audio = sdr_scanner.dsp.filters.apply_fade(audio, self.audio_sample_rate, self.fade_in_ms, 0.0)
+					elif turning_off and self.fade_out_ms:
+						audio = sdr_scanner.dsp.filters.apply_fade(audio, self.audio_sample_rate, 0.0, self.fade_out_ms)
 
 					if not turning_off:
-
 						self.channel_demod_state[channel_freq] = new_state
 
-					channel_recorder = self.channel_recorders[channel_freq]
-					channel_recorder.append_audio(audio_samples)
+					self.channel_recorders[channel_freq].append_audio(audio)
 
 			if turning_off:
-
-				if channel_freq in self.channel_filter_zi:
-					del self.channel_filter_zi[channel_freq]
-
-				if channel_freq in self.channel_demod_state:
-					del self.channel_demod_state[channel_freq]
-
+				self.channel_filter_zi.pop(channel_freq, None)
+				self.channel_demod_state.pop(channel_freq, None)
 				if channel_freq in self.channel_recorders:
 					asyncio.run_coroutine_threadsafe(self._stop_channel_recording(channel_freq), loop)
+
+		self.sample_counter += len(samples)
 
 		# Update sample counter for continuous phase tracking
 		self.sample_counter += len(samples)

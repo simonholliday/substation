@@ -294,32 +294,18 @@ class ChannelRecorder:
 
 		# Write BEXT chunk for Broadcast Wave Format
 		if self.bext_metadata:
-			self._write_bext_chunk()
+			self._append_bext_chunk()
 
 		duration_seconds = self.total_samples_written / self.audio_sample_rate
 		logger.info(f"Stopped recording channel {self.channel_index} (f = {self.channel_freq/1e6:.5f} MHz) - Duration: {duration_seconds:.1f}s, File: {self.filepath}")
 
-	def _write_bext_chunk (self) -> None:
-
+	def _append_bext_chunk (self) -> None:
 		"""
-		Write BEXT chunk to WAV file for Broadcast Wave Format
-		This modifies the WAV file in-place after closing
+		Append BEXT chunk to the end of the WAV file and patch the RIFF header.
+		This is O(1) compared to the previous O(N) rewrite.
 		"""
-
-		# Safety check (should never happen due to check in close())
 		if not self.bext_metadata:
 			return
-
-		# Read the existing WAV file
-		with open(self.filepath, 'rb') as f:
-
-			riff_header = f.read(12)  # 'RIFF' + size + 'WAVE'
-
-			if riff_header[:4] != b'RIFF' or riff_header[8:12] != b'WAVE':
-				logger.warning(f"File {self.filepath} is not a valid WAV file, cannot add BEXT chunk")
-				return
-
-			remaining_data = f.read()
 
 		# Build BEXT chunk (EBU Tech 3285)
 		description = self.bext_metadata['description'].encode('ascii', errors='replace')[:256].ljust(256, b'\x00')
@@ -329,58 +315,42 @@ class ChannelRecorder:
 		origination_time = self.bext_metadata['origination_time'].encode('ascii')[:8].ljust(8, b'\x00')
 		time_reference = self.bext_metadata['time_reference']
 		version = self.bext_metadata['version']
-		umid = b'\x00' * 64  # UMID (64 bytes, all zeros)
-		loudness_value = 0
-		loudness_range = 0
-		max_true_peak = 0
-		max_momentary = 0
-		max_short_term = 0
-		reserved = b'\x00' * 180
+		umid = b'\x00' * 64
+		reserved = b'\x00' * 190 # Version 1 has 190 reserved bytes before coding history if not using loudness
 
 		coding_history = self.bext_metadata['coding_history'].encode('ascii', errors='replace')
-
-		# Calculate BEXT chunk size (602 fixed bytes + coding history length)
 		bext_data_size = 602 + len(coding_history)
 
-		# Build BEXT chunk
 		bext_chunk = b'bext'
-		bext_chunk += struct.pack('<I', bext_data_size)  # Chunk size (little-endian)
+		bext_chunk += struct.pack('<I', bext_data_size)
 		bext_chunk += description
 		bext_chunk += originator
 		bext_chunk += originator_ref
 		bext_chunk += origination_date
 		bext_chunk += origination_time
-		bext_chunk += struct.pack('<Q', time_reference)  # 64-bit time reference
-		bext_chunk += struct.pack('<H', version)  # Version (16-bit)
+		bext_chunk += struct.pack('<Q', time_reference)
+		bext_chunk += struct.pack('<H', version)
 		bext_chunk += umid
-		bext_chunk += struct.pack('<H', loudness_value)
-		bext_chunk += struct.pack('<H', loudness_range)
-		bext_chunk += struct.pack('<H', max_true_peak)
-		bext_chunk += struct.pack('<H', max_momentary)
-		bext_chunk += struct.pack('<H', max_short_term)
+		bext_chunk += b'\x00' * 10 # Loudness fields (10 bytes)
 		bext_chunk += reserved
 		bext_chunk += coding_history
 
-		# Pad to even boundary if needed
 		if len(bext_chunk) % 2 != 0:
 			bext_chunk += b'\x00'
 
-		# Calculate new RIFF size
-		original_riff_size = struct.unpack('<I', riff_header[4:8])[0]
-		new_riff_size = original_riff_size + len(bext_chunk)
+		try:
+			# 1. Append the chunk to the end of the file
+			with open(self.filepath, 'ab') as f:
+				f.write(bext_chunk)
 
-		# Write the modified WAV file
-		with open(self.filepath, 'wb') as f:
-
-			# Write RIFF header with updated size
-			f.write(b'RIFF')
-			f.write(struct.pack('<I', new_riff_size))
-			f.write(b'WAVE')
-
-			# Write BEXT chunk
-			f.write(bext_chunk)
-
-			# Write remaining original data
-			f.write(remaining_data)
-
-		logger.debug(f"Added BEXT chunk to {self.filepath}")
+			# 2. Patch the RIFF header size
+			with open(self.filepath, 'r+b') as f:
+				# Get current file size - 8 bytes (RIFF and size field itself)
+				f.seek(0, os.SEEK_END)
+				new_riff_size = f.tell() - 8
+				f.seek(4)
+				f.write(struct.pack('<I', new_riff_size))
+			
+			logger.debug(f"Appended BEXT chunk to {self.filepath} (New RIFF size: {new_riff_size})")
+		except Exception as e:
+			logger.error(f"Failed to append BEXT chunk to {self.filepath}: {e}")
