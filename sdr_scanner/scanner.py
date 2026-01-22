@@ -461,7 +461,6 @@ class RadioScanner:
 
 		if ppm_std > 5:
 			logger.warning(f"Calibration measurements inconsistent (std dev: {ppm_std:.2f} PPM)")
-			logger.warning("Results may be unreliable")
 
 		# Restore original settings
 		self.sdr.center_freq = initial_center_freq
@@ -764,7 +763,7 @@ class RadioScanner:
 
 		return filtered
 
-	def _start_channel_recording (self, channel_freq: float, channel_index: int, loop: asyncio.AbstractEventLoop) -> None:
+	def _start_channel_recording (self, channel_freq:float, channel_index:int, loop:asyncio.AbstractEventLoop) -> None:
 
 		"""
 		Start recording a channel
@@ -901,8 +900,6 @@ class RadioScanner:
 				self.channel_demod_state.pop(channel_freq, None)
 				if channel_freq in self.channel_recorders:
 					asyncio.run_coroutine_threadsafe(self._stop_channel_recording(channel_freq), loop)
-
-		self.sample_counter += len(samples)
 
 		# Update sample counter for continuous phase tracking
 		self.sample_counter += len(samples)
