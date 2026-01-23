@@ -34,7 +34,8 @@ class ChannelRecorder:
 		buffer_size_seconds: float,
 		disk_flush_interval_seconds: float,
 		audio_output_dir: str,
-		modulation: str = "Unknown"
+		modulation: str = "Unknown",
+		filename_suffix: str = None
 	) -> None:
 		"""
 		Initialize a channel recorder
@@ -48,6 +49,7 @@ class ChannelRecorder:
 			disk_flush_interval_seconds: How often to flush to disk
 			audio_output_dir: Output directory path
 			modulation: Modulation type (e.g., 'NFM', 'AM')
+			filename_suffix: An optional string to be added to the auto-generated filename
 		"""
 		self.channel_freq = channel_freq
 		self.channel_index = channel_index
@@ -74,8 +76,15 @@ class ChannelRecorder:
 
 		date_str = self.start_time.strftime("%Y-%m-%d")
 		time_str = self.start_time.strftime("%H-%M-%S")
-		filename = f"{date_str}_{time_str}_{band_name}_{channel_index}.wav"
-		self.filepath = os.path.join(audio_output_dir, date_str, filename)
+
+		filename = f"{date_str}_{time_str}_{band_name}_{channel_index}"
+
+		if filename_suffix:
+			filename += "_" + filename_suffix
+
+		filename += ".wav"
+
+		self.filepath = os.path.join(audio_output_dir, date_str, band_name, filename)
 
 		# Create output directory with date subdirectory if needed
 		os.makedirs(os.path.dirname(self.filepath), exist_ok=True)

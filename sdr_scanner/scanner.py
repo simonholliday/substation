@@ -776,6 +776,8 @@ class RadioScanner:
 
 		# Create recorder instance
 
+		filename_suffix = self.device_type + "_" + str(self.device_index)
+
 		channel_recorder = sdr_scanner.recording.ChannelRecorder(
 			channel_freq=channel_freq,
 			channel_index=channel_index,
@@ -784,7 +786,8 @@ class RadioScanner:
 			buffer_size_seconds=self.buffer_size_seconds,
 			disk_flush_interval_seconds=self.disk_flush_interval,
 			audio_output_dir=self.audio_output_dir,
-			modulation=self.modulation
+			modulation=self.modulation,
+			filename_suffix=filename_suffix
 		)
 
 		# Start the async flush task using the provided event loop
