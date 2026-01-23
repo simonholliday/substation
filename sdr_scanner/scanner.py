@@ -11,6 +11,7 @@ import sdr_scanner.constants
 import sdr_scanner.devices
 import sdr_scanner.dsp.demodulation
 import sdr_scanner.dsp.filters
+import sdr_scanner.dsp.noise_reduction
 import sdr_scanner.recording
 
 logger = logging.getLogger(__name__)
@@ -900,6 +901,8 @@ class RadioScanner:
 					demod_state = None if turning_on else self.channel_demod_state.get(channel_freq)
 
 					audio, new_state = demod_func(channel_iq, self.sample_rate, self.audio_sample_rate, state=demod_state)
+
+					audio = sdr_scanner.dsp.noise_reduction.apply_noisereduce(audio, self.audio_sample_rate)
 
 					if turning_on and self.fade_in_ms:
 						audio = sdr_scanner.dsp.filters.apply_fade(audio, self.audio_sample_rate, self.fade_in_ms, 0.0)
