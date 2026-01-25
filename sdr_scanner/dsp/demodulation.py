@@ -1,7 +1,3 @@
-"""
-Demodulation functions for various modulation types
-"""
-
 import numpy
 import numpy.typing
 import scipy.ndimage

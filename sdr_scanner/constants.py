@@ -1,7 +1,3 @@
-"""
-Global constants for SDR Scanner
-"""
-
 # NFM demodulation constants
 NFM_DEEMPHASIS_TAU = 300e-6  # 300µs time constant (standard for NFM)
 NFM_DEVIATION_HZ = 5000      # Max frequency deviation for normalization

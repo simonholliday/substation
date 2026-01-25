@@ -1,7 +1,3 @@
-"""
-Noise reduction helpers for demodulated audio.
-"""
-
 from __future__ import annotations
 
 import numpy

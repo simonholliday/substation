@@ -1,7 +1,3 @@
-"""
-Configuration loading and validation for SDR Scanner
-"""
-
 from __future__ import annotations
 
 import typing
