@@ -162,7 +162,7 @@ def apply_fade (
 		Audio signal with fades applied
 	"""
 
-	if fade_in_ms is None or fade_out_ms is None:
+	if fade_in_ms is None and fade_out_ms is None:
 		return audio
 
 	n_samples = len(audio)
@@ -170,8 +170,9 @@ def apply_fade (
 		return audio
 
 	# Convert fade durations from milliseconds to sample counts
-	fade_in_len = int(sample_rate * (fade_in_ms / 1000.0))
-	fade_out_len = int(sample_rate * (fade_out_ms / 1000.0))
+	# Handle None values by using 0 length (no fade)
+	fade_in_len = int(sample_rate * (fade_in_ms / 1000.0)) if fade_in_ms is not None else 0
+	fade_out_len = int(sample_rate * (fade_out_ms / 1000.0)) if fade_out_ms is not None else 0
 
 	# Ensure fades don't exceed audio length (fades can't overlap)
 	fade_in_len = min(fade_in_len, n_samples)

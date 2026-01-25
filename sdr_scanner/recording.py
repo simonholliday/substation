@@ -90,7 +90,9 @@ class ChannelRecorder:
 		self.audio_sample_rate = audio_sample_rate
 		self.disk_flush_interval = disk_flush_interval_seconds
 		self.modulation = modulation
-		self.soft_limit_drive = float(soft_limit_drive)
+		# Precompute soft limiter parameters for efficiency
+		self.soft_limit_drive = max(0.1, float(soft_limit_drive))
+		self.soft_limit_scale = 1.0 / numpy.tanh(self.soft_limit_drive)
 
 		# Calculate maximum buffer size in samples (e.g., 5 seconds * 16000 Hz = 80000 samples)
 		# This prevents memory from growing unbounded if disk writes fall behind
@@ -137,6 +139,7 @@ class ChannelRecorder:
 		# Open WAV file for writing using soundfile library
 		# soundfile is chosen because it supports Broadcast WAV extensions
 		# PCM_16 = 16-bit signed integer audio (standard CD quality)
+
 		self.wav_file = soundfile.SoundFile(
 			self.filepath,
 			mode='w',
@@ -152,6 +155,7 @@ class ChannelRecorder:
 
 		# Description field: store channel info as JSON (max 256 chars in spec)
 		# This allows easy parsing of metadata without manual filename parsing
+
 		bwf_description_data = {
 			"band": band_name,
 			"channel_index": channel_index,
@@ -179,6 +183,7 @@ class ChannelRecorder:
 		# Store BEXT metadata to write when file is closed
 		# We can't write it now because we don't know the final file size yet
 		# (BEXT chunk is appended after all audio data is written)
+
 		self.bext_metadata = {
 			'description': bwf_description,
 			'originator': bwf_originator,
@@ -190,21 +195,15 @@ class ChannelRecorder:
 			'coding_history': bwf_coding_history
 		}
 
-		# Track total samples written (used to calculate recording duration on close)
+		# Track total samples written (for logging)
 		self.total_samples_written = 0
 
-		# Background flush task reference (will be set by the scanner)
-		# This task runs _flush_to_disk_periodically() in the async event loop
-		# Type is Any because it could be Task or Future depending on how it's created
+		# Async flush task (will be set by caller) - can be Task or Future depending on how it's created
 		self.flush_task: typing.Any = None
 
-		# Flag to indicate if recorder is shutting down
-		# Prevents new audio from being buffered during cleanup
+		# Flag to indicate if recorder is closing
 		self.closing = False
 
-		# Thread locks for thread-safe access to file and buffer
-		# _write_lock: protects WAV file writes (called from executor thread)
-		# _buffer_lock: protects audio_buffer (accessed from multiple threads)
 		self._write_lock = threading.Lock()
 		self._buffer_lock = threading.Lock()
 
@@ -213,44 +212,37 @@ class ChannelRecorder:
 	def append_audio (self, samples: numpy.typing.NDArray[numpy.float32]) -> None:
 
 		"""
-		Add audio samples to the memory buffer (non-blocking, thread-safe).
+		Append audio samples to the in-memory buffer (non-blocking).
 
-		This is called from the signal processing thread every time a channel
-		has new audio. The samples are added to an in-memory buffer and will
-		be written to disk later by the background flush task.
-
-		If the buffer is full (disk writes falling behind), the oldest samples
-		are dropped to prevent unbounded memory growth. This is preferable to
-		blocking, which would stall the entire scanning process.
+		Drops the oldest samples when the buffer would overflow, favoring
+		keeping the most recent audio so recordings stay aligned with
+		real-time activity.
 
 		Args:
-			samples: Audio samples as float32 normalized to range [-1.0, 1.0]
+			samples: Audio samples as float32 in range [-1.0, 1.0]
 		"""
 
-		# Don't accept new samples if we're shutting down
 		if self.closing:
 			return
 
 		with self._buffer_lock:
-			# Sanity check: if buffer size is disabled, don't buffer anything
+
 			if self.max_buffer_samples <= 0:
 				return
 
 			incoming_len = len(samples)
 
-			# Nothing to do if empty
 			if incoming_len == 0:
 				return
 
-			# Edge case: incoming block is larger than entire buffer capacity
-			# Keep only the most recent samples that fit in the buffer
 			if incoming_len >= self.max_buffer_samples:
+				# Incoming chunk is larger than the whole buffer: keep only the tail.
+
 				dropped = self.audio_buffer_samples + (incoming_len - self.max_buffer_samples)
 
 				if dropped > 0:
 					logger.warning(f"Channel {self.channel_index}: Buffer overflow, dropping {dropped} oldest samples")
 
-				# Clear everything and keep only the tail of the new samples
 				self.audio_buffer.clear()
 				self.audio_buffer_samples = 0
 				samples = samples[-self.max_buffer_samples:]
@@ -258,41 +250,31 @@ class ChannelRecorder:
 				self.audio_buffer_samples = len(samples)
 				return
 
-			# Normal case: check if adding these samples would overflow the buffer
 			overflow = self.audio_buffer_samples + incoming_len - self.max_buffer_samples
 
 			if overflow > 0:
-				# Drop oldest samples to make room for new ones
+				# Drop oldest samples first to preserve real-time behavior.
+
 				self._drop_oldest_samples(overflow)
 				logger.warning(f"Channel {self.channel_index}: Buffer overflow, dropping {overflow} oldest samples")
 
-			# Add the new chunk to the buffer
 			self.audio_buffer.append(samples)
 			self.audio_buffer_samples += incoming_len
 
-	def _drop_oldest_samples (self, count: int) -> None:
+	def _drop_oldest_samples (self, count:int) -> None:
 
 		"""
-		Drop the oldest samples from the buffer to make room for new ones.
-
-		Since the buffer stores audio in chunks (not individual samples), we
-		may need to remove entire chunks or trim the first chunk. This is
-		more efficient than maintaining a flat array and using array slicing.
-
-		Args:
-			count: Number of samples to drop from the front of the buffer
+		Drop a number of samples from the start of the chunked buffer.
 		"""
 
 		remaining = count
 		while remaining > 0 and self.audio_buffer:
 			chunk = self.audio_buffer[0]
 			if len(chunk) <= remaining:
-				# Entire first chunk needs to be dropped
 				self.audio_buffer.popleft()
 				self.audio_buffer_samples -= len(chunk)
 				remaining -= len(chunk)
 			else:
-				# Only drop part of the first chunk (trim it)
 				self.audio_buffer[0] = chunk[remaining:]
 				self.audio_buffer_samples -= remaining
 				remaining = 0
@@ -300,240 +282,168 @@ class ChannelRecorder:
 	async def _flush_to_disk_periodically (self) -> None:
 
 		"""
-		Background task that flushes the buffer to disk at regular intervals.
-
-		This runs continuously in the async event loop, sleeping most of the time
-		and periodically waking up to write buffered audio to disk. By batching
-		writes, we reduce file I/O overhead (opening/closing, system calls).
-
-		The task runs until cancelled (when the channel turns off or the scanner
-		shuts down). Cancellation is the normal way to stop this task.
+		Async task that periodically flushes buffer to disk
+		Runs until cancelled
 		"""
 
 		try:
+
 			while not self.closing:
-				# Sleep until next flush interval
+
 				await asyncio.sleep(self.disk_flush_interval)
-				# Write accumulated samples to disk
 				await self._flush_buffer_to_disk()
 
 		except asyncio.CancelledError:
-			# Task was cancelled - this is normal during shutdown
+			# Let close() handle final flush and file shutdown.
 			return
 
 	async def _flush_buffer_to_disk (self) -> None:
 
 		"""
-		Write all buffered samples to disk without blocking the event loop.
-
-		This method:
-		1. Atomically extracts all samples from the buffer (with lock held)
-		2. Concatenates chunks into a single array if needed
-		3. Offloads the actual write to a thread pool (disk I/O can be slow)
-
-		The buffer lock is held only briefly while extracting samples, not during
-		the actual disk write. This keeps the main processing thread responsive.
+		Flush accumulated buffer samples to disk in executor (non-blocking)
 		"""
 
-		# Atomically grab all buffered samples and clear the buffer
 		with self._buffer_lock:
-			if self.audio_buffer_samples == 0:
-				return  # Nothing to write
 
-			# Optimization: if there's only one chunk, avoid concatenation overhead
+			if self.audio_buffer_samples == 0:
+				return
+
 			if len(self.audio_buffer) == 1:
 				samples_to_write = self.audio_buffer[0]
 			else:
-				# Concatenate all chunks into a single contiguous array
-				# copy=False avoids an extra copy if the data is already contiguous
 				samples_to_write = numpy.concatenate(list(self.audio_buffer)).astype(numpy.float32, copy=False)
 
-			# Clear the buffer now that we've extracted the data
 			self.audio_buffer.clear()
 			self.audio_buffer_samples = 0
 
-		# Run the disk write in a thread pool to avoid blocking the event loop
-		# File I/O can take unpredictable amounts of time (disk cache, OS buffering, etc.)
 		await asyncio.get_running_loop().run_in_executor(None, self._write_samples_to_wav, samples_to_write)
 
-	def _write_samples_to_wav (self, samples: numpy.typing.NDArray[numpy.float32]) -> None:
+	def _write_samples_to_wav (self, samples:numpy.typing.NDArray[numpy.float32]) -> None:
 
 		"""
-		Process and write audio samples to the WAV file.
-
-		This runs in a thread pool executor (not the event loop) so blocking
-		I/O doesn't stall async operations. The processing pipeline:
-
-		1. Noise reduction: spectral subtraction to reduce background noise
-		2. Soft limiting: prevents clipping while maintaining dynamic range
-		3. WAV write: soundfile converts float32 to PCM_16 automatically
+		Write audio samples to WAV file (runs in executor thread)
 
 		Args:
 			samples: Audio samples as float32 in range [-1.0, 1.0]
 		"""
 
-		# Apply noise reduction to clean up the audio
-		# Spectral subtraction estimates the noise spectrum and subtracts it from the signal
-		# This is CPU-intensive but improves audio quality for weak signals
+		# Apply noise reduction using faster spectral subtraction method
+		# This is 5-10x faster than the noisereduce library
 		try:
-			# Alternative noisereduce library is available but slower:
-			# samples = sdr_scanner.dsp.noise_reduction.apply_noisereduce(samples, self.audio_sample_rate)
-			samples = sdr_scanner.dsp.noise_reduction.apply_spectral_subtraction(samples, self.audio_sample_rate)
+			samples = sdr_scanner.dsp.noise_reduction.apply_spectral_subtraction(
+				samples, self.audio_sample_rate, oversub=0.7, floor=0.06
+			)
 		except Exception as exc:
 			logger.warning(f"Noise reduction failed for {self.filepath}: {exc}")
 
-		# Apply soft limiter to prevent clipping (hard limiting causes distortion)
-		# tanh() is a soft limiter: it asymptotically approaches ±1 but never exceeds it
-		# Drive controls how aggressively we compress loud signals
-		if samples.size > 0:
-			drive = max(0.1, self.soft_limit_drive)
-			# Normalize by tanh(drive) so that input of 1.0 maps to output of 1.0
-			den = numpy.tanh(drive)
-			if den != 0.0:
-				samples = numpy.tanh(samples * drive) / den
+		# Apply soft limiter using precomputed parameters
+		if samples.size > 0 and self.soft_limit_drive > 0:
+			samples = numpy.tanh(samples * self.soft_limit_drive) * self.soft_limit_scale
 
-		# Write to WAV file (thread-safe with lock)
+		# It will automatically convert to int16 internally
 		with self._write_lock:
-			# soundfile automatically converts float32 [-1,1] to PCM_16 [-32768,32767]
+
+			# Write to WAV file (soundfile handles float32 to int16 conversion)
 			self.wav_file.write(samples)
 			self.total_samples_written += len(samples)
 
 	async def close (self) -> None:
 
 		"""
-		Finalize the recording and close the WAV file.
+		Close the recorder, flush remaining buffer, and finalize the WAV file.
 
-		This method performs a graceful shutdown:
-		1. Sets the closing flag to prevent new samples from being buffered
-		2. Cancels the periodic flush task (no more automatic flushes)
-		3. Performs a final flush to write any remaining buffered samples
-		4. Closes the WAV file (writes the WAV header with final size)
-		5. Appends the Broadcast WAV metadata chunk
-
-		Called when a channel turns OFF or the scanner shuts down.
+		Ensures any background flush task is stopped, writes remaining audio,
+		closes the WAV file handle, and appends the BEXT metadata chunk so the
+		recording is self-describing.
 		"""
 
-		# Signal that we're closing (stops append_audio from accepting new samples)
 		self.closing = True
 
-		# Stop the periodic flush task if it's still running
+		# Cancel flush task if running
+		# Note: flush_task is a concurrent.futures.Future, not an asyncio.Task
 		if self.flush_task and not self.flush_task.done():
+
 			self.flush_task.cancel()
 
-			# Wait for cancellation to complete (with timeout to avoid hanging)
 			try:
 				await asyncio.wait_for(asyncio.wrap_future(self.flush_task), timeout=5)
 			except asyncio.TimeoutError:
-				pass  # Task didn't stop in time, proceed anyway
+				pass
 			except asyncio.CancelledError:
-				pass  # Task was cancelled (expected)
+				pass
 			except Exception:
-				pass  # Other errors during cancellation, log and continue
+				pass
 
-		# Final flush: write any remaining samples in the buffer
+		# Final flush of any remaining samples
 		await self._flush_buffer_to_disk()
 
-		# Close the WAV file (this writes the final WAV header with correct size)
+		# Close WAV file (this writes headers)
 		self.wav_file.close()
 
-		# Append Broadcast WAV metadata chunk to the end of the file
+		# Write BEXT chunk for Broadcast Wave Format
 		if self.bext_metadata:
 			self._append_bext_chunk()
 
-		# Log recording summary
 		duration_seconds = self.total_samples_written / self.audio_sample_rate
 		logger.debug(f"Stopped recording channel {self.channel_index} (f = {self.channel_freq/1e6:.5f} MHz) - Duration: {duration_seconds:.1f}s, File: {self.filepath}")
 
 	def _append_bext_chunk (self) -> None:
+
 		"""
-		Append Broadcast WAV Extension (BEXT) chunk to the completed WAV file.
+		Append BEXT chunk to the end of the WAV file and patch the RIFF header.
 
-		The BEXT chunk is defined by EBU Tech 3285 and adds professional metadata
-		to WAV files. It's widely supported by broadcast and archival systems.
-
-		We append it after closing the WAV file (rather than embedding it during
-		creation) because some libraries don't support custom chunks. This approach
-		is efficient: O(1) append + small header patch, vs O(N) full file rewrite.
-
-		The BEXT chunk contains:
-		- Description (256 bytes): JSON metadata about the channel
-		- Originator (32 bytes): software name
-		- OriginatorReference (32 bytes): unique recording ID
-		- OriginationDate/Time: when recording started
-		- TimeReference: sample count since midnight (for sync)
-		- CodingHistory: text describing the signal processing chain
-
-		After appending the chunk, we update the RIFF header to reflect the new
-		file size (RIFF format requires the size to be correct).
+		The BEXT chunk stores machine-readable metadata (frequency, timestamps,
+		encoding history). Appending it avoids rewriting the entire file; we
+		only patch the RIFF size field after the append (O(1)).
 		"""
+
 		if not self.bext_metadata:
 			return
 
-		# Build BEXT chunk according to EBU Tech 3285 specification
-		# All text fields are ASCII, null-padded to fixed lengths
-
-		# Description: 256 bytes, JSON-encoded channel info
+		# Build BEXT chunk (EBU Tech 3285)
 		description = self.bext_metadata['description'].encode('ascii', errors='replace')[:256].ljust(256, b'\x00')
-		# Originator: 32 bytes, software name
 		originator = self.bext_metadata['originator'].encode('ascii', errors='replace')[:32].ljust(32, b'\x00')
-		# OriginatorReference: 32 bytes, unique ID for this recording
 		originator_ref = self.bext_metadata['originator_reference'].encode('ascii', errors='replace')[:32].ljust(32, b'\x00')
-		# OriginationDate: 10 bytes, YYYY-MM-DD format
 		origination_date = self.bext_metadata['origination_date'].encode('ascii')[:10].ljust(10, b'\x00')
-		# OriginationTime: 8 bytes, HH:MM:SS format
 		origination_time = self.bext_metadata['origination_time'].encode('ascii')[:8].ljust(8, b'\x00')
-		# TimeReference: 64-bit unsigned int, samples since midnight
 		time_reference = self.bext_metadata['time_reference']
-		# Version: 16-bit unsigned int, BEXT version (we use version 1)
 		version = self.bext_metadata['version']
-		# UMID: 64 bytes, Unique Material Identifier (not used, set to zeros)
 		umid = b'\x00' * 64
-		# Reserved: 190 bytes for future use (version 1 spec)
-		reserved = b'\x00' * 190  # Version 1 has 190 reserved bytes before coding history
+		reserved = b'\x00' * 190 # Version 1 has 190 reserved bytes before coding history if not using loudness
 
-		# CodingHistory: variable length, describes the signal processing chain
 		coding_history = self.bext_metadata['coding_history'].encode('ascii', errors='replace')
-		# Calculate total BEXT data size (602 fixed bytes + variable coding history)
 		bext_data_size = 602 + len(coding_history)
 
-		# Build the chunk: chunk ID + size + data
-		bext_chunk = b'bext'  # Chunk identifier (4 bytes)
-		bext_chunk += struct.pack('<I', bext_data_size)  # Chunk size (little-endian 32-bit)
+		bext_chunk = b'bext'
+		bext_chunk += struct.pack('<I', bext_data_size)
 		bext_chunk += description
 		bext_chunk += originator
 		bext_chunk += originator_ref
 		bext_chunk += origination_date
 		bext_chunk += origination_time
-		bext_chunk += struct.pack('<Q', time_reference)  # 64-bit little-endian
-		bext_chunk += struct.pack('<H', version)  # 16-bit little-endian
+		bext_chunk += struct.pack('<Q', time_reference)
+		bext_chunk += struct.pack('<H', version)
 		bext_chunk += umid
-		bext_chunk += b'\x00' * 10  # Loudness fields (10 bytes, not used)
+		bext_chunk += b'\x00' * 10 # Loudness fields (10 bytes)
 		bext_chunk += reserved
 		bext_chunk += coding_history
 
-		# RIFF chunks must be word-aligned (even number of bytes)
-		# Add a padding byte if needed
 		if len(bext_chunk) % 2 != 0:
 			bext_chunk += b'\x00'
 
 		try:
-			# Step 1: Append the BEXT chunk to the end of the WAV file
-			# This is fast (O(1) seek to end + write) compared to rewriting the entire file
+			# 1. Append the chunk to the end of the file
 			with open(self.filepath, 'ab') as f:
 				f.write(bext_chunk)
 
-			# Step 2: Update the RIFF header to reflect the new file size
-			# RIFF format: "RIFF" + size (32-bit) + "WAVE" + chunks...
-			# The size field at offset 4 must equal (file_size - 8)
+			# 2. Patch the RIFF header size
 			with open(self.filepath, 'r+b') as f:
-				# Get current file size
+				# Get current file size - 8 bytes (RIFF and size field itself)
 				f.seek(0, os.SEEK_END)
-				# RIFF size = file size - 8 (excludes "RIFF" and size field itself)
 				new_riff_size = f.tell() - 8
-				# Seek to the size field (offset 4) and update it
 				f.seek(4)
 				f.write(struct.pack('<I', new_riff_size))
-
+			
 			logger.debug(f"Appended BEXT chunk to {self.filepath} (New RIFF size: {new_riff_size})")
 		except Exception as e:
 			logger.error(f"Failed to append BEXT chunk to {self.filepath}: {e}")
