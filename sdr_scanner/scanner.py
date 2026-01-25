@@ -160,6 +160,9 @@ class RadioScanner:
 		# Per-channel demodulator state (last IQ sample and de-emphasis filter state)
 		self.channel_demod_state: dict[float, dict] = {}
 
+		# Pre-computed angular frequencies for frequency shifting (computed in _precompute_fft_params).
+		self.channel_omega: dict[float, complex] = {}
+
 		# Cumulative sample counter for continuous phase in frequency shifting
 		# This ensures the oscillator used for frequency shifting doesn't reset between blocks
 		self.sample_counter: int = 0
@@ -331,6 +334,12 @@ class RadioScanner:
 			cutoff_freq = self.channel_width / 2
 			normalized_cutoff = cutoff_freq / (self.sample_rate / 2)
 			self.channel_filter_sos = scipy.signal.butter(5, normalized_cutoff, btype='low', output='sos')
+
+		# Pre-compute angular frequencies for frequency shifting.
+		self.channel_omega = {}
+		for channel_freq in self.channels:
+			freq_offset = channel_freq - self.center_freq
+			self.channel_omega[channel_freq] = -2j * numpy.pi * freq_offset / self.sample_rate
 
 		logger.info(f"FFT size: {self.fft_size} bins, frequency resolution: {freq_resolution:.1f} Hz")
 		logger.info(f"Welch segments: {sdr_scanner.constants.WELCH_SEGMENTS}, samples per slice: {self.samples_per_slice}")
@@ -867,11 +876,18 @@ class RadioScanner:
 		Uses internal filter state to maintain continuity across blocks.
 		"""
 
-		# Frequency shift to baseband using continuous phase
-		freq_offset = channel_freq - self.center_freq
+		# Frequency shift to baseband using pre-computed angular frequency.
 		n_samples = len(samples)
-		t = (self.sample_counter + sample_offset + numpy.arange(n_samples)) / self.sample_rate
-		samples_shifted = samples * numpy.exp(-2j * numpy.pi * freq_offset * t)
+		omega = self.channel_omega.get(channel_freq)
+
+		if omega is None:
+			freq_offset = channel_freq - self.center_freq
+			omega = -2j * numpy.pi * freq_offset / self.sample_rate
+
+		# Compute oscillator with continuous phase based on cumulative sample count.
+		start_sample = self.sample_counter + sample_offset
+		start_phase = omega * start_sample
+		samples_shifted = samples * numpy.exp(start_phase + omega * numpy.arange(n_samples, dtype=numpy.float64))
 
 		# Initialize filter state if needed
 		if channel_freq not in self.channel_filter_zi:
