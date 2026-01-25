@@ -4,6 +4,7 @@ Demodulation functions for various modulation types
 
 import numpy
 import numpy.typing
+import scipy.ndimage
 import scipy.signal
 import typing
 
@@ -111,47 +112,35 @@ def demodulate_am (
 		zi=state['am_dc_zi']
 	)
 
+	# Vectorized AGC using cascaded filters instead of per-sample Python loop.
 	env = numpy.abs(audio)
 	attack_ms = sdr_scanner.constants.AM_AGC_ATTACK_MS
 	release_ms = sdr_scanner.constants.AM_AGC_RELEASE_MS
-
-	if attack_ms <= 0:
-		attack_coeff = 0.0
-	else:
-		attack_coeff = numpy.exp(-1.0 / (audio_sample_rate * (attack_ms / 1000.0)))
-
-	if release_ms <= 0:
-		release_coeff = 0.0
-	else:
-		release_coeff = numpy.exp(-1.0 / (audio_sample_rate * (release_ms / 1000.0)))
-
-	level = state.get('am_agc_level')
-
-	if level is None:
-		level = max(float(numpy.mean(env)), sdr_scanner.constants.AM_AGC_FLOOR)
-
-	output = numpy.empty_like(audio, dtype=numpy.float32)
-	min_update = sdr_scanner.constants.AM_AGC_MIN_UPDATE_LEVEL
 	floor = sdr_scanner.constants.AM_AGC_FLOOR
 
-	for i in range(env.size):
-		sample_env = float(env[i])
+	# Compute attack and release time constants in samples.
+	attack_samples = max(1, int(audio_sample_rate * (attack_ms / 1000.0)))
+	release_samples = max(1, int(audio_sample_rate * (release_ms / 1000.0)))
 
-		if sample_env >= min_update:
-			if sample_env > level:
-				level = attack_coeff * level + (1.0 - attack_coeff) * sample_env
-			else:
-				level = release_coeff * level + (1.0 - release_coeff) * sample_env
+	# Peak envelope with fast attack, then smooth for release behavior.
+	peak_env = scipy.ndimage.maximum_filter1d(env, size=attack_samples, mode='nearest')
+	smooth_env = scipy.ndimage.uniform_filter1d(peak_env, size=release_samples, mode='nearest')
+	level_arr = numpy.maximum(smooth_env, floor)
 
-			if level < floor:
-				level = floor
+	# Preserve state: blend with previous level for continuity across blocks.
+	prev_level = state.get('am_agc_level')
 
-		output[i] = audio[i] / level if level > 0.0 else audio[i]
+	if prev_level is not None and len(level_arr) > 0:
+		blend_len = min(attack_samples, len(level_arr))
+		blend = numpy.linspace(0.0, 1.0, blend_len, dtype=numpy.float32)
+		level_arr[:blend_len] = prev_level * (1.0 - blend) + level_arr[:blend_len] * blend
 
-	state['am_agc_level'] = level
+	# Compute output with vectorized division and store final level.
+	output = (audio / level_arr).astype(numpy.float32)
+	state['am_agc_level'] = float(level_arr[-1]) if len(level_arr) > 0 else floor
 
+	# Apply gain and clip to valid range.
 	output *= sdr_scanner.constants.AM_OUTPUT_GAIN
-
 	output = numpy.clip(output, -1.0, 1.0)
 
 	return output.astype(numpy.float32, copy=False), state

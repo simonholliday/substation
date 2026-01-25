@@ -5,18 +5,26 @@ Noise reduction helpers for demodulated audio.
 from __future__ import annotations
 
 import numpy
+import numpy.lib.stride_tricks
 import scipy.signal
 
 
 def _frame_rms (audio: numpy.ndarray, frame_len: int, hop: int) -> numpy.ndarray:
+
 	if audio.size < frame_len:
 		return numpy.array([numpy.sqrt(numpy.mean(audio * audio))], dtype=numpy.float32)
+
 	n_frames = 1 + (audio.size - frame_len) // hop
-	rms = numpy.empty(n_frames, dtype=numpy.float32)
-	for i in range(n_frames):
-		start = i * hop
-		frame = audio[start:start + frame_len]
-		rms[i] = numpy.sqrt(numpy.mean(frame * frame))
+
+	# Vectorized RMS using stride tricks to create overlapping frame view.
+	audio_contig = numpy.ascontiguousarray(audio, dtype=numpy.float32)
+	frame_shape = (n_frames, frame_len)
+	frame_strides = (audio_contig.strides[0] * hop, audio_contig.strides[0])
+	frames = numpy.lib.stride_tricks.as_strided(audio_contig, shape=frame_shape, strides=frame_strides)
+
+	# Compute RMS across each frame in one vectorized operation.
+	rms = numpy.sqrt(numpy.mean(frames * frames, axis=1)).astype(numpy.float32)
+
 	return rms
 
 

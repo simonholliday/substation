@@ -68,7 +68,7 @@ recording:
   audio_sample_rate: 16000
   audio_output_dir: "./audio"
   fade_in_ms: 3
-  fade_out_ms: 3
+  fade_out_ms: 5
   soft_limit_drive: 2.0
 ```
 - `buffer_size_seconds`: max in-memory audio per channel before drops.
@@ -130,15 +130,17 @@ Resource and Performance Notes
 ------------------------------
 - **Sample rate dominates CPU**. Large bands at high sample rates increase FFT/PSD load.
 - **Overrun warnings** indicate the processing of a slice exceeded its real-time window. This can lead to dropped IQ blocks (`Sample queue full`).
-- **Noise reduction** runs during write/flush; long chunks can still cause buffer overflow if disk/CPU is slow.
+- **Noise reduction** runs during write/flush. Two algorithms are available in `sdr_scanner/dsp/noise_reduction.py`:
+  - `apply_spectral_subtraction` (default): lightweight single-pass STFT, suitable for low-power devices.
+  - `apply_noisereduce`: uses the external `noisereduce` library with adaptive processing; higher quality but significantly more CPU-intensive.
 - **Queue size** provides burst tolerance but uses RAM (each slice can be several MB).
 
-If you see repeated `Sample queue full` warnings, reduce the band’s `sample_rate`, exclude channels, or increase `sample_queue_maxsize`.
+If you see repeated `Sample queue full` warnings, reduce the band's `sample_rate`, exclude channels, or increase `sample_queue_maxsize`.
 
 Limitations
 -----------
 - Processing is slice-based; extremely wide bands or multiple high-rate scans can exceed real-time capacity on low-power CPUs.
-- `noisereduce` is CPU-intensive for long chunks; on very small devices, consider reducing `disk_flush_interval_seconds` or lowering `n_fft` in the noise reduction function if needed.
+- If using `apply_noisereduce` (non-default), it is CPU-intensive for long chunks; on constrained devices, stick with the default `apply_spectral_subtraction` or reduce `disk_flush_interval_seconds`.
 
 License
 -------

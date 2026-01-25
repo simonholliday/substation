@@ -264,7 +264,8 @@ class ChannelRecorder:
 
 		# soundfile expects float32 samples in range [-1.0, 1.0] for PCM_16 output
 		try:
-			samples = sdr_scanner.dsp.noise_reduction.apply_noisereduce(samples, self.audio_sample_rate)
+			# samples = sdr_scanner.dsp.noise_reduction.apply_noisereduce(samples, self.audio_sample_rate)
+			samples = sdr_scanner.dsp.noise_reduction.apply_spectral_subtraction(samples, self.audio_sample_rate)
 		except Exception as exc:
 			logger.warning(f"Noise reduction failed for {self.filepath}: {exc}")
 
