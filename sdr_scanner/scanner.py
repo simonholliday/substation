@@ -139,6 +139,10 @@ class RadioScanner:
 		self.window: numpy.typing.NDArray[numpy.float64] | None = None
 		self.freqs: numpy.typing.NDArray[numpy.float64] | None = None
 		self.channel_indices: dict[float, tuple[int, int]] = {}
+		self.channel_bin_starts: numpy.typing.NDArray[numpy.int32] | None = None
+		self.channel_bin_ends: numpy.typing.NDArray[numpy.int32] | None = None
+		self.channel_dc_masks: list[numpy.typing.NDArray[numpy.bool_] | None] = []
+		self.channel_list_index: dict[float, int] = {}
 		self.noise_indices: list[tuple[int, int]] = []
 		self.dc_mask: numpy.typing.NDArray[numpy.bool_] | None = None
 		self.noise_mask: numpy.typing.NDArray[numpy.bool_] | None = None
@@ -273,8 +277,26 @@ class RadioScanner:
 		# Pre-compute noise estimation regions (gaps between channels)
 		self._compute_noise_regions()
 
-		# Pre-compute DC spike mask
+		# Pre-compute per-channel bin ranges once to avoid repeated dict lookups in hot paths.
+		self.channel_list_index = {freq: idx for idx, freq in enumerate(self.channels)}
+		self.channel_bin_starts = numpy.zeros(self.num_channels, dtype=numpy.int32)
+		self.channel_bin_ends = numpy.zeros(self.num_channels, dtype=numpy.int32)
+		self.channel_dc_masks = [None] * self.num_channels
+
 		center_bin = self.fft_size // 2
+		for idx, channel_freq in enumerate(self.channels):
+			idx_start, idx_end = self.channel_indices[channel_freq]
+			self.channel_bin_starts[idx] = idx_start
+			self.channel_bin_ends[idx] = idx_end
+
+			if idx_end > idx_start and idx_start <= center_bin < idx_end:
+				local_dc_start = max(0, center_bin - sdr_scanner.constants.DC_SPIKE_BINS - idx_start)
+				local_dc_end = min(idx_end - idx_start, center_bin + sdr_scanner.constants.DC_SPIKE_BINS + 1 - idx_start)
+				mask = numpy.ones(idx_end - idx_start, dtype=bool)
+				mask[local_dc_start:local_dc_end] = False
+				self.channel_dc_masks[idx] = mask
+
+		# Pre-compute DC spike mask
 		self.dc_mask = numpy.ones(self.fft_size, dtype=bool)
 		dc_start = max(0, center_bin - sdr_scanner.constants.DC_SPIKE_BINS)
 		dc_end = min(self.fft_size, center_bin + sdr_scanner.constants.DC_SPIKE_BINS + 1)
@@ -579,8 +601,8 @@ class RadioScanner:
 			_context: Context object (unused)
 		"""
 		if self.loop and self.sample_queue:
-			# Thread-safe: schedule queue put on the event loop
-			# Make a copy to avoid buffer reuse issues
+			# Thread-safe: schedule queue put on the event loop.
+			# The copy avoids buffer reuse in librtlsdr but costs memory bandwidth.
 			# Use wrapper function to catch QueueFull exceptions in the event loop
 			self.loop.call_soon_threadsafe(self._safe_queue_put, samples.copy())
 
@@ -598,26 +620,6 @@ class RadioScanner:
 			samples = await self.sample_queue.get()
 			yield samples
 
-	def _iter_windowed_segments(
-		self,
-		samples: numpy.typing.NDArray[numpy.complex64]
-	) -> typing.Iterator[numpy.typing.NDArray[numpy.complex64]]:
-		"""
-		Yield windowed FFT segments with 50% overlap.
-		"""
-		segment_size = self.fft_size
-		hop_size = segment_size // 2
-		n_segments = (len(samples) - segment_size) // hop_size + 1
-
-		if n_segments <= 0:
-			return
-
-		for i in range(n_segments):
-			start = i * hop_size
-			end = start + segment_size
-			segment = samples[start:end]
-			yield segment * self.window
-
 	def _calculate_psd_data(self, samples: numpy.typing.NDArray[numpy.complex64], include_segment_psd: bool = True) -> tuple[numpy.typing.NDArray[numpy.float64], list[numpy.typing.NDArray[numpy.float64]] | None]:
 		"""
 		Calculate both averaged Welch PSD and per-segment PSDs.
@@ -626,25 +628,30 @@ class RadioScanner:
 		Returns:
 			(psd_welch_db, segment_psds_db)
 		"""
-		segment_psds_db = [] if include_segment_psd else None
-		psd_accumulator = numpy.zeros(self.fft_size, dtype=numpy.float64)
-		n_segments = 0
+		# FFT/Welch dominates CPU; we reuse the same segments for detection and transitions.
+		segment_size = self.fft_size
+		hop_size = segment_size // 2
+		n_segments = (len(samples) - segment_size) // hop_size + 1
+		if n_segments <= 0:
+			raise ValueError("Not enough samples for PSD calculation")
 
-		for windowed in self._iter_windowed_segments(samples):
+		segment_psds_db = [None] * n_segments if include_segment_psd else None
+		psd_accumulator = numpy.zeros(self.fft_size, dtype=numpy.float64)
+
+		for i in range(n_segments):
+			start = i * hop_size
+			end = start + segment_size
+			windowed = samples[start:end] * self.window
 			fft_result = numpy.fft.fft(windowed)
 			mag_sq = numpy.abs(fft_result) ** 2
-			
+
 			# For Welch averaging (linear scale)
 			psd_accumulator += mag_sq
-			
+
 			if include_segment_psd:
 				# For transition localization (dB scale)
 				psd_db = 10 * numpy.log10(mag_sq + 1e-12)
-				segment_psds_db.append(numpy.fft.fftshift(psd_db))
-			n_segments += 1
-
-		if n_segments == 0:
-			raise ValueError("Not enough samples for PSD calculation")
+				segment_psds_db[i] = numpy.fft.fftshift(psd_db)
 
 		# Average and convert to dB for Welch
 		psd_avg = psd_accumulator / n_segments
@@ -652,7 +659,7 @@ class RadioScanner:
 
 		return psd_welch_db, segment_psds_db
 
-	def _find_transition_index (self, samples:numpy.typing.NDArray[numpy.complex64], channel_freq:float, turning_on: bool, segment_psd: list[numpy.typing.NDArray[numpy.float64]] | None) -> int:
+	def _find_transition_index (self, samples:numpy.typing.NDArray[numpy.complex64], channel_freq:float, turning_on: bool, segment_psd: list[numpy.typing.NDArray[numpy.float64]] | None, segment_noise_floors: list[float] | None) -> int:
 
 		"""
 		Find the sample index within a chunk where a channel turns ON or OFF.
@@ -667,20 +674,23 @@ class RadioScanner:
 		threshold = self.snr_threshold_db if turning_on else self.snr_threshold_off_db
 
 		if turning_on:
+			# Per-segment SNR scan is CPU-heavy but only used for transition localization.
 			for i, psd_db in enumerate(segment_psd):
-				snr_db = self._get_channel_power(psd_db, channel_freq) - self._estimate_noise_floor(psd_db)
+				noise_floor = segment_noise_floors[i] if segment_noise_floors else self._estimate_noise_floor(psd_db)
+				snr_db = self._get_channel_power(psd_db, channel_freq) - noise_floor
 				if snr_db > threshold:
 					return min(len(samples), i * hop_size)
 			return 0
 
 		for i, psd_db in enumerate(segment_psd):
-			snr_db = self._get_channel_power(psd_db, channel_freq) - self._estimate_noise_floor(psd_db)
+			noise_floor = segment_noise_floors[i] if segment_noise_floors else self._estimate_noise_floor(psd_db)
+			snr_db = self._get_channel_power(psd_db, channel_freq) - noise_floor
 			if snr_db <= threshold:
 				return min(len(samples), i * hop_size)
 
 		return len(samples)
 
-	def _prepare_channel_transition (self, samples:numpy.typing.NDArray[numpy.complex64], channel_freq:float, channel_index:int, snr_db: float, is_active:bool, current_state:bool, segment_psd:list[numpy.typing.NDArray[numpy.float64]] | None, loop:asyncio.AbstractEventLoop) -> tuple[int, int, int, bool, bool]:
+	def _prepare_channel_transition (self, samples:numpy.typing.NDArray[numpy.complex64], channel_freq:float, channel_index:int, snr_db: float, is_active:bool, current_state:bool, segment_psd:list[numpy.typing.NDArray[numpy.float64]] | None, segment_noise_floors: list[float] | None, loop:asyncio.AbstractEventLoop) -> tuple[int, int, int, bool, bool]:
 
 		"""
 		Compute trim boundaries and update state for a channel transition.
@@ -696,7 +706,7 @@ class RadioScanner:
 
 		if turning_on or turning_off:
 
-			transition_idx = self._find_transition_index(samples, channel_freq, turning_on, segment_psd)
+			transition_idx = self._find_transition_index(samples, channel_freq, turning_on, segment_psd, segment_noise_floors)
 			transition_idx = max(0, min(len(samples), transition_idx))
 
 			if turning_on:
@@ -746,23 +756,17 @@ class RadioScanner:
 		if idx_end <= idx_start:
 			return -numpy.inf
 
-		# Get channel bins, excluding any that fall in DC spike region
+		# Get channel bins, excluding any that fall in DC spike region.
 		channel_bins = psd_db[idx_start:idx_end]
 
-		# Check if this channel overlaps with DC spike
+		mask = None
+		channel_idx = self.channel_list_index.get(channel_freq)
+		if channel_idx is not None:
+			mask = self.channel_dc_masks[channel_idx]
 
-		center_bin = self.fft_size // 2
-
-		if idx_start <= center_bin < idx_end:
-
-			# This channel contains the DC spike - mask it out
-			local_dc_start = max(0, center_bin - sdr_scanner.constants.DC_SPIKE_BINS - idx_start)
-			local_dc_end = min(idx_end - idx_start, center_bin + sdr_scanner.constants.DC_SPIKE_BINS + 1 - idx_start)
-			mask = numpy.ones(len(channel_bins), dtype=bool)
-			mask[local_dc_start:local_dc_end] = False
+		if mask is not None:
 			channel_bins = channel_bins[mask]
-
-			if len(channel_bins) == 0:
+			if channel_bins.size == 0:
 				return -numpy.inf
 
 		return numpy.mean(channel_bins)
@@ -784,12 +788,47 @@ class RadioScanner:
 			# Fallback to percentile method if no gaps defined
 			return numpy.percentile(psd_db, 25)
 
+		# Precomputed mask keeps noise estimation in numpy (no Python per-gap loops).
 		noise_samples = psd_db[self.noise_mask]
 		if noise_samples.size == 0:
 			return numpy.percentile(psd_db, 25)
 
 		# Use median of noise samples - robust to outliers
 		return numpy.median(noise_samples)
+
+	def _get_channel_powers(self, psd_db: numpy.typing.NDArray[numpy.float64]) -> numpy.typing.NDArray[numpy.float64]:
+
+		"""
+		Vectorized channel power extraction for all channels in scan order.
+		Uses cumulative sums for the common case and falls back to masked mean
+		for any channel that overlaps the DC spike.
+		"""
+
+		if self.channel_bin_starts is None or self.channel_bin_ends is None:
+			return numpy.array([self._get_channel_power(psd_db, ch) for ch in self.channels], dtype=numpy.float64)
+
+		counts = self.channel_bin_ends - self.channel_bin_starts
+		powers = numpy.full(self.num_channels, -numpy.inf, dtype=numpy.float64)
+		valid = counts > 0
+		if numpy.any(valid):
+			# Prefix sums avoid a Python loop per channel in the hot path.
+			csum = numpy.concatenate(([0.0], numpy.cumsum(psd_db)))
+			sums = csum[self.channel_bin_ends[valid]] - csum[self.channel_bin_starts[valid]]
+			powers[valid] = sums / counts[valid]
+
+		for idx, mask in enumerate(self.channel_dc_masks):
+			if mask is None:
+				continue
+			idx_start = int(self.channel_bin_starts[idx])
+			idx_end = int(self.channel_bin_ends[idx])
+			if idx_end <= idx_start:
+				powers[idx] = -numpy.inf
+				continue
+			channel_bins = psd_db[idx_start:idx_end]
+			channel_bins = channel_bins[mask]
+			powers[idx] = numpy.mean(channel_bins) if channel_bins.size else -numpy.inf
+
+		return powers
 
 	def _extract_channel_iq(self, samples: numpy.typing.NDArray[numpy.complex64], channel_freq: float, sample_offset: int = 0) -> numpy.typing.NDArray[numpy.complex64]:
 
@@ -887,7 +926,7 @@ class RadioScanner:
 			if clipping_percentage > 0.1:
 				logger.warning(f"ADC SATURATION: {clipping_percentage:.1f}% samples clipping. Reduce gain.")
 
-			# Compute all PSD data once (Welch and segments)
+			# Welch PSD is the primary CPU cost; segment PSDs are only needed for recording transitions.
 			psd_db, segment_psds = self._calculate_psd_data(samples, include_segment_psd=self.can_record)
 
 			# Estimate noise floor
@@ -908,11 +947,17 @@ class RadioScanner:
 				return
 
 			channel_metrics: dict[float, dict[str, typing.Any]] = {}
+			# Vectorized channel powers reduce per-channel Python overhead in busy bands.
+			channel_powers = self._get_channel_powers(psd_db)
+			segment_noise_floors = None
+			if segment_psds:
+				# Cache per-segment noise floors once per slice to avoid repeating work per channel.
+				segment_noise_floors = [self._estimate_noise_floor(psd) for psd in segment_psds]
 
 			# Determine state for each channel
-			for channel_freq in self.channels:
+			for i, channel_freq in enumerate(self.channels):
 				idx = self.channel_original_indices.get(channel_freq, -1)
-				snr_db = self._get_channel_power(psd_db, channel_freq) - noise_floor_db
+				snr_db = channel_powers[i] - noise_floor_db
 				current_state = self.channel_states[channel_freq]
 				
 				threshold = self.snr_threshold_off_db if current_state else self.snr_threshold_db
@@ -933,10 +978,11 @@ class RadioScanner:
 				
 				trim_start, trim_end, offset, turning_on, turning_off = self._prepare_channel_transition(
 					samples, channel_freq, m['index'], m['snr_db'],
-					is_active, current_state, segment_psds, loop
+					is_active, current_state, segment_psds, segment_noise_floors, loop
 				)
 
 				if (is_active or turning_off) and channel_freq in self.channel_recorders:
+					# Demodulate only when we are actively recording to avoid wasted CPU.
 					if trim_end > trim_start:
 						channel_iq = self._extract_channel_iq(samples[trim_start:trim_end], channel_freq, sample_offset=offset)
 						demod_func = sdr_scanner.dsp.demodulation.DEMODULATORS[self.modulation]
@@ -1002,7 +1048,7 @@ class RadioScanner:
 			logger.info("Started async SDR streaming")
 
 			async for samples in self._sample_band_async():
-				# Process samples in executor to avoid blocking
+				# CPU-heavy processing stays off the event loop to keep async I/O responsive.
 				await self.loop.run_in_executor(
 					None,
 					self._process_samples,
