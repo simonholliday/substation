@@ -957,8 +957,14 @@ class RadioScanner:
 		try:
 			# Phase 1: sanity check for ADC saturation.
 			clipping_threshold = 0.95
-			sample_magnitude = numpy.abs(samples)
-			clipping_percentage = numpy.sum(sample_magnitude > clipping_threshold) / len(samples) * 100
+			# Subsample to keep the check cheap for large slices.
+			subsample_step = max(1, len(samples) // 4096)
+			subsamples = samples[::subsample_step]
+			clipping_count = numpy.sum(
+				(subsamples.real > clipping_threshold) | (subsamples.real < -clipping_threshold) |
+				(subsamples.imag > clipping_threshold) | (subsamples.imag < -clipping_threshold)
+			)
+			clipping_percentage = clipping_count / len(subsamples) * 100
 
 			if clipping_percentage > 0.1:
 				logger.warning(f"ADC SATURATION: {clipping_percentage:.1f}% samples clipping. Reduce gain.")
