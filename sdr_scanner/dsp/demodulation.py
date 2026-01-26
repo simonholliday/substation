@@ -4,6 +4,7 @@ Demodulation functions for various modulation types
 
 import numpy
 import numpy.typing
+import scipy.ndimage
 import scipy.signal
 import typing
 
@@ -139,62 +140,32 @@ def demodulate_am (
 		zi=state['am_dc_zi']
 	)
 
-	# Continuous AGC at audio rate using vectorized operations for performance.
-	# Attack is faster than release to avoid pumping on loud transients.
+	# Vectorized AGC using cascaded filters instead of per-sample Python loop.
 	env = numpy.abs(audio)
 	attack_ms = sdr_scanner.constants.AM_AGC_ATTACK_MS
 	release_ms = sdr_scanner.constants.AM_AGC_RELEASE_MS
-	if attack_ms <= 0:
-		attack_coeff = 0.0
-	else:
-		attack_coeff = numpy.exp(-1.0 / (audio_sample_rate * (attack_ms / 1000.0)))
-	if release_ms <= 0:
-		release_coeff = 0.0
-	else:
-		release_coeff = numpy.exp(-1.0 / (audio_sample_rate * (release_ms / 1000.0)))
-
-	level = state.get('am_agc_level')
-	if level is None:
-		level = max(numpy.mean(env), sdr_scanner.constants.AM_AGC_FLOOR)
-
-	min_update = sdr_scanner.constants.AM_AGC_MIN_UPDATE_LEVEL
 	floor = sdr_scanner.constants.AM_AGC_FLOOR
 
-	# Vectorized AGC using dual-filter approach.
-	# This replaces the sample-by-sample Python loop with fast numpy operations.
-	if 'am_agc_zi_attack' not in state:
-		state['am_agc_zi_attack'] = scipy.signal.lfilter_zi([1 - attack_coeff], [1, -attack_coeff]) * level
-	if 'am_agc_zi_release' not in state:
-		state['am_agc_zi_release'] = scipy.signal.lfilter_zi([1 - release_coeff], [1, -release_coeff]) * level
+	# Compute attack and release time constants in samples.
+	attack_samples = max(1, int(audio_sample_rate * (attack_ms / 1000.0)))
+	release_samples = max(1, int(audio_sample_rate * (release_ms / 1000.0)))
 
-	# Apply exponential smoothing filters to track signal level.
-	attack_track, state['am_agc_zi_attack'] = scipy.signal.lfilter(
-		[1 - attack_coeff], [1, -attack_coeff], env, zi=state['am_agc_zi_attack']
-	)
-	release_track, state['am_agc_zi_release'] = scipy.signal.lfilter(
-		[1 - release_coeff], [1, -release_coeff], env, zi=state['am_agc_zi_release']
-	)
+	# Peak envelope with fast attack, then smooth for release behavior.
+	peak_env = scipy.ndimage.maximum_filter1d(env, size=attack_samples, mode='nearest')
+	smooth_env = scipy.ndimage.uniform_filter1d(peak_env, size=release_samples, mode='nearest')
+	level_arr = numpy.maximum(smooth_env, floor)
 
-	# Take minimum of attack and release tracks for proper AGC behavior.
-	# This follows "fast attack, slow release" dynamics.
-	level_track = numpy.minimum(attack_track, release_track)
+	# Preserve state: blend with previous level for continuity across blocks.
+	prev_level = state.get('am_agc_level')
 
-	# Apply floor and min_update threshold to prevent runaway gain.
-	level_track = numpy.maximum(level_track, floor)
-	mask = env >= min_update
-	if not numpy.all(mask):
-		# Propagate last valid level where envelope is too low
-		last_valid = level
-		for i in range(len(level_track)):
-			if mask[i]:
-				last_valid = level_track[i]
-			else:
-				level_track[i] = last_valid
+	if prev_level is not None and len(level_arr) > 0:
+		blend_len = min(attack_samples, len(level_arr))
+		blend = numpy.linspace(0.0, 1.0, blend_len, dtype=numpy.float32)
+		level_arr[:blend_len] = prev_level * (1.0 - blend) + level_arr[:blend_len] * blend
 
-	# Apply gain reduction with safety against division by zero.
-	output = numpy.where(level_track > 1e-10, audio / level_track, audio)
-
-	state['am_agc_level'] = level_track[-1]
+	# Compute output with vectorized division and store final level.
+	output = (audio / level_arr).astype(numpy.float32)
+	state['am_agc_level'] = float(level_arr[-1]) if len(level_arr) > 0 else floor
 
 	output *= sdr_scanner.constants.AM_OUTPUT_GAIN
 
