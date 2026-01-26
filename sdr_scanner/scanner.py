@@ -1011,15 +1011,14 @@ class RadioScanner:
 				return
 
 			# Phase 5: compute per-channel metrics.
-			channel_metrics: dict[float, dict[str, typing.Any]] = {}
 			# Vectorized channel powers reduce per-channel Python overhead in busy bands.
 			channel_powers = self._get_channel_powers(psd_db)
 
-			# Don't compute segment noise floors until we know we need them
+			# Lazy-computed segment data for transition localization.
+			segment_psds = None
 			segment_noise_floors = None
-			segment_psds_computed = False
 
-			# Determine state for each channel using hysteresis.
+			# Phase 6: handle transitions, demodulation, and recording.
 			for i, channel_freq in enumerate(self.channels):
 				idx = self.channel_original_indices.get(channel_freq, -1)
 				snr_db = channel_powers[i] - noise_floor_db
@@ -1028,29 +1027,15 @@ class RadioScanner:
 				threshold = self.snr_threshold_off_db if current_state else self.snr_threshold_db
 				is_active = snr_db > threshold
 
-				channel_metrics[channel_freq] = {
-					'index': idx,
-					'snr_db': snr_db,
-					'is_active': is_active,
-					'current_state': current_state
-				}
-				
-			# Phase 6: handle transitions, demodulation, and recording.
-			for channel_freq in self.channels:
-				m = channel_metrics[channel_freq]
-				is_active = m['is_active']
-				current_state = m['current_state']
-
 				# Compute segment PSDs lazily only when a transition is detected
 				# This avoids expensive per-segment FFT when channels are stable
-				if self.can_record and (is_active != current_state) and not segment_psds_computed:
+				if self.can_record and (is_active != current_state) and segment_psds is None:
 					_, segment_psds = self._calculate_psd_data(samples, include_segment_psd=True)
 					if segment_psds:
 						segment_noise_floors = [self._estimate_noise_floor(psd) for psd in segment_psds]
-					segment_psds_computed = True
 
 				trim_start, trim_end, offset, turning_on, turning_off = self._prepare_channel_transition(
-					samples, channel_freq, m['index'], m['snr_db'],
+					samples, channel_freq, idx, snr_db,
 					is_active, current_state, segment_psds, segment_noise_floors, loop
 				)
 
