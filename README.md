@@ -26,7 +26,7 @@ python -m sdr_scanner --band=air_civil_bristol --device-type=rtlsdr --device-ind
 
 Audio files are written to:
 ```
-./audio/YYYY-MM-DD/<band>/<timestamp>_<band>_<channel>_<device>.wav
+./audio/YYYY-MM-DD/<band>/<timestamp>_<band>_<channel>_<snr>dB_<device>_<index>.wav
 ```
 
 Command Line
@@ -57,7 +57,7 @@ scanner:
 ```
 - `sdr_device_sample_size`: number of IQ samples per SDR callback. Higher values reduce callback overhead but increase latency.
 - `band_time_slice_ms`: time slice used for PSD/SNR detection. Must be a multiple of `sdr_device_sample_size` (rounded up internally).
-- `sample_queue_maxsize`: async queue depth. 10–50 is typical; higher tolerates bursts but uses more RAM.
+- `sample_queue_maxsize`: async queue depth. 10-50 is typical; higher tolerates bursts but uses more RAM.
 - `calibration_frequency_hz`: optional known signal for PPM correction; set to `null` to disable.
 
 Recording
@@ -75,7 +75,7 @@ recording:
 - `disk_flush_interval_seconds`: how often to flush to disk.
 - `audio_sample_rate`: output WAV rate (Hz).
 - `fade_in_ms`/`fade_out_ms`: fades applied at channel start/stop.
-- `soft_limit_drive`: post-processing soft limiter drive. Typical range 1.5–3.0 (higher = stronger limiting).
+- `soft_limit_drive`: post-processing soft limiter drive. Typical range 1.5-3.0 (higher = stronger limiting).
 
 Band Defaults
 ```

@@ -28,7 +28,7 @@ def decimate_audio (
 	"""
 	Decimate signal from sample_rate to audio_sample_rate with state preservation.
 
-	Decimation reduces the sample rate by an integer factor (e.g., 2 MHz → 48 kHz).
+	Decimation reduces the sample rate by an integer factor (e.g., 2 MHz -> 48 kHz).
 	This requires anti-aliasing filtering before downsampling to prevent aliasing
 	(high frequencies folding back into the audible range).
 
@@ -67,7 +67,7 @@ def decimate_audio (
 			state['resample_warned'] = True
 
 		# Rational resampling: upsample by 'up', then downsample by 'down'
-		# Example: 2 MHz → 48 kHz is not integer-divisible
+		# Example: 2 MHz -> 48 kHz is not integer-divisible
 		# GCD(2000000, 48000) = 16000, so up=3, down=125
 		# This means upsample by 3, then downsample by 125
 		# Keep overlap from previous block to avoid boundary artifacts from FIR filter
@@ -179,7 +179,7 @@ def apply_fade (
 	fade_out_len = min(fade_out_len, n_samples - fade_in_len)
 
 	if fade_in_len > 0:
-		# Smoothstep curve: f(t) = t² * (3 - 2t)
+		# Smoothstep curve: f(t) = t^2 * (3 - 2t)
 		# This creates an S-shaped curve that's smoother than linear
 		# Starts slow, accelerates in middle, slows at end
 		ramp_in = numpy.linspace(0.0, 1.0, fade_in_len, endpoint=True, dtype=audio.dtype)
@@ -187,7 +187,7 @@ def apply_fade (
 		audio[:fade_in_len] *= ramp_in
 
 	if fade_out_len > 0:
-		# Same smoothstep curve, but inverted (1.0 → 0.0)
+		# Same smoothstep curve, but inverted (1.0 -> 0.0)
 		ramp_out = numpy.linspace(0.0, 1.0, fade_out_len, endpoint=True, dtype=audio.dtype)
 		ramp_out = ramp_out * ramp_out * (3.0 - 2.0 * ramp_out)
 		ramp_out = 1.0 - ramp_out
