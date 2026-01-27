@@ -3,7 +3,7 @@ SDR Scanner
 
 Overview
 --------
-SDR Scanner scans configured RF bands, detects active channels by SNR, demodulates audio (AM/NFM), and records mono WAV files with Broadcast WAV metadata. It is designed for continuous monitoring on modest hardware (e.g., Raspberry Pi 5), leveraging high-performance DSP techniques to ensure superior radio reception and efficient CPU usage.
+SDR Scanner is an automated tool for monitoring and recording radio signals using Software Defined Radio (SDR) hardware. By connecting a supported USB receiver (like an RTL-SDR or HackRF), you can scan wide ranges of the radio spectrum—such as Airband or Maritime frequencies—and automatically record transmissions as they occur. The software handles the technical signal processing in the background, allowing you to capture radio traffic across various frequencies without the need for manual tuning.
 
 Hardware Requirements
 ---------------------
@@ -30,10 +30,14 @@ Quick Start
 -----------
 1) Install dependencies (see `installation.txt` for SDR drivers).
 2) Configure bands in `config.yaml`.
-3) Run:
+3) Install package in editable mode:
+```bash
+pip install -e .
+```
+4) Run:
 
 ```bash
-python -m sdr_scanner --band=air_civil_bristol --device-type=rtlsdr --device-index=0
+sdr-scanner --band=air_civil_bristol --device-type=rtlsdr --device-index=0
 ```
 
 Audio files are written to:
@@ -43,9 +47,9 @@ Audio files are written to:
 
 Command Line
 ------------
-```
-python -m sdr_scanner --band <band> [--config <path>] [--device-type rtlsdr|hackrf] [--device-index N]
-python -m sdr_scanner --list-bands
+```bash
+sdr-scanner --band <band> [--config <path>] [--device-type rtlsdr|hackrf] [--device-index N]
+sdr-scanner --list-bands
 ```
 
 Options:
@@ -124,20 +128,38 @@ Per-band keys:
 - `sdr_gain_db`: numeric or `auto`.
 - `exclude_channel_indices`: 0-based indices to skip (no analysis, no recording).
 
+Broadcast WAV (BWF) & Metadata
+------------------------------
+Each recording captures industry-standard **Broadcast WAV (BWF)** metadata (EBU Tech 3285). This embeds technical details directly into the audio file, making it ideal for archival and automated post-processing.
+
+**Compatibility**: These are standard `.wav` files. They will play perfectly in any normal audio player (VLC, Windows Media Player, Audacity, mobile devices, etc.).
+
+### Metadata Example
+If you open a recording in a professional audio tool or a BWF viewer, you will see fields like these:
+
+| Field | Example Value | Description |
+| :--- | :--- | :--- |
+| **Description** | `{"band":"pmr","channel_index":0,"channel_freq":446006250.0}` | Machine-readable JSON with channel details |
+| **Coding History** | `A=PCM,F=16000,W=16,M=mono,T=NFM;Frequency=446.00625MHz` | Technical signal chain (Algorithm, Rate, Modulation) |
+| **Originator** | `SDR Scanner` | The software that created the file |
+| **Origination Date** | `2026-01-27` | Date the recording started |
+| **Time Reference** | `1152000` | Sample count since midnight (for precise timing) |
+
+
 Parallel Scans (Multiple Devices)
 ---------------------------------
 Run one process per device:
 
 ```bash
-python -m sdr_scanner --band=air_civil_bristol --device-type=rtlsdr --device-index=0
-python -m sdr_scanner --band=pmr --device-type=rtlsdr --device-index=1
+sdr-scanner --band=air_civil_bristol --device-type=rtlsdr --device-index=0
+sdr-scanner --band=pmr --device-type=rtlsdr --device-index=1
 ```
 
 If you need stricter real-time behavior, you can pin each scan to a CPU core:
 
 ```bash
-taskset -c 2 python -m sdr_scanner --band=air_civil_bristol --device-index=0
-taskset -c 3 python -m sdr_scanner --band=pmr --device-index=1
+taskset -c 2 sdr-scanner --band=air_civil_bristol --device-index=0
+taskset -c 3 sdr-scanner --band=pmr --device-index=1
 ```
 
 Resource and Performance Notes

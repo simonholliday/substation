@@ -14,3 +14,5 @@ Typical usage:
     python -m sdr_scanner --list-bands
     python -m sdr_scanner --band airband --device-type hackrf
 """
+
+__version__ = "0.1.0"

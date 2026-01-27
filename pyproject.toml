@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sdr-scanner"
+dynamic = ["version"]
+description = "A versatile SDR band scanner for RTL-SDR and HackRF"
+authors = [
+    { name = "Simon Holliday" }
+]
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24.0",
+    "pydantic>=2.0",
+    "pyrtlsdr>=0.3.0",
+    "python_hackrf",
+    "noisereduce>=3.0.3",
+    "PyYAML>=6.0",
+    "scipy>=1.10.0",
+    "soundfile>=0.12.1",
+]
+
+[project.scripts]
+sdr-scanner = "sdr_scanner.cli:main"
+
+[tool.setuptools]
+packages = ["sdr_scanner"]
+
+[tool.setuptools.dynamic]
+version = {attr = "sdr_scanner.__version__"}
