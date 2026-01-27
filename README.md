@@ -5,6 +5,13 @@ Overview
 --------
 SDR Scanner scans configured RF bands, detects active channels by SNR, demodulates audio (AM/NFM), and records mono WAV files with Broadcast WAV metadata. It is designed for continuous monitoring on modest hardware (e.g., Raspberry Pi 5), leveraging high-performance DSP techniques to ensure superior radio reception and efficient CPU usage.
 
+Hardware Requirements
+---------------------
+To use this software, a compatible Software Defined Radio (SDR) USB device is required. The code has been specifically tested and verified with the following hardware:
+
+*   **[RTL-SDR Blog V4 and V3](https://www.rtl-sdr.com/about-rtl-sdr/)**: High-quality, low-cost receivers.
+*   **[HackRF One](https://greatscottgadgets.com/hackrf/one/)**: A wideband transceiver capable of monitoring much larger frequency spans.
+
 Key Features & Optimizations
 ----------------------------
 - **Advanced Signal Detection**: Uses Welch's Power Spectral Density (PSD) estimation for stable, low-variance activity detection.
