@@ -1,35 +1,63 @@
-# Install drivers for RTL-SDR Blog V4
+SDR Scanner Installation Guide
+==============================
 
+This guide covers the installation of hardware drivers, system optimizations, and software dependencies for SDR Scanner.
+
+1. RTL-SDR Blog V4 Driver Installation
+--------------------------------------
+The RTL-SDR Blog V4 requires updated drivers compared to the standard ones found in many Linux repositories.
+
+# Clean up any existing installations to avoid conflicts
 sudo apt purge ^librtlsdr
 sudo rm -rvf /usr/lib/librtlsdr* /usr/include/rtl-sdr* /usr/local/lib/librtlsdr* /usr/local/include/rtl-sdr* /usr/local/include/rtl_* /usr/local/bin/rtl_*
-sudo apt install libusb-1.0-0-dev git cmake pkg-config build-essential
-sudo apt install git
+
+# Install build tools
+sudo apt update
+sudo apt install -y libusb-1.0-0-dev git cmake pkg-config build-essential
+
+# Clone and build the latest rtl-sdr driver from source
 git clone https://github.com/osmocom/rtl-sdr
 cd rtl-sdr
-mkdir build
-cd build
+mkdir build && cd build
 cmake ../ -DINSTALL_UDEV_RULES=ON
 make
 sudo make install
 sudo cp ../rtl-sdr.rules /etc/udev/rules.d/
 sudo ldconfig
+
+# Blacklist the default DVB-T driver so it doesn't "claim" the SDR as a TV tuner
 echo 'blacklist dvb_usb_rtl28xxu' | sudo tee --append /etc/modprobe.d/blacklist-dvb_usb_rtl28xxu.conf
 
+2. System Optimization (USB Buffering)
+--------------------------------------
+High sample rates (like those used with HackRF) require more USB memory than the default Linux limit allows.
+
+# Edit the kernel command line
 sudo nano /boot/firmware/cmdline.txt
-Add the following text to the end of the existing line (do not create a new line; everything in this file must stay on one single line):
-`usbcore.usbfs_memory_mb=1000`
 
-# Reboot
+# Add the following to the end of the existing (single) line:
+usbcore.usbfs_memory_mb=1000
 
-sudo shutdown -r now
+# Reboot for these changes to take effect
+sudo reboot
 
-# Requirements
+3. OS Dependencies
+------------------
+SDR Scanner requires specific system libraries for audio file handling (WAV) and HackRF support.
 
-sudo apt install libsndfile1 libsndfile1-dev
-sudo apt install python3-setuptools
-sudo apt install -y python3-dev
-sudo apt install -y libhackrf-dev hackrf pkg-config build-essential
-sudo apt install hackrf
+# Install audio and math libraries
+sudo apt install -y libsndfile1 libsndfile1-dev python3-setuptools python3-dev
 
+# Install HackRF drivers and utilities
+sudo apt install -y libhackrf-dev hackrf
+
+4. Python Environment
+---------------------
+It is recommended to run the scanner in a dedicated virtual environment.
+
+# Create and activate a virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install Python requirements
 pip install -r requirements.txt
-
