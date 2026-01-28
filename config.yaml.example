@@ -127,7 +127,6 @@ bands:
         sdr_gain_db: 36
 
     # Fire Ground Simplex (Analog - used at scene of incidents)
-
     fire_ground_uhf:
         type: NFM
         freq_start: 457.0e+6
@@ -137,3 +136,36 @@ bands:
         modulation: NFM
         snr_threshold_db: 15
         sdr_gain_db: 24
+
+    # Amateur Radio 2m Band (UK)
+    amateur_2m:
+        type: NFM
+        freq_start: 144.0e+6
+        freq_end: 146.0e+6
+        channel_spacing: 12.5e+3
+        sample_rate: 2.4e+6
+        modulation: NFM
+        snr_threshold_db: 4.5
+        sdr_gain_db: 36
+
+    # Marine VHF (Focus on International Calling Ch 16)
+    marine_vhf_calling:
+        type: NFM
+        freq_start: 156.0e+6
+        freq_end: 157.4e+6
+        channel_spacing: 25.0e+3  # Marine can be 12.5 or 25, 25 is common for older gear
+        sample_rate: 2.4e+6
+        modulation: NFM
+        snr_threshold_db: 5.0
+        sdr_gain_db: 30
+
+    # UK Simple Business Radio (UHF)
+    business_simple_uk_uhf:
+        type: NFM
+        freq_start: 449.3e+6
+        freq_end: 449.5e+6
+        channel_spacing: 12.5e+3
+        sample_rate: 1.024e+6
+        modulation: NFM
+        snr_threshold_db: 6.0
+        sdr_gain_db: 36
