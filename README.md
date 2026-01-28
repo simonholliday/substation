@@ -63,29 +63,43 @@ You can also use the scanner as a library in your own code. This allows you to r
 
 ```python
 import asyncio
+
 import sdr_scanner.config
 import sdr_scanner.scanner
 
-async def main():
-    # Load settings
-    config = sdr_scanner.config.load_config("config.yaml")
+# State Callback: Triggered whenever a signal starts or stops
+def my_state_handler (band: str, ch: int, active: bool, snr: float) -> None:
+	print (f"Channel {ch} is now {'ON' if active else 'OFF'} ({snr:.1f} dB)")
 
-    # Initialize scanner
-    scanner = sdr_scanner.scanner.RadioScanner(
-        config=config,
-        band_name="pmr",
-        device_type="rtlsdr"
-    )
+# Recording Callback: Triggered when a file is finalized and closed
+def my_recording_handler (band: str, ch: int, file_path: str) -> None:
+	print (f"Recording finished: {file_path}")
 
-    # Optional: Add a callback for when a channel turns ON/OFF
-    scanner.add_state_callback(lambda band, ch, active, snr: 
-                               print(f"Channel {ch} is {'ON' if active else 'OFF'}"))
+async def main () -> None:
 
-    # Start scanning
-    await scanner.scan()
+	"""
+	Initialize the scanner and respond to real-time events.
+	"""
+
+	# Load configuration
+	config_data = sdr_scanner.config.load_config ("config.yaml")
+
+	# Initialize scanner instance
+	scanner = sdr_scanner.scanner.RadioScanner (
+		config=config_data,
+		band_name="pmr",
+		device_type="rtlsdr"
+	)
+
+	# Register the handlers
+	scanner.add_state_callback (my_state_handler)
+	scanner.add_recording_callback (my_recording_handler)
+
+	# Start the asynchronous scan loop
+	await scanner.scan ()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+	asyncio.run (main ())
 ```
 
 See [examples/scan_demo.py](examples/scan_demo.py) for a more detailed implementation.
