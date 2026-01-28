@@ -136,7 +136,7 @@ class ChannelRecorder:
 
 		# Organize files: base_dir/YYYY-MM-DD/band_name/filename.wav
 		# This hierarchical structure makes it easy to manage recordings by date and band
-		self.filepath = os.path.join(audio_output_dir, date_str, band_name, filename)
+		self.filepath = os.path.abspath(os.path.join(audio_output_dir, date_str, band_name, filename))
 
 		# Create the directory structure if it doesn't exist
 		# Note: We use a robust check here because network filesystems (CIFS/SMB)
