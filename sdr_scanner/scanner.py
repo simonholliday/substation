@@ -1166,7 +1166,7 @@ class RadioScanner:
 
 								logger.warning(
 									f"STUCK CHANNEL WARNING: Channel {ch_idx} ({channel_freq/1e6:.4f} MHz) "
-									f"has been active for {duration:.1f} seconds"
+									f"has been active for {duration:.0f} seconds"
 								)
 
 								self.channel_last_warning_times[channel_freq] = now
