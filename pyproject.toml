@@ -31,3 +31,8 @@ include = ["sdr_scanner*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "sdr_scanner.__version__"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
