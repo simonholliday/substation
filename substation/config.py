@@ -1,5 +1,5 @@
 """
-Configuration loading and validation for SDR Scanner.
+Configuration loading and validation for Substation.
 
 This module handles loading configuration from YAML files and validates it using
 Pydantic models. The configuration system supports:
@@ -22,7 +22,7 @@ import typing
 import pydantic
 import yaml
 
-import sdr_scanner.constants
+import substation.constants
 
 logger = logging.getLogger(__name__)
 
@@ -376,13 +376,13 @@ class BandConfig(pydantic.BaseModel):
 
 		# Default channel width to 84% of spacing (leaves guard bands)
 		if self.channel_width is None:
-			self.channel_width = self.channel_spacing * sdr_scanner.constants.CHANNEL_WIDTH_FRACTION
+			self.channel_width = self.channel_spacing * substation.constants.CHANNEL_WIDTH_FRACTION
 
 		# Ensure SNR threshold is high enough for hysteresis
 		# OFF threshold = ON threshold - HYSTERESIS_DB, so ON must be > HYSTERESIS_DB
-		if self.snr_threshold_db <= sdr_scanner.constants.HYSTERESIS_DB:
+		if self.snr_threshold_db <= substation.constants.HYSTERESIS_DB:
 			raise ValueError(
-				f"snr_threshold_db must be > {sdr_scanner.constants.HYSTERESIS_DB} dB to allow OFF hysteresis"
+				f"snr_threshold_db must be > {substation.constants.HYSTERESIS_DB} dB to allow OFF hysteresis"
 			)
 
 		# Warn if per-element gain overrides sdr_gain_db

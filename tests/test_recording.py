@@ -8,7 +8,7 @@ import numpy
 import pytest
 import soundfile
 
-import sdr_scanner.recording
+import substation.recording
 
 
 # ---------------------------------------------------------------------------
@@ -17,7 +17,7 @@ import sdr_scanner.recording
 
 def _make_recorder (tmp_path, max_seconds=5.0, sample_rate=16000, noise_reduction=False):
 	"""Create a ChannelRecorder writing to tmp_path."""
-	return sdr_scanner.recording.ChannelRecorder(
+	return substation.recording.ChannelRecorder(
 		channel_freq=446.00625e6,
 		channel_index=0,
 		band_name="test",

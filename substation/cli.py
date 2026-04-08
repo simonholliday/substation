@@ -1,13 +1,13 @@
 """
-Command-line interface for SDR Scanner.
+Command-line interface for Substation.
 
 Provides a simple command-line tool for running the scanner with arguments
 for selecting bands, SDR devices, and listing available configuration.
 
 Typical usage:
-	python -m sdr_scanner --band pmr                 # Scan PMR band
-	python -m sdr_scanner --list-bands               # Show available bands
-	python -m sdr_scanner --band airband --device-type hackrf  # Use HackRF
+	python -m substation --band pmr                 # Scan PMR band
+	python -m substation --list-bands               # Show available bands
+	python -m substation --band airband --device-type hackrf  # Use HackRF
 """
 
 import argparse
@@ -15,9 +15,9 @@ import asyncio
 import logging
 import sys
 
-import sdr_scanner
-import sdr_scanner.config
-import sdr_scanner.scanner
+import substation
+import substation.config
+import substation.scanner
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def list_bands (config_path: str) -> None:
 	"""
 
 	try:
-		config_data = sdr_scanner.config.load_config(config_path)
+		config_data = substation.config.load_config(config_path)
 		bands = config_data.bands
 
 		print(f"\nAvailable bands in {config_path}:")
@@ -86,7 +86,7 @@ async def run_scanner (config_path: str, band_name: str, device_type: str, devic
 
 	try:
 		# Load and validate configuration
-		config_data = sdr_scanner.config.load_config(config_path)
+		config_data = substation.config.load_config(config_path)
 
 		if not band_name:
 			logger.error("No band specified. Use --band to select a band.")
@@ -99,7 +99,7 @@ async def run_scanner (config_path: str, band_name: str, device_type: str, devic
 			sys.exit(1)
 
 		# Create scanner instance
-		scan = sdr_scanner.scanner.RadioScanner(
+		scan = substation.scanner.RadioScanner(
 			config_path=config_path,
 			config=config_data,
 			band_name=band_name,
@@ -139,13 +139,13 @@ def main () -> int:
 
 	# Set up argument parser with help text and examples
 	parser = argparse.ArgumentParser(
-		description='SDR Scanner - Software-defined radio band scanner',
+		description='Substation - Software-defined radio band scanner',
 		formatter_class=argparse.RawDescriptionHelpFormatter,
 		epilog="""
 Examples:
-  sdr-scanner --band pmr                    # Scan PMR band with RTL-SDR
-  sdr-scanner --band marine --device-type hackrf  # Scan marine band with HackRF
-  sdr-scanner --list-bands                  # List all available bands
+  substation --band pmr                    # Scan PMR band with RTL-SDR
+  substation --band marine --device-type hackrf  # Scan marine band with HackRF
+  substation --list-bands                  # List all available bands
 		"""
 	)
 

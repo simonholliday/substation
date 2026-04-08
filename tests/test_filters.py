@@ -3,7 +3,7 @@
 import numpy
 import pytest
 
-import sdr_scanner.dsp.filters
+import substation.dsp.filters
 
 
 # ---------------------------------------------------------------------------
@@ -17,14 +17,14 @@ class TestDecimateAudio:
 		audio_rate = 16_000
 		n = sr  # 1 second
 		signal = numpy.random.default_rng(0).standard_normal(n).astype(numpy.float32)
-		out, _ = sdr_scanner.dsp.filters.decimate_audio(signal, sr, audio_rate, {})
+		out, _ = substation.dsp.filters.decimate_audio(signal, sr, audio_rate, {})
 		expected_len = n // (sr // audio_rate)
 		# Allow +-2 samples tolerance for filter transients
 		assert abs(len(out) - expected_len) <= 2
 
 	def test_decimation_output_dtype (self):
 		signal = numpy.ones(4096, dtype=numpy.float32)
-		out, _ = sdr_scanner.dsp.filters.decimate_audio(signal, 64000, 16000, {})
+		out, _ = substation.dsp.filters.decimate_audio(signal, 64000, 16000, {})
 		assert out.dtype == numpy.float32
 
 	def test_state_continuity (self):
@@ -36,12 +36,12 @@ class TestDecimateAudio:
 		half = sr // 2
 
 		# One big block
-		out_full, _ = sdr_scanner.dsp.filters.decimate_audio(full, sr, ar, {})
+		out_full, _ = substation.dsp.filters.decimate_audio(full, sr, ar, {})
 
 		# Two half blocks with state
 		state = {}
-		out_a, state = sdr_scanner.dsp.filters.decimate_audio(full[:half], sr, ar, state)
-		out_b, state = sdr_scanner.dsp.filters.decimate_audio(full[half:], sr, ar, state)
+		out_a, state = substation.dsp.filters.decimate_audio(full[:half], sr, ar, state)
+		out_b, state = substation.dsp.filters.decimate_audio(full[half:], sr, ar, state)
 		out_split = numpy.concatenate([out_a, out_b])
 
 		# Lengths should match within 1 sample
@@ -60,7 +60,7 @@ class TestDecimateIQ:
 		target = 64000
 		n = sr // 10  # 100ms
 		signal = numpy.exp(2j * numpy.pi * 1000 * numpy.arange(n) / sr).astype(numpy.complex64)
-		out, _ = sdr_scanner.dsp.filters.decimate_iq(signal, sr, target, {})
+		out, _ = substation.dsp.filters.decimate_iq(signal, sr, target, {})
 		assert out.dtype == numpy.complex64
 		assert len(out) > 0
 
@@ -73,7 +73,7 @@ class TestApplyFade:
 
 	def test_half_cosine_shape (self):
 		audio = numpy.ones(1000, dtype=numpy.float32)
-		faded = sdr_scanner.dsp.filters.apply_fade(audio.copy(), 16000, 5.0, 5.0)
+		faded = substation.dsp.filters.apply_fade(audio.copy(), 16000, 5.0, 5.0)
 		# Starts at 0, ends at 0
 		assert faded[0] == pytest.approx(0.0, abs=1e-6)
 		assert faded[-1] == pytest.approx(0.0, abs=1e-6)
@@ -82,31 +82,31 @@ class TestApplyFade:
 
 	def test_fade_in_only (self):
 		audio = numpy.ones(500, dtype=numpy.float32)
-		faded = sdr_scanner.dsp.filters.apply_fade(audio.copy(), 16000, 10.0, None)
+		faded = substation.dsp.filters.apply_fade(audio.copy(), 16000, 10.0, None)
 		assert faded[0] == pytest.approx(0.0, abs=1e-6)
 		assert faded[-1] == pytest.approx(1.0)
 
 	def test_fade_out_only (self):
 		audio = numpy.ones(500, dtype=numpy.float32)
-		faded = sdr_scanner.dsp.filters.apply_fade(audio.copy(), 16000, None, 10.0)
+		faded = substation.dsp.filters.apply_fade(audio.copy(), 16000, None, 10.0)
 		assert faded[0] == pytest.approx(1.0)
 		assert faded[-1] == pytest.approx(0.0, abs=1e-6)
 
 	def test_both_none_returns_unchanged (self):
 		audio = numpy.ones(100, dtype=numpy.float32) * 0.7
-		result = sdr_scanner.dsp.filters.apply_fade(audio, 16000, None, None)
+		result = substation.dsp.filters.apply_fade(audio, 16000, None, None)
 		numpy.testing.assert_array_equal(result, audio)
 
 	def test_empty_audio (self):
 		audio = numpy.array([], dtype=numpy.float32)
-		result = sdr_scanner.dsp.filters.apply_fade(audio, 16000, 5.0, 5.0)
+		result = substation.dsp.filters.apply_fade(audio, 16000, 5.0, 5.0)
 		assert len(result) == 0
 
 	def test_pad_constrained_fade_in (self):
 		"""Fade should only affect the padding region."""
 		audio = numpy.ones(1000, dtype=numpy.float32)
 		pad = 50
-		faded = sdr_scanner.dsp.filters.apply_fade(
+		faded = substation.dsp.filters.apply_fade(
 			audio.copy(), 16000, 15.0, None, pad_in_samples=pad
 		)
 		# Padding region faded
@@ -117,7 +117,7 @@ class TestApplyFade:
 	def test_pad_constrained_fade_out (self):
 		audio = numpy.ones(1000, dtype=numpy.float32)
 		pad = 80
-		faded = sdr_scanner.dsp.filters.apply_fade(
+		faded = substation.dsp.filters.apply_fade(
 			audio.copy(), 16000, None, 15.0, pad_out_samples=pad
 		)
 		assert faded[-1] == pytest.approx(0.0, abs=1e-6)
@@ -127,13 +127,13 @@ class TestApplyFade:
 	def test_fade_longer_than_audio (self):
 		"""Fade durations exceeding audio length are clamped."""
 		audio = numpy.ones(10, dtype=numpy.float32)
-		faded = sdr_scanner.dsp.filters.apply_fade(audio.copy(), 16000, 1000.0, 1000.0)
+		faded = substation.dsp.filters.apply_fade(audio.copy(), 16000, 1000.0, 1000.0)
 		assert faded[0] == pytest.approx(0.0, abs=1e-6)
 		assert len(faded) == 10
 
 	def test_monotonic_fade_in (self):
 		audio = numpy.ones(500, dtype=numpy.float32)
-		faded = sdr_scanner.dsp.filters.apply_fade(audio.copy(), 16000, 20.0, None)
+		faded = substation.dsp.filters.apply_fade(audio.copy(), 16000, 20.0, None)
 		fade_len = int(16000 * 0.02)
 		fade_region = faded[:fade_len]
 		# Should be non-decreasing

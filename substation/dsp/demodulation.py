@@ -9,8 +9,8 @@ import numpy.typing
 import scipy.ndimage
 import scipy.signal
 
-import sdr_scanner.constants
-import sdr_scanner.dsp.filters
+import substation.constants
+import substation.dsp.filters
 
 def demodulate_nfm (
 	iq_samples: numpy.typing.NDArray[numpy.complex64],
@@ -37,7 +37,7 @@ def demodulate_nfm (
 
 	# 1. Decimate IQ samples to an integer-multiple IF rate to reduce CPU and complexity.
 	# The IF rate is kept high enough (3-4x audio rate) for reliable FM math and de-emphasis.
-	target_if_rate = audio_sample_rate * sdr_scanner.constants.NFM_IF_OVERSAMPLE
+	target_if_rate = audio_sample_rate * substation.constants.NFM_IF_OVERSAMPLE
 	if_decimation = max(1, int(round(sample_rate / target_if_rate)))
 	
 	# Optimization: if the total ratio to audio is an integer, pick a factor of it.
@@ -52,7 +52,7 @@ def demodulate_nfm (
 	
 	if_rate = int(round(sample_rate / if_decimation))
 
-	iq_if, state = sdr_scanner.dsp.filters.decimate_iq(
+	iq_if, state = substation.dsp.filters.decimate_iq(
 		iq_samples,
 		sample_rate,
 		if_rate,
@@ -77,7 +77,7 @@ def demodulate_nfm (
 	state['nfm_last_iq'] = iq_if[-1]
 
 	# 4. De-emphasis compensates for transmitter pre-emphasis.
-	tau = sdr_scanner.constants.NFM_DEEMPHASIS_TAU
+	tau = substation.constants.NFM_DEEMPHASIS_TAU
 	alpha = 1.0 / (1.0 + if_rate * tau)
 
 	if 'deemph_zi' not in state:
@@ -98,11 +98,11 @@ def demodulate_nfm (
 
 	# 6. Normalize based on deviation and sample rate.
 	# Increasing denominator slightly or adding gain here helps with low levels.
-	demod_normalized = demod_dc_blocked / (2 * numpy.pi * sdr_scanner.constants.NFM_DEVIATION_HZ / if_rate)
+	demod_normalized = demod_dc_blocked / (2 * numpy.pi * substation.constants.NFM_DEVIATION_HZ / if_rate)
 	demod_normalized = numpy.clip(demod_normalized, -1.0, 1.0)
 
 	# 7. Decimate to final audio rate.
-	return sdr_scanner.dsp.filters.decimate_audio(
+	return substation.dsp.filters.decimate_audio(
 		demod_normalized,
 		if_rate,
 		audio_sample_rate,
@@ -135,7 +135,7 @@ def demodulate_am (
 	demod = numpy.abs(iq_samples)
 
 	# 2. Decimate to final audio rate.
-	audio, state = sdr_scanner.dsp.filters.decimate_audio(
+	audio, state = substation.dsp.filters.decimate_audio(
 		demod,
 		sample_rate,
 		audio_sample_rate,
@@ -162,9 +162,9 @@ def demodulate_am (
 
 	# 4. Vectorized AGC.
 	env = numpy.abs(audio)
-	attack_ms = sdr_scanner.constants.AM_AGC_ATTACK_MS
-	release_ms = sdr_scanner.constants.AM_AGC_RELEASE_MS
-	floor = sdr_scanner.constants.AM_AGC_FLOOR
+	attack_ms = substation.constants.AM_AGC_ATTACK_MS
+	release_ms = substation.constants.AM_AGC_RELEASE_MS
+	floor = substation.constants.AM_AGC_FLOOR
 
 	attack_samples = max(1, int(audio_sample_rate * (attack_ms / 1000.0)))
 	release_samples = max(1, int(audio_sample_rate * (release_ms / 1000.0)))
@@ -181,7 +181,7 @@ def demodulate_am (
 
 	output = (audio / level_arr).astype(numpy.float32)
 	state['am_agc_level'] = float(level_arr[-1]) if len(level_arr) > 0 else floor
-	output *= sdr_scanner.constants.AM_OUTPUT_GAIN
+	output *= substation.constants.AM_OUTPUT_GAIN
 
 	output = numpy.clip(output, -1.0, 1.0)
 	return output.astype(numpy.float32, copy=False), state

@@ -1,5 +1,5 @@
 """
-Global constants for SDR Scanner.
+Global constants for Substation.
 
 This module contains configuration constants used throughout the application.
 These are separated from runtime configuration (config.yaml) because they are

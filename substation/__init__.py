@@ -1,5 +1,5 @@
 """
-SDR Scanner - Software-defined radio band scanner.
+Substation - Software-defined radio band scanner.
 
 A Python application for scanning and recording activity on radio bands
 using RTL-SDR or HackRF hardware. Features include:
@@ -10,9 +10,9 @@ using RTL-SDR or HackRF hardware. Features include:
 - Broadcast WAV format with embedded metadata
 
 Typical usage:
-    sdr-scanner --band pmr
-    sdr-scanner --list-bands
-    sdr-scanner --band airband --device-type hackrf
+    substation --band pmr
+    substation --list-bands
+    substation --band airband --device-type hackrf
 """
 
 __version__ = "0.1.0"

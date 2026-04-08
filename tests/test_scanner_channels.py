@@ -5,8 +5,8 @@ import fractions
 import numpy
 import pytest
 
-import sdr_scanner.config
-import sdr_scanner.scanner
+import substation.config
+import substation.scanner
 
 from iq_generators import generate_tone_iq, generate_noise_iq
 
@@ -26,8 +26,8 @@ class TestCalculateChannels:
 	def test_two_channels (self, minimal_config_dict):
 		"""A band spanning exactly one spacing should have 2 channels."""
 		minimal_config_dict["bands"]["test_nfm"]["freq_end"] = 446.00625e6 + 12500.0
-		config = sdr_scanner.config.validate_config(minimal_config_dict)
-		sc = sdr_scanner.scanner.RadioScanner(
+		config = substation.config.validate_config(minimal_config_dict)
+		sc = substation.scanner.RadioScanner(
 			config=config, band_name="test_nfm", device_type="rtlsdr"
 		)
 		assert len(sc.channels) == 2
@@ -41,8 +41,8 @@ class TestCalculateChannels:
 		minimal_config_dict["bands"]["test_nfm"]["freq_end"] = 101.2375e6
 		minimal_config_dict["bands"]["test_nfm"]["channel_spacing"] = 12500.0
 		minimal_config_dict["bands"]["test_nfm"]["sample_rate"] = 2.4e6
-		config = sdr_scanner.config.validate_config(minimal_config_dict)
-		sc = sdr_scanner.scanner.RadioScanner(
+		config = substation.config.validate_config(minimal_config_dict)
+		sc = substation.scanner.RadioScanner(
 			config=config, band_name="test_nfm", device_type="rtlsdr"
 		)
 		assert len(sc.channels) == 100
@@ -51,8 +51,8 @@ class TestCalculateChannels:
 	def test_excluded_channels (self, minimal_config_dict):
 		"""Excluded indices should be removed from the channel list."""
 		minimal_config_dict["bands"]["test_nfm"]["exclude_channel_indices"] = [0, 2]
-		config = sdr_scanner.config.validate_config(minimal_config_dict)
-		sc = sdr_scanner.scanner.RadioScanner(
+		config = substation.config.validate_config(minimal_config_dict)
+		sc = substation.scanner.RadioScanner(
 			config=config, band_name="test_nfm", device_type="rtlsdr"
 		)
 		# Original 8 channels minus 2 excluded = 6

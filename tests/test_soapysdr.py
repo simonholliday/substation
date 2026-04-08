@@ -85,8 +85,8 @@ def _create_soapy_device (driver: str = 'airspy', device_index: int = 0) -> tupl
 
 	with unittest.mock.patch.dict(sys.modules, {'SoapySDR': mock_soapy}):
 
-		import sdr_scanner.devices.soapysdr
-		sdr_device = sdr_scanner.devices.soapysdr.SoapySdrDevice(driver, device_index)
+		import substation.devices.soapysdr
+		sdr_device = substation.devices.soapysdr.SoapySdrDevice(driver, device_index)
 
 	return sdr_device, mock_device, mock_soapy
 
@@ -106,9 +106,9 @@ class TestSoapySdrInit:
 
 		with unittest.mock.patch.dict(sys.modules, {'SoapySDR': mock_soapy}):
 
-			import sdr_scanner.devices.soapysdr
+			import substation.devices.soapysdr
 			with pytest.raises(RuntimeError, match="No SoapySDR devices found"):
-				sdr_scanner.devices.soapysdr.SoapySdrDevice('airspy')
+				substation.devices.soapysdr.SoapySdrDevice('airspy')
 
 	def test_index_out_of_range_raises (self):
 
@@ -123,9 +123,9 @@ class TestSoapySdrInit:
 
 		with unittest.mock.patch.dict(sys.modules, {'SoapySDR': mock_soapy}):
 
-			import sdr_scanner.devices.soapysdr
+			import substation.devices.soapysdr
 			with pytest.raises(RuntimeError, match="out of range"):
-				sdr_scanner.devices.soapysdr.SoapySdrDevice('airspy', device_index=5)
+				substation.devices.soapysdr.SoapySdrDevice('airspy', device_index=5)
 
 	def test_capabilities_logged (self):
 

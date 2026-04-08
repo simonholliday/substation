@@ -3,8 +3,8 @@
 import numpy
 import pytest
 
-import sdr_scanner.constants
-import sdr_scanner.scanner
+import substation.constants
+import substation.scanner
 
 from iq_generators import generate_noise_iq, generate_tone_iq
 
@@ -75,7 +75,7 @@ class TestEMASmoothing:
 			if sc._noise_floor_ema is None:
 				sc._noise_floor_ema = raw_nf
 			else:
-				alpha = sdr_scanner.constants.NOISE_FLOOR_EMA_ALPHA
+				alpha = substation.constants.NOISE_FLOOR_EMA_ALPHA
 				sc._noise_floor_ema = alpha * raw_nf + (1 - alpha) * sc._noise_floor_ema
 			floors.append(sc._noise_floor_ema)
 

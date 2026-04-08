@@ -22,12 +22,12 @@ import typing
 import numpy
 import numpy.typing
 
-import sdr_scanner.devices.base
+import substation.devices.base
 
 logger = logging.getLogger(__name__)
 
 
-class SoapySdrDevice (sdr_scanner.devices.base.BaseDevice):
+class SoapySdrDevice (substation.devices.base.BaseDevice):
 
 	"""
 	Universal SDR device wrapper using SoapySDR.

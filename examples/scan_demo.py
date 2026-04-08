@@ -1,7 +1,7 @@
 """
-Example: Using SDR Scanner as a Python Module
+Example: Using Substation as a Python Module
 
-This script demonstrates how to integrate the SDR Scanner directly into your
+This script demonstrates how to integrate the Substation directly into your
 own Python projects. This is useful if you want to build custom automation,
 dashboards, or integration with other systems (like Home Assistant or MQTT).
 
@@ -17,8 +17,8 @@ import logging
 import sys
 import typing
 
-import sdr_scanner.config
-import sdr_scanner.scanner
+import substation.config
+import substation.scanner
 
 # Professional logging setup
 logger = logging.getLogger(__name__)
@@ -69,11 +69,11 @@ async def run_custom_scanner () -> None:
 		# 1. Load configuration from a YAML file
 		# This contains your hardware settings and band definitions
 		config_path = './config.yaml'
-		config_data = sdr_scanner.config.load_config(config_path)
+		config_data = substation.config.load_config(config_path)
 
 		# 2. Instantiate the RadioScanner
 		# You can specify the band, device type, and device index here
-		scanner = sdr_scanner.scanner.RadioScanner(
+		scanner = substation.scanner.RadioScanner(
 			config=config_data,
 			band_name='pmr',      # Must match a band in your config.yaml
 			device_type='rtlsdr', # 'rtlsdr' or 'hackrf'

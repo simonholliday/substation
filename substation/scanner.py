@@ -9,12 +9,12 @@ import numpy.typing
 import scipy.fft
 import scipy.signal
 
-import sdr_scanner.config
-import sdr_scanner.constants
-import sdr_scanner.devices
-import sdr_scanner.dsp.demodulation
-import sdr_scanner.dsp.filters
-import sdr_scanner.recording
+import substation.config
+import substation.constants
+import substation.devices
+import substation.dsp.demodulation
+import substation.dsp.filters
+import substation.recording
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +45,9 @@ class RadioScanner:
 		"""
 
 		if config is None:
-			self.config = sdr_scanner.config.load_config(config_path)
+			self.config = substation.config.load_config(config_path)
 		else:
-			self.config = sdr_scanner.config.validate_config(config)
+			self.config = substation.config.validate_config(config)
 
 		self.band_name = band_name
 		self.device_type = device_type
@@ -70,16 +70,16 @@ class RadioScanner:
 		self.snr_threshold_db = self.band_config.snr_threshold_db
 		# Hysteresis: use a lower threshold to turn OFF than to turn ON
 		# This prevents rapid toggling when signal strength hovers near the threshold
-		self.snr_threshold_off_db = self.snr_threshold_db - sdr_scanner.constants.HYSTERESIS_DB
+		self.snr_threshold_off_db = self.snr_threshold_db - substation.constants.HYSTERESIS_DB
 
 		# Validate that the off threshold makes sense (must be positive)
-		if self.snr_threshold_db <= sdr_scanner.constants.HYSTERESIS_DB:
+		if self.snr_threshold_db <= substation.constants.HYSTERESIS_DB:
 
-			logger.error(f"CONFIG ERROR: Band '{band_name}' has snr_threshold_db ({self.snr_threshold_db} dB) <= HYSTERESIS_DB ({sdr_scanner.constants.HYSTERESIS_DB} dB)")
+			logger.error(f"CONFIG ERROR: Band '{band_name}' has snr_threshold_db ({self.snr_threshold_db} dB) <= HYSTERESIS_DB ({substation.constants.HYSTERESIS_DB} dB)")
 			logger.error(f"This would result in snr_threshold_off_db = {self.snr_threshold_off_db} dB")
 			logger.error(f"Channels would never turn OFF because SNR rarely drops to 0 or below")
-			logger.error(f"Please set snr_threshold_db to at least {sdr_scanner.constants.HYSTERESIS_DB + 0.1} dB")
-			raise ValueError(f"Invalid snr_threshold_db for band '{band_name}': must be > {sdr_scanner.constants.HYSTERESIS_DB} dB")
+			logger.error(f"Please set snr_threshold_db to at least {substation.constants.HYSTERESIS_DB + 0.1} dB")
+			raise ValueError(f"Invalid snr_threshold_db for band '{band_name}': must be > {substation.constants.HYSTERESIS_DB} dB")
 
 		self.sdr_gain_db = self.band_config.sdr_gain_db
 
@@ -94,7 +94,7 @@ class RadioScanner:
 		self.soft_limit_drive = self.recording_config.soft_limit_drive
 		self.hold_time_seconds = self.recording_config.recording_hold_time_ms / 1000.0
 
-		self.can_demod = self.modulation in sdr_scanner.dsp.demodulation.DEMODULATORS
+		self.can_demod = self.modulation in substation.dsp.demodulation.DEMODULATORS
 
 		# Check if recording is possible (enabled and demodulator available)
 		self.can_record = self.recording_enabled and self.can_demod
@@ -146,7 +146,7 @@ class RadioScanner:
 		self.channel_last_warning_times: dict[float, float] = {}
 
 		# Channel recorders: one per active channel
-		self.channel_recorders: dict[float, sdr_scanner.recording.ChannelRecorder] = {}
+		self.channel_recorders: dict[float, substation.recording.ChannelRecorder] = {}
 
 		# Callbacks for channel state changes (ON/OFF)
 		self.state_callbacks: list[typing.Callable] = []
@@ -189,7 +189,7 @@ class RadioScanner:
 		# EMA-smoothed noise floor (dB) and warmup counter.
 		# Smoothing eliminates per-slice jitter; warmup absorbs SDR startup transients.
 		self._noise_floor_ema: float | None = None
-		self._warmup_remaining: int = sdr_scanner.constants.NOISE_FLOOR_WARMUP_SLICES
+		self._warmup_remaining: int = substation.constants.NOISE_FLOOR_WARMUP_SLICES
 
 		# Sample queue for async streaming
 		self.sample_queue: asyncio.Queue | None = None
@@ -278,7 +278,7 @@ class RadioScanner:
 		self.samples_per_slice = -(-self.samples_per_slice // self.sdr_device_sample_size) * self.sdr_device_sample_size
 
 		# FFT size per segment for Welch averaging (smaller segments reduce variance).
-		self.fft_size = self.samples_per_slice // sdr_scanner.constants.WELCH_SEGMENTS
+		self.fft_size = self.samples_per_slice // substation.constants.WELCH_SEGMENTS
 
 		# Warn if FFT size is not a power of two, which can impact performance.
 		if (self.fft_size & (self.fft_size - 1) != 0) or self.fft_size == 0:
@@ -311,7 +311,7 @@ class RadioScanner:
 			logger.error(f"Observable frequency range: {observable_min_freq/1e6:.3f} - {observable_max_freq/1e6:.3f} MHz")
 			logger.error(f"")
 			logger.error(f"To fix this, you can either:")
-			logger.error(f"  1. Split this band into multiple smaller bands of ~{observable_span*0.8/1e6:.1f} MHz each in sdr_scanner.config.yaml")
+			logger.error(f"  1. Split this band into multiple smaller bands of ~{observable_span*0.8/1e6:.1f} MHz each in substation.config.yaml")
 			logger.error(f"  2. Increase the sample_rate for this band (if your SDR hardware supports it)")
 			logger.error(f"  3. Use a different SDR with higher bandwidth capability")
 			logger.error(f"")
@@ -341,7 +341,7 @@ class RadioScanner:
 			logger.warning(f"CONFIG WARNING: {len(channels_outside_range)} channels fall outside observable frequency range:")
 			for ch_freq in channels_outside_range:
 				logger.warning(f"  - Channel {ch_freq/1e6:.5f} MHz is outside {observable_min_freq/1e6:.3f} - {observable_max_freq/1e6:.3f} MHz")
-			logger.warning(f"These channels will not be scanned. Check your band configuration in sdr_scanner.config.yaml")
+			logger.warning(f"These channels will not be scanned. Check your band configuration in substation.config.yaml")
 
 		# Pre-compute noise estimation regions (gaps between channels).
 		self._compute_noise_regions()
@@ -360,16 +360,16 @@ class RadioScanner:
 
 			if idx_end > idx_start and idx_start <= center_bin < idx_end:
 				# Exclude DC spike bins for channels that cross DC.
-				local_dc_start = max(0, center_bin - sdr_scanner.constants.DC_SPIKE_BINS - idx_start)
-				local_dc_end = min(idx_end - idx_start, center_bin + sdr_scanner.constants.DC_SPIKE_BINS + 1 - idx_start)
+				local_dc_start = max(0, center_bin - substation.constants.DC_SPIKE_BINS - idx_start)
+				local_dc_end = min(idx_end - idx_start, center_bin + substation.constants.DC_SPIKE_BINS + 1 - idx_start)
 				mask = numpy.ones(idx_end - idx_start, dtype=bool)
 				mask[local_dc_start:local_dc_end] = False
 				self.channel_dc_masks[idx] = mask
 
 		# Pre-compute DC spike mask for global noise estimation.
 		self.dc_mask = numpy.ones(self.fft_size, dtype=bool)
-		dc_start = max(0, center_bin - sdr_scanner.constants.DC_SPIKE_BINS)
-		dc_end = min(self.fft_size, center_bin + sdr_scanner.constants.DC_SPIKE_BINS + 1)
+		dc_start = max(0, center_bin - substation.constants.DC_SPIKE_BINS)
+		dc_end = min(self.fft_size, center_bin + substation.constants.DC_SPIKE_BINS + 1)
 		self.dc_mask[dc_start:dc_end] = False
 		self.noise_mask = None
 		if self.noise_indices:
@@ -399,8 +399,8 @@ class RadioScanner:
 		self.phase_index_array = numpy.arange(self.samples_per_slice, dtype=numpy.float64)
 
 		logger.info(f"FFT size: {self.fft_size} bins, frequency resolution: {freq_resolution:.1f} Hz")
-		logger.info(f"Welch segments: {sdr_scanner.constants.WELCH_SEGMENTS}, samples per slice: {self.samples_per_slice}")
-		logger.info(f"DC spike exclusion: {sdr_scanner.constants.DC_SPIKE_BINS * 2 + 1} bins around center")
+		logger.info(f"Welch segments: {substation.constants.WELCH_SEGMENTS}, samples per slice: {self.samples_per_slice}")
+		logger.info(f"DC spike exclusion: {substation.constants.DC_SPIKE_BINS * 2 + 1} bins around center")
 
 	def _compute_noise_regions (self) -> None:
 
@@ -629,7 +629,7 @@ class RadioScanner:
 
 		logger.info("Setting up SDR device...")
 
-		self.sdr = sdr_scanner.devices.create_device(self.device_type, self.device_index)
+		self.sdr = substation.devices.create_device(self.device_type, self.device_index)
 		self.sdr.sample_rate = self.sample_rate
 		self.sdr.center_freq = self.center_freq
 
@@ -814,7 +814,7 @@ class RadioScanner:
 			of padding samples at the fade end (start for turn-ON, end for turn-OFF).
 		"""
 
-		threshold = sdr_scanner.constants.TRIM_AMPLITUDE_THRESHOLD
+		threshold = substation.constants.TRIM_AMPLITUDE_THRESHOLD
 		n = len(audio)
 		if n == 0:
 			return audio, 0
@@ -827,13 +827,13 @@ class RadioScanner:
 
 		if turning_on:
 			first = int(above[0])
-			pad = min(first, sdr_scanner.constants.TRIM_PRE_SAMPLES)
+			pad = min(first, substation.constants.TRIM_PRE_SAMPLES)
 			start = first - pad
 			return audio[start:], pad
 		else:
 			last = int(above[-1])
 			remaining = n - 1 - last
-			pad = min(remaining, sdr_scanner.constants.TRIM_POST_SAMPLES)
+			pad = min(remaining, substation.constants.TRIM_POST_SAMPLES)
 			end = last + 1 + pad
 			return audio[:end], pad
 
@@ -1062,7 +1062,7 @@ class RadioScanner:
 		# This is better than let the recorder guess from short audio chunks.
 		initial_noise_floor = getattr(self, '_last_noise_floor_db', None)
 
-		channel_recorder = sdr_scanner.recording.ChannelRecorder(
+		channel_recorder = substation.recording.ChannelRecorder(
 			channel_freq=channel_freq,
 			channel_index=channel_index,
 			band_name=self.band_name,
@@ -1169,7 +1169,7 @@ class RadioScanner:
 				# Seed the EMA on the first slice (avoids slow ramp from zero)
 				self._noise_floor_ema = raw_noise_floor_db
 			else:
-				alpha = sdr_scanner.constants.NOISE_FLOOR_EMA_ALPHA
+				alpha = substation.constants.NOISE_FLOOR_EMA_ALPHA
 				self._noise_floor_ema = alpha * raw_noise_floor_db + (1.0 - alpha) * self._noise_floor_ema
 			noise_floor_db = self._noise_floor_ema
 			self._last_noise_floor_db = noise_floor_db
@@ -1263,7 +1263,7 @@ class RadioScanner:
 					# Demodulate only when we are actively recording to avoid wasted CPU.
 					if trim_end > trim_start:
 						channel_iq = self._extract_channel_iq(samples[trim_start:trim_end], channel_freq, sample_offset=offset)
-						demod_func = sdr_scanner.dsp.demodulation.DEMODULATORS[self.modulation]
+						demod_func = substation.dsp.demodulation.DEMODULATORS[self.modulation]
 						demod_state = None if turning_on else self.channel_demod_state.get(channel_freq)
 
 						audio, new_state = demod_func(channel_iq, self.sample_rate, self.audio_sample_rate, state=demod_state)
@@ -1274,11 +1274,11 @@ class RadioScanner:
 						if turning_on:
 							audio, pad_samples = self._refine_trim_on_audio(audio, turning_on=True)
 							if self.fade_in_ms:
-								audio = sdr_scanner.dsp.filters.apply_fade(audio, self.audio_sample_rate, self.fade_in_ms, None, pad_in_samples=pad_samples)
+								audio = substation.dsp.filters.apply_fade(audio, self.audio_sample_rate, self.fade_in_ms, None, pad_in_samples=pad_samples)
 						elif turning_off:
 							audio, pad_samples = self._refine_trim_on_audio(audio, turning_on=False)
 							if self.fade_out_ms:
-								audio = sdr_scanner.dsp.filters.apply_fade(audio, self.audio_sample_rate, None, self.fade_out_ms, pad_out_samples=pad_samples)
+								audio = substation.dsp.filters.apply_fade(audio, self.audio_sample_rate, None, self.fade_out_ms, pad_out_samples=pad_samples)
 
 						if not turning_off:
 							self.channel_demod_state[channel_freq] = new_state

@@ -6,26 +6,26 @@ import unittest.mock
 
 import pytest
 
-import sdr_scanner.devices
+import substation.devices
 
 
 def _mock_create_device (alias, device_type, mock_class_name):
 	"""Helper: mock the submodule and call create_device."""
 	mock_device = unittest.mock.MagicMock()
 	mock_cls = unittest.mock.MagicMock(return_value=mock_device)
-	fake_module = types.ModuleType(f"sdr_scanner.devices.{device_type}")
+	fake_module = types.ModuleType(f"substation.devices.{device_type}")
 	setattr(fake_module, mock_class_name, mock_cls)
 
 	patches = {
-		f"sdr_scanner.devices.{device_type}": fake_module,
+		f"substation.devices.{device_type}": fake_module,
 	}
 	with unittest.mock.patch.dict(sys.modules, patches):
-		# Also set the attribute on the parent module so `sdr_scanner.devices.rtlsdr` resolves
-		setattr(sdr_scanner.devices, device_type, fake_module)
+		# Also set the attribute on the parent module so `substation.devices.rtlsdr` resolves
+		setattr(substation.devices, device_type, fake_module)
 		try:
-			device = sdr_scanner.devices.create_device(alias, device_index=0)
+			device = substation.devices.create_device(alias, device_index=0)
 		finally:
-			delattr(sdr_scanner.devices, device_type)
+			delattr(substation.devices, device_type)
 	return mock_cls
 
 
@@ -33,7 +33,7 @@ class TestCreateDevice:
 
 	def test_unknown_type_raises (self):
 		with pytest.raises(ValueError, match="Unsupported"):
-			sdr_scanner.devices.create_device("unknown_sdr")
+			substation.devices.create_device("unknown_sdr")
 
 	def test_rtlsdr_aliases (self):
 		for alias in ("rtl", "rtlsdr", "rtl-sdr"):

@@ -1,11 +1,11 @@
-"""Shared fixtures for SDR Scanner tests."""
+"""Shared fixtures for Substation tests."""
 
 import typing
 
 import pytest
 
-import sdr_scanner.config
-import sdr_scanner.scanner
+import substation.config
+import substation.scanner
 
 
 # ---------------------------------------------------------------------------
@@ -50,19 +50,19 @@ def minimal_config_dict (minimal_band_dict: dict, tmp_path: typing.Any) -> dict:
 
 
 @pytest.fixture
-def app_config (minimal_config_dict: dict) -> sdr_scanner.config.AppConfig:
+def app_config (minimal_config_dict: dict) -> substation.config.AppConfig:
 
 	"""Validated AppConfig instance."""
 
-	return sdr_scanner.config.validate_config(minimal_config_dict)
+	return substation.config.validate_config(minimal_config_dict)
 
 
 @pytest.fixture
-def scanner_instance (app_config: sdr_scanner.config.AppConfig) -> sdr_scanner.scanner.RadioScanner:
+def scanner_instance (app_config: substation.config.AppConfig) -> substation.scanner.RadioScanner:
 
 	"""RadioScanner initialised with FFT params but no SDR device."""
 
-	sc = sdr_scanner.scanner.RadioScanner(
+	sc = substation.scanner.RadioScanner(
 		config=app_config,
 		band_name="test_nfm",
 		device_type="rtlsdr",

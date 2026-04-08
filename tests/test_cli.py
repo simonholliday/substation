@@ -6,7 +6,7 @@ import unittest.mock
 import pytest
 import yaml
 
-import sdr_scanner.cli
+import substation.cli
 
 
 class TestListBands:
@@ -14,7 +14,7 @@ class TestListBands:
 	def test_list_bands_prints_names (self, tmp_path, minimal_config_dict, capsys):
 		cfg_path = tmp_path / "config.yaml"
 		cfg_path.write_text(yaml.dump(minimal_config_dict))
-		sdr_scanner.cli.list_bands(str(cfg_path))
+		substation.cli.list_bands(str(cfg_path))
 		captured = capsys.readouterr()
 		assert "test_nfm" in captured.out
 
@@ -26,8 +26,8 @@ class TestMainArgParsing:
 		cfg_path = tmp_path / "config.yaml"
 		cfg_path.write_text(yaml.dump(minimal_config_dict))
 		try:
-			with unittest.mock.patch("sys.argv", ["sdr-scanner", "--list-bands", "-c", str(cfg_path)]):
-				sdr_scanner.cli.main()
+			with unittest.mock.patch("sys.argv", ["substation", "--list-bands", "-c", str(cfg_path)]):
+				substation.cli.main()
 		except SystemExit as exc:
 			assert exc.code in (0, None)
 		captured = capsys.readouterr()
@@ -39,7 +39,7 @@ class TestMainArgParsing:
 		cfg_path.write_text(yaml.dump(minimal_config_dict))
 		with pytest.raises(SystemExit) as exc_info:
 			with unittest.mock.patch("sys.argv", [
-				"sdr-scanner", "-b", "nonexistent_band", "-c", str(cfg_path)
+				"substation", "-b", "nonexistent_band", "-c", str(cfg_path)
 			]):
-				sdr_scanner.cli.main()
+				substation.cli.main()
 		assert exc_info.value.code != 0

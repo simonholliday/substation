@@ -1,7 +1,7 @@
-SDR Scanner Installation Guide
+Substation Installation Guide
 ==============================
 
-This guide covers the installation of hardware drivers, system optimizations, and software dependencies for SDR Scanner.
+This guide covers the installation of hardware drivers, system optimizations, and software dependencies for Substation.
 
 1. RTL-SDR Blog V4 Driver Installation
 --------------------------------------
@@ -15,8 +15,9 @@ sudo rm -rvf /usr/lib/librtlsdr* /usr/include/rtl-sdr* /usr/local/lib/librtlsdr*
 sudo apt update
 sudo apt install -y libusb-1.0-0-dev git cmake pkg-config build-essential
 
-# Clone and build the latest rtl-sdr driver from source
-git clone https://github.com/osmocom/rtl-sdr
+# Clone and build the RTL-SDR Blog fork (required for pyrtlsdr 0.4.0+)
+# The osmocom/rtl-sdr repo is missing symbols like rtlsdr_set_dithering
+git clone https://github.com/rtlsdrblog/rtl-sdr-blog.git rtl-sdr
 cd rtl-sdr
 mkdir build && cd build
 cmake ../ -DINSTALL_UDEV_RULES=ON
@@ -43,7 +44,7 @@ sudo reboot
 
 3. OS Dependencies
 ------------------
-SDR Scanner requires specific system libraries for audio file handling (WAV) and HackRF support.
+Substation requires specific system libraries for audio file handling (WAV) and HackRF support.
 
 # Install audio and math libraries
 sudo apt install -y libsndfile1 libsndfile1-dev python3-setuptools python3-dev
@@ -100,7 +101,7 @@ pip install -e .
 After installation, you can verify everything is working by listing the available bands:
 
 # Using the CLI directly
-sdr-scanner --list-bands
+substation --list-bands
 
 # Or using the Python module
-python3 -m sdr_scanner --list-bands
+python3 -m substation --list-bands

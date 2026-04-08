@@ -1,7 +1,7 @@
-# SDR Scanner
+# Substation
 
 ## Overview
-SDR Scanner is a high-performance tool for monitoring and recording radio activity using Software Defined Radio (SDR) hardware. It is designed to be used in two ways:
+Substation is a high-performance tool for monitoring and recording radio activity using Software Defined Radio (SDR) hardware. It is designed to be used in two ways:
 
 1.  **As a Command-Line Tool**: Quickly scan and record bands using simple terminal commands.
 2.  **As a Python Module**: Integrate radio scanning, detection, and callbacks directly into your own Python applications.
@@ -44,7 +44,7 @@ pip install -e .
 4) Run:
 
 ```bash
-sdr-scanner --band air_civil_bristol --device-type rtlsdr --device-index 0
+substation --band air_civil_bristol --device-type rtlsdr --device-index 0
 ```
 
 Audio files are written to:
@@ -54,8 +54,8 @@ Audio files are written to:
 
 ## Command Line
 ```bash
-sdr-scanner --band <band> [--config <path>] [--device-type rtlsdr|hackrf|airspy|airspyhf|soapy:<driver>] [--device-index N]
-sdr-scanner --list-bands
+substation --band <band> [--config <path>] [--device-type rtlsdr|hackrf|airspy|airspyhf|soapy:<driver>] [--device-index N]
+substation --list-bands
 ```
 
 ## Python Module Usage
@@ -64,8 +64,8 @@ You can also use the scanner as a library in your own code. This allows you to r
 ```python
 import asyncio
 
-import sdr_scanner.config
-import sdr_scanner.scanner
+import substation.config
+import substation.scanner
 
 # State Callback: Triggered whenever a signal starts or stops
 def my_state_handler (band: str, ch: int, active: bool, snr: float) -> None:
@@ -82,10 +82,10 @@ async def main () -> None:
 	"""
 
 	# Load configuration
-	config_data = sdr_scanner.config.load_config ("config.yaml")
+	config_data = substation.config.load_config ("config.yaml")
 
 	# Initialize scanner instance
-	scanner = sdr_scanner.scanner.RadioScanner (
+	scanner = substation.scanner.RadioScanner (
 		config=config_data,
 		band_name="pmr",
 		device_type="rtlsdr"
@@ -207,7 +207,7 @@ SoapySDRUtil --find
 The Python virtual environment **must** be created with `--system-site-packages` to access the system-installed SoapySDR bindings:
 
 ```bash
-python3 -m venv --system-site-packages /home/si/venvs/sdr-scanner
+python3 -m venv --system-site-packages /home/si/venvs/substation
 ```
 
 ## Broadcast WAV (BWF) & Metadata
@@ -222,7 +222,7 @@ If you open a recording in a professional audio tool or a BWF viewer, you will s
 | :--- | :--- | :--- |
 | **Description** | `{"band":"pmr","channel_index":0,"channel_freq":446006250.0}` | Machine-readable JSON with channel details |
 | **Coding History** | `A=PCM,F=16000,W=16,M=mono,T=NFM;Frequency=446.00625MHz` | Technical signal chain (Algorithm, Rate, Modulation) |
-| **Originator** | `SDR Scanner` | The software that created the file |
+| **Originator** | `Substation` | The software that created the file |
 | **Origination Date** | `2026-01-27` | Date the recording started |
 | **Time Reference** | `1152000` | Sample count since midnight (for precise timing) |
 
@@ -232,7 +232,7 @@ If you open a recording in a professional audio tool or a BWF viewer, you will s
 Scan PMR446 with an AirSpy R2 (higher dynamic range than RTL-SDR, with per-element gain control):
 
 ```bash
-sdr-scanner --band pmr --device-type airspy --device-index 0
+substation --band pmr --device-type airspy --device-index 0
 ```
 
 To fine-tune the AirSpy R2's gain stages for best noise figure, set per-element gains in `config.yaml` instead of a single `sdr_gain_db` value. Available element names and their ranges are logged at INFO level on startup — use those to guide your values:
@@ -253,7 +253,7 @@ bands:
 Scan HF shortwave bands with an AirSpy HF+ Discovery:
 
 ```bash
-sdr-scanner --band amateur_hf_20m --device-type airspyhf --device-index 0
+substation --band amateur_hf_20m --device-type airspyhf --device-index 0
 ```
 
 The HF+ Discovery has a maximum bandwidth of 768 kHz, so `sample_rate` must be set accordingly:
@@ -299,21 +299,21 @@ The general principle is: **maximise gain early in the chain** (LNA) and **minim
 Run one process per device:
 
 ```bash
-sdr-scanner --band air_civil_bristol --device-type rtlsdr --device-index 0
-sdr-scanner --band pmr --device-type rtlsdr --device-index 1
+substation --band air_civil_bristol --device-type rtlsdr --device-index 0
+substation --band pmr --device-type rtlsdr --device-index 1
 ```
 
 If you need stricter real-time behavior, you can pin each scan to a CPU core:
 
 ```bash
-taskset -c 2 sdr-scanner --band air_civil_bristol --device-index 0
-taskset -c 3 sdr-scanner --band pmr --device-index 1
+taskset -c 2 substation --band air_civil_bristol --device-index 0
+taskset -c 3 substation --band pmr --device-index 1
 ```
 
 ## Resource and Performance Notes
 - **Sample rate dominates CPU**. Large bands at high sample rates increase FFT/PSD load.
 - **Overrun warnings** indicate the processing of a slice exceeded its real-time window. This can lead to dropped IQ blocks (`Sample queue full`).
-- **Noise reduction** runs during write/flush if enabled (default). It uses `apply_spectral_subtraction` which is efficient and receives the band-wide noise floor for improved frame classification. The alternative `apply_noisereduce` implementation exists in `sdr_scanner/dsp/noise_reduction.py` for reference but is not used by default as it is significantly more CPU-intensive.
+- **Noise reduction** runs during write/flush if enabled (default). It uses `apply_spectral_subtraction` which is efficient and receives the band-wide noise floor for improved frame classification. The alternative `apply_noisereduce` implementation exists in `substation/dsp/noise_reduction.py` for reference but is not used by default as it is significantly more CPU-intensive.
 - **Queue size** provides burst tolerance but uses RAM (each slice can be several MB).
 
 If you see repeated `Sample queue full` warnings, reduce the band's `sample_rate`, exclude channels, or increase `sample_queue_maxsize`.

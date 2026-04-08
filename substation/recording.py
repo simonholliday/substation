@@ -24,7 +24,7 @@ import numpy
 import numpy.typing
 import soundfile
 
-import sdr_scanner.dsp.noise_reduction
+import substation.dsp.noise_reduction
 
 
 logger = logging.getLogger(__name__)
@@ -180,7 +180,7 @@ class ChannelRecorder:
 			logger.warning("BWF description exceeds 256 characters and will be truncated.")
 
 		# Originator: software that created this file
-		bwf_originator = "SDR Scanner"
+		bwf_originator = "Substation"
 		# Originator reference: unique ID for this recording (UUID ensures uniqueness)
 		bwf_originator_reference = str(uuid.uuid4())[:32]  # BWF spec limits to 32 chars
 
@@ -347,7 +347,7 @@ class ChannelRecorder:
 		# This is 5-10x faster than the noisereduce library
 		if self.noise_reduction_enabled:
 			try:
-				samples, self.noise_mag = sdr_scanner.dsp.noise_reduction.apply_spectral_subtraction(
+				samples, self.noise_mag = substation.dsp.noise_reduction.apply_spectral_subtraction(
 					samples, self.audio_sample_rate, oversub=0.7, floor=0.06,
 					noise_mag=self.noise_mag, adaptive_noise_estimation=self.initial_noise_floor_db is not None,
 				)

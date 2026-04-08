@@ -16,12 +16,12 @@ import typing
 
 import rtlsdr
 
-import sdr_scanner.devices.base
+import substation.devices.base
 
 logger = logging.getLogger(__name__)
 
 
-class RtlSdrDevice (sdr_scanner.devices.base.BaseDevice):
+class RtlSdrDevice (substation.devices.base.BaseDevice):
 	
 	"""
 	Wrapper for RTL-SDR devices

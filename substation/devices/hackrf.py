@@ -26,12 +26,12 @@ import typing
 import numpy
 import numpy.typing
 
-import sdr_scanner.devices.base
+import substation.devices.base
 
 logger = logging.getLogger(__name__)
 
 
-class HackRfDevice (sdr_scanner.devices.base.BaseDevice):
+class HackRfDevice (substation.devices.base.BaseDevice):
 	
 	"""
 	Wrapper for HackRF devices with automatic binding detection.
