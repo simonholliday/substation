@@ -17,6 +17,7 @@ Requirements:
 
 import logging
 import threading
+import time
 import typing
 
 import numpy
@@ -149,15 +150,16 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 		if antennas:
 			logger.info(f"Antennas: {', '.join(antennas)}")
 
-		# Stream formats (for debugging resolution issues)
+		# Stream format negotiation context.
 		# getNativeStreamFormat requires a mutable fullScale output parameter
-		# in the SoapySDR Python bindings.
+		# in the SoapySDR Python bindings; some older bindings have a
+		# different signature and raise TypeError or AttributeError.
 
 		try:
 			native_fmt = self._device.getNativeStreamFormat(self._soapy.SOAPY_SDR_RX, 0, [0.0])
 			supported_fmts = self._device.getStreamFormats(self._soapy.SOAPY_SDR_RX, 0)
 			logger.info(f"Native format: {native_fmt}, supported: {', '.join(supported_fmts)}")
-		except TypeError:
+		except (TypeError, AttributeError):
 			supported_fmts = self._device.getStreamFormats(self._soapy.SOAPY_SDR_RX, 0)
 			logger.info(f"Supported formats: {', '.join(supported_fmts)}")
 
@@ -408,12 +410,14 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 
 		median_rms = float(numpy.median(rms_values))
 
-		# Log the gain context so the normalisation is traceable
+		# Log the gain context so the normalisation is traceable.
+		# This is a logging convenience — failures are surfaced at DEBUG
+		# level so they're discoverable but don't break calibration.
 		try:
 			overall_gain = self._device.getGain(self._soapy.SOAPY_SDR_RX, 0)
 			logger.info(f"IQ calibration: device overall gain {overall_gain:.1f} dB, median RMS {median_rms:.6f}")
-		except Exception:
-			pass
+		except Exception as exc:
+			logger.debug(f"IQ calibration: could not read overall gain ({exc}); median RMS {median_rms:.6f}")
 
 		if median_rms < 1e-10:
 			logger.warning("IQ calibration: signal too weak to measure, using scale factor 1.0")
@@ -428,10 +432,9 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 			return 1.0
 
 		# Samples are very small (e.g., AirSpy HF+ with attenuation).
-		# Scale so that the median noise floor RMS maps to ~0.001, which is
-		# the minimum usable level without losing demodulated audio to
-		# floating-point granularity.
-		target_rms = 0.001
+		# Scale so that the median noise floor RMS maps to ~0.01, which is
+		# typical for RTL-SDR and produces good demodulated audio levels.
+		target_rms = 0.01
 		scale = target_rms / median_rms
 		logger.info(f"IQ sample scale: median RMS {median_rms:.6f} — applying {scale:.1f}x normalisation")
 		return scale
@@ -461,37 +464,14 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 	def _buffer_samples (self, samples: numpy.typing.NDArray[numpy.complex64], chunk_size: int, callback: typing.Callable) -> None:
 
 		"""
-		Accumulate samples and emit fixed-size chunks to the callback.
-
-		SoapySDR's readStream may deliver variable-size blocks. The scanner
-		expects fixed-size blocks (sdr_device_sample_size), so this method
-		buffers and rechunks.
-
-		This method:
-		1. Concatenates new samples with any leftover from previous call
-		2. Emits as many full chunks as possible
-		3. Saves any remaining samples for next call
+		Rechunk variable-size SoapySDR blocks into fixed-size chunks for
+		the scanner.  Delegates to the shared rechunk_samples helper so
+		all device backends use identical boundary logic.
 		"""
 
-		# If chunk_size is 0 or negative, just pass through directly
-		if chunk_size <= 0:
-			callback(samples, None)
-			return
-
-		# Combine leftover from previous call with new samples
-		combined = numpy.concatenate((self._rx_buffer, samples)) if self._rx_buffer.size > 0 else samples
-
-		# Calculate how many full chunks we can emit
-		num_chunks = combined.size // chunk_size
-
-		# Emit each full chunk
-		for i in range(num_chunks):
-			start, end = i * chunk_size, (i + 1) * chunk_size
-			callback(combined[start:end], None)
-
-		# Save any remaining samples for next call
-		leftover = combined.size % chunk_size
-		self._rx_buffer = combined[-leftover:] if leftover > 0 else numpy.array([], dtype=numpy.complex64)
+		self._rx_buffer = substation.devices.base.rechunk_samples(
+			self._rx_buffer, samples, chunk_size, callback
+		)
 
 	def read_samples_async (self, callback: typing.Callable, num_samples: int) -> None:
 
@@ -516,14 +496,17 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 
 		# Calibrate IQ scale from initial samples.  Some devices (e.g.,
 		# AirSpy HF+) deliver CF32 at a much smaller scale than [-1, 1].
-		# We read a few blocks, measure peak amplitude, and compute a
-		# scale factor that brings the peak to ~0.5 (leaving headroom).
+		# See _calibrate_iq_scale for the median-RMS measurement strategy
+		# and the rationale for picking it over peak detection.
 		self._iq_scale = self._calibrate_iq_scale(self._stream, self._stream_format)
 
 		self._stop_event.clear()
 		self._rx_buffer = numpy.array([], dtype=numpy.complex64)
 
-		# Capture state for the reader thread closure
+		# Capture state for the reader thread closure.  All device-related
+		# state is captured up front so the closure does not depend on
+		# attribute lookups through self while the thread is running.
+		device = self._device
 		stream = self._stream
 		stream_format = self._stream_format
 		is_cs16 = (stream_format == self._soapy.SOAPY_SDR_CS16)
@@ -541,7 +524,7 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 			"""
 
 			# Determine read buffer size — use MTU if larger than requested
-			mtu = self._device.getStreamMTU(stream)
+			mtu = device.getStreamMTU(stream)
 			read_size = max(mtu, num_samples)
 
 			# Allocate read buffer according to negotiated format
@@ -553,7 +536,7 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 			while not self._stop_event.is_set():
 
 				try:
-					sr = self._device.readStream(stream, [buf], read_size, timeoutUs=500000)
+					sr = device.readStream(stream, [buf], read_size, timeoutUs=500000)
 				except Exception as exc:
 					logger.error(f"SoapySDR readStream exception: {exc}")
 					break
@@ -600,12 +583,25 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 		then tears down the stream. Used by the scanner's frequency
 		calibration routine.
 
+		The read is bounded by a wall-clock deadline so a stalled or
+		disconnected device cannot hang startup indefinitely.
+
 		Args:
 			num_samples: Number of complex IQ samples to read
 
 		Returns:
 			Array of complex64 IQ samples
+
+		Raises:
+			RuntimeError: If the read does not complete within the deadline,
+				or if SoapySDR returns a fatal error code.
 		"""
+
+		# Cap the calibration read at 10 seconds.  This is intentionally
+		# generous — slow USB devices can take a few seconds to start
+		# delivering samples — but bounded so a hung device fails fast
+		# instead of blocking startup forever.
+		deadline = time.monotonic() + 10.0
 
 		fmt = self._negotiate_stream_format()
 		is_cs16 = (fmt == self._soapy.SOAPY_SDR_CS16)
@@ -624,6 +620,13 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 				buf = numpy.empty(num_samples, dtype=numpy.complex64)
 
 			while offset < num_samples:
+
+				if time.monotonic() > deadline:
+					raise RuntimeError(
+						f"SoapySDR calibration read timed out after 10 s "
+						f"({offset}/{num_samples} samples received)"
+					)
+
 				remaining = num_samples - offset
 				sr = self._device.readStream(stream, [buf], remaining, timeoutUs=1000000)
 

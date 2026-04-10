@@ -87,6 +87,14 @@ bands:
     # are logged at DEBUG level on startup. Example:
     #   sdr_device_settings:
     #     biastee: "true"
+    #
+    # Rejecting empty/noise recordings:
+    # Use activation_variance_db to suppress channel triggers that look
+    # statistically flat (likely stationary noise rather than real signal).
+    # Real signals show 5-15+ dB variance over a detection window; noise
+    # shows under 2 dB.  Defaults to 3.0; set to 0 to disable.
+    # Useful for sensitive devices like the AirSpy HF+. Example:
+    #   activation_variance_db: 3.0
 
     pmr:
         type: PMR
@@ -117,6 +125,21 @@ bands:
         freq_end: 126.0e+6
         sample_rate: 1.024e6
         exclude_channel_indices: [25, 26, 33, 34]
+
+    # AirSpy HF+ Discovery — sensitive narrow-band receiver.
+    # The HF+ is sensitive enough that the standard SNR threshold catches
+    # stationary noise as well as real signals; activation_variance_db
+    # filters out the noise triggers that the SNR check can't distinguish.
+    # See "Rejecting empty/noise recordings" in README.md for details.
+
+    air_civil_bristol_airspyhf:
+        type: AIR
+        freq_start: 125.5e+6
+        freq_end: 126.0e+6
+        sample_rate: 0.912e6
+        snr_threshold_db: 6
+        sdr_gain_db: auto
+        activation_variance_db: 3.0  # Reject stationary-noise triggers
 
     # UK Military Airband
     air_military_uhf:

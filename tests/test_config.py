@@ -164,6 +164,31 @@ class TestDeviceSettings:
 		assert app_config.bands["test_nfm"].sdr_device_settings is None
 
 
+class TestActivationVariance:
+
+	def test_activation_variance_db_accepted (self, minimal_config_dict):
+		"""activation_variance_db should be accepted by config validation."""
+		minimal_config_dict["bands"]["test_nfm"]["activation_variance_db"] = 3.0
+		config = substation.config.validate_config(minimal_config_dict)
+		assert config.bands["test_nfm"].activation_variance_db == 3.0
+
+	def test_activation_variance_db_zero_accepted (self, minimal_config_dict):
+		"""Setting to 0 should be allowed (disables the check)."""
+		minimal_config_dict["bands"]["test_nfm"]["activation_variance_db"] = 0
+		config = substation.config.validate_config(minimal_config_dict)
+		assert config.bands["test_nfm"].activation_variance_db == 0.0
+
+	def test_activation_variance_db_none_by_default (self, app_config):
+		"""activation_variance_db should be None when not specified."""
+		assert app_config.bands["test_nfm"].activation_variance_db is None
+
+	def test_activation_variance_db_negative_rejected (self, minimal_config_dict):
+		"""Negative values should fail validation (ge=0 constraint)."""
+		minimal_config_dict["bands"]["test_nfm"]["activation_variance_db"] = -1.0
+		with pytest.raises(pydantic.ValidationError):
+			substation.config.validate_config(minimal_config_dict)
+
+
 class TestExcludeChannelIndices:
 
 	def test_valid_indices (self, minimal_config_dict):

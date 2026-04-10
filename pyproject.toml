@@ -1,5 +1,7 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+# setuptools 81 removed pkg_resources, which several of our runtime
+# dependencies still import.  Pin below 81 until they catch up.
+requires = ["setuptools>=61.0,<81"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -15,7 +17,11 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.24.0",
     "pydantic>=2.0",
-    "pyrtlsdr>=0.3.0,<0.4.0",  # 0.4.0 requires rtlsdr_set_dithering (keenerd fork only)
+    # pyrtlsdr 0.4.0+ requires the rtlsdr_set_dithering symbol from the
+    # rtl-sdr-blog fork.  Pinning below 0.4.0 keeps the package working
+    # against distro-packaged librtlsdr too — see installation.txt for
+    # the fork build instructions.
+    "pyrtlsdr>=0.3.0,<0.4.0",
     "python_hackrf",
     "noisereduce>=3.0.3",
     "PyYAML>=6.0",

@@ -10,10 +10,67 @@ All device implementations must provide methods for:
 
 This abstraction allows the scanner to work with different hardware
 without knowing the specific device type.
+
+Also provides shared utilities used by multiple device wrappers.
 """
 
 import abc
 import typing
+
+import numpy
+import numpy.typing
+
+
+def rechunk_samples (
+	rx_buffer: numpy.typing.NDArray[numpy.complex64],
+	samples: numpy.typing.NDArray[numpy.complex64],
+	chunk_size: int,
+	callback: typing.Callable,
+) -> numpy.typing.NDArray[numpy.complex64]:
+
+	"""
+	Accumulate samples and emit fixed-size chunks to a callback.
+
+	SDR backends like HackRF and SoapySDR deliver variable-size blocks,
+	but the scanner expects fixed-size blocks (sdr_device_sample_size).
+	This helper carries leftover samples between calls so the boundary
+	logic is identical for every backend.
+
+	1. Concatenate any leftover from a previous call with the new samples
+	2. Emit as many full chunks as possible to the callback
+	3. Return any remaining samples to be carried into the next call
+
+	When chunk_size is zero or negative the samples are forwarded directly
+	to the callback without rechunking, and the leftover buffer is reset.
+
+	Args:
+		rx_buffer: Leftover samples from the previous call (may be empty)
+		samples: Newly received samples to be rechunked
+		chunk_size: Target chunk size; pass 0 or less to disable rechunking
+		callback: Function invoked as callback(chunk, None) for each chunk
+
+	Returns:
+		The new leftover buffer to be passed back on the next call.
+	"""
+
+	if chunk_size <= 0:
+		callback(samples, None)
+		return numpy.array([], dtype=numpy.complex64)
+
+	combined = numpy.concatenate((rx_buffer, samples)) if rx_buffer.size > 0 else samples
+
+	num_chunks = combined.size // chunk_size
+
+	for i in range(num_chunks):
+		start, end = i * chunk_size, (i + 1) * chunk_size
+		callback(combined[start:end], None)
+
+	leftover = combined.size % chunk_size
+
+	if leftover > 0:
+		return combined[-leftover:]
+
+	return numpy.array([], dtype=numpy.complex64)
 
 
 class BaseDevice (abc.ABC):

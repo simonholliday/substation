@@ -361,39 +361,13 @@ class HackRfDevice (substation.devices.base.BaseDevice):
 		return complex_samples
 
 	def _buffer_samples (self, samples: numpy.typing.NDArray[numpy.complex64], chunk_size: int, callback: typing.Callable) -> None:
+
 		"""
-		Accumulate samples and emit fixed-size chunks to the callback.
-
-		HackRF delivers variable-size blocks (e.g., 131072 samples), but the
-		scanner expects fixed-size blocks (e.g., sdr_device_sample_size).
-
-		This method:
-		1. Concatenates new samples with any leftover from previous call
-		2. Emits as many full chunks as possible
-		3. Saves any remaining samples for next call
-
-		Example: If chunk_size=50000 and we get 131072 samples:
-		- Call 1: emit 50000, emit 50000, save 31072
-		- Call 2: get 131072, combine with 31072 (162144 total)
-		          emit 50000, emit 50000, emit 50000, save 12144
+		Rechunk variable-size HackRF blocks into fixed-size chunks for the
+		scanner.  Delegates to the shared rechunk_samples helper so all
+		device backends use identical boundary logic.
 		"""
 
-		# If chunk_size is 0 or negative, just pass through directly
-		if chunk_size <= 0:
-			callback(samples, None)
-			return
-
-		# Combine leftover from previous call with new samples
-		combined = numpy.concatenate((self._rx_buffer, samples)) if self._rx_buffer.size > 0 else samples
-
-		# Calculate how many full chunks we can emit
-		num_chunks = combined.size // chunk_size
-
-		# Emit each full chunk
-		for i in range(num_chunks):
-			start, end = i * chunk_size, (i + 1) * chunk_size
-			callback(combined[start:end], None)
-
-		# Save any remaining samples for next call
-		leftover = combined.size % chunk_size
-		self._rx_buffer = combined[-leftover:] if leftover > 0 else numpy.array([], dtype=numpy.complex64)
+		self._rx_buffer = substation.devices.base.rechunk_samples(
+			self._rx_buffer, samples, chunk_size, callback
+		)

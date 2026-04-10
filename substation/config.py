@@ -305,6 +305,16 @@ class BandConfig(pydantic.BaseModel):
 			SoapySDR's writeSetting() API. Used for features like bias tee
 			control, external clock configuration, or device calibration.
 			Keys and values are device-specific strings.
+
+		activation_variance_db: Minimum power variance (dB) across segment PSDs
+			required for a channel to be considered active.  Suppresses
+			channel triggers caused by stationary noise that crosses the SNR
+			threshold but contains no real signal.  Voice and data signals
+			show 5-15+ dB variance over a typical detection slice; stationary
+			noise shows under 2 dB.
+			Applies to all bands regardless of recording state.
+			Defaults to substation.constants.ACTIVATION_VARIANCE_DB.
+			Set to 0 to disable the check entirely.
 	"""
 
 	model_config = pydantic.ConfigDict(extra='forbid')
@@ -322,6 +332,7 @@ class BandConfig(pydantic.BaseModel):
 	sdr_gain_db: float | str | None = 'auto'
 	sdr_gain_elements: dict[str, float] | None = None
 	sdr_device_settings: dict[str, str] | None = None
+	activation_variance_db: float | None = pydantic.Field(default=None, ge=0)
 
 	@pydantic.field_validator('modulation', 'type', mode='before')
 	@classmethod

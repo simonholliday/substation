@@ -191,6 +191,11 @@ class RadioScanner:
 		self._noise_floor_ema: float | None = None
 		self._warmup_remaining: int = substation.constants.NOISE_FLOOR_WARMUP_SLICES
 
+		# Channels for which the variance check has already produced a
+		# dead-zone warning.  Used to log the warning once per channel
+		# instead of every transition.
+		self._variance_dead_zone_warned: set[float] = set()
+
 		# Sample queue for async streaming
 		self.sample_queue: asyncio.Queue | None = None
 		self.loop: asyncio.AbstractEventLoop | None = None
@@ -947,6 +952,53 @@ class RadioScanner:
 
 		return numpy.mean(channel_bins)
 
+	def _segment_power_variance (self, channel_freq: float, segment_psds: list[numpy.typing.NDArray[numpy.float64]]) -> float:
+
+		"""
+		Compute the standard deviation of a channel's power across segment PSDs.
+
+		Used to distinguish stationary noise (low variance) from real signals
+		(high variance) when deciding whether to start recording a channel.
+		Voice and data signals fluctuate substantially within a 200 ms slice
+		due to syllables, frame structure, or burst patterns; stationary
+		noise produces near-constant power across segments.
+
+		Args:
+			channel_freq: Center frequency of the channel to measure
+			segment_psds: List of per-segment PSDs from _calculate_psd_data
+
+		Returns:
+			Standard deviation of channel power in dB across the segments,
+			or 0.0 if there are fewer than two valid segments.  In the
+			latter case a warning is logged once per channel so the user
+			can spot misconfigured bands (e.g., channels falling outside
+			the FFT range or fully covered by the DC spike mask).
+		"""
+
+		if not segment_psds or len(segment_psds) < 2:
+			return 0.0
+
+		powers = [self._get_channel_power(psd, channel_freq) for psd in segment_psds]
+
+		# Drop -inf entries (channel out of range or fully DC-masked)
+		finite_powers = [p for p in powers if numpy.isfinite(p)]
+
+		if len(finite_powers) < 2:
+
+			if channel_freq not in self._variance_dead_zone_warned:
+				ch_idx = self.channel_original_indices.get(channel_freq, -1)
+				logger.warning(
+					f"Channel {ch_idx} ({channel_freq/1e6:.4f} MHz) has insufficient "
+					f"valid power samples for variance check ({len(finite_powers)}/{len(powers)} segments finite). "
+					f"This channel will always be suppressed by the variance check — "
+					f"check FFT geometry, DC spike mask, or band edges."
+				)
+				self._variance_dead_zone_warned.add(channel_freq)
+
+			return 0.0
+
+		return float(numpy.std(finite_powers))
+
 	def _estimate_noise_floor (self, psd_db: numpy.typing.NDArray[numpy.float64]) -> float:
 
 		"""
@@ -1165,9 +1217,11 @@ class RadioScanner:
 			samples = samples - numpy.mean(samples)
 
 			# Phase 2: compute PSD (Welch) for detection.
-			# Welch PSD is the primary CPU cost; segment PSDs computed lazily only when needed.
+			# Welch PSD is the primary CPU cost; segment PSDs are computed lazily
+			# in Phase 6 below — only when a channel transition is detected — and
+			# then reused for transition localization and the variance check.
 			# This saves 30-40% of FFT overhead when no channels are transitioning.
-			psd_db, segment_psds = self._calculate_psd_data(samples, include_segment_psd=False)
+			psd_db, _ = self._calculate_psd_data(samples, include_segment_psd=False)
 
 			# Phase 3: estimate noise floor from gaps, not the whole band.
 			# Raw per-slice estimate is EMA-smoothed to eliminate jitter.
@@ -1207,9 +1261,11 @@ class RadioScanner:
 			# Vectorized channel powers reduce per-channel Python overhead in busy bands.
 			channel_powers = self._get_channel_powers(psd_db)
 
-			# Lazy-computed segment data for transition localization.
-			segment_psds = None
-			segment_noise_floors = None
+			# Lazy-computed segment data for transition localization and the
+			# variance check.  Populated only when a channel transition is
+			# detected in the loop below (see Phase 6).
+			segment_psds: list[numpy.typing.NDArray[numpy.float64]] | None = None
+			segment_noise_floors: list[float] | None = None
 
 			# Phase 6: handle transitions, demodulation, and recording.
 			now = time.time()
@@ -1219,33 +1275,26 @@ class RadioScanner:
 				current_state = self.channel_states[channel_freq]
 
 				# Stuck channel detection: warn if PTT seems stuck or interference is constant.
+				# Rate-limited to one warning per 60 seconds per channel to avoid flooding.
 				if current_state and self.config.scanner.stuck_channel_threshold_seconds:
-
 					ch_start_time = self.channel_start_times.get(channel_freq)
-
 					if ch_start_time:
-
 						duration = now - ch_start_time
-
 						if duration > self.config.scanner.stuck_channel_threshold_seconds:
-
 							last_warn = self.channel_last_warning_times.get(channel_freq, 0)
-
-							# Rate limit warnings to every 60 seconds to avoid flooding.
-
 							if now - last_warn > 60:
-
 								ch_idx = self.channel_original_indices.get(channel_freq, -1)
-
 								logger.warning(
 									f"STUCK CHANNEL WARNING: Channel {ch_idx} ({channel_freq/1e6:.4f} MHz) "
 									f"has been active for {duration:.0f} seconds"
 								)
-
 								self.channel_last_warning_times[channel_freq] = now
-				
+
 				threshold = self.snr_threshold_off_db if current_state else self.snr_threshold_db
 				above_threshold = snr_db > threshold
+
+				# Snapshot for potential rollback if the variance check rejects this turn-ON
+				prior_last_active_time = self.channel_last_active_time.get(channel_freq)
 
 				# Update last active time if signal is strong
 				if above_threshold:
@@ -1254,12 +1303,43 @@ class RadioScanner:
 				# Channel is "active" if signal is strong OR we are within the hold time window
 				is_active = above_threshold or (now - self.channel_last_active_time.get(channel_freq, 0) < self.hold_time_seconds)
 
-				# Compute segment PSDs lazily only when a transition is detected
-				# This avoids expensive per-segment FFT when channels are stable
-				if self.can_record and (is_active != current_state) and segment_psds is None:
+				# Compute segment PSDs lazily only when a transition is detected.
+				# These are needed for both fine-grained transition localization
+				# (see _prepare_channel_transition) and the variance check below,
+				# so they must be computed regardless of whether the band can
+				# actually record audio — otherwise detection-only bands would
+				# silently lose noise rejection.
+				if (is_active != current_state) and segment_psds is None:
 					_, segment_psds = self._calculate_psd_data(samples, include_segment_psd=True)
 					if segment_psds:
 						segment_noise_floors = [self._estimate_noise_floor(psd) for psd in segment_psds]
+
+				# Variance check on turn-ON: stationary noise has low temporal
+				# variance even when its average power crosses the SNR threshold.
+				# Real signals (voice, data bursts) fluctuate substantially over
+				# the slice.  Suppress activations that look statistically flat.
+				if is_active and not current_state and segment_psds:
+					var_threshold = (
+						self.band_config.activation_variance_db
+						if self.band_config.activation_variance_db is not None
+						else substation.constants.ACTIVATION_VARIANCE_DB
+					)
+					if var_threshold > 0:
+						stddev = self._segment_power_variance(channel_freq, segment_psds)
+						if stddev < var_threshold:
+							logger.debug(
+								f"Channel {idx} suppressed: power variance {stddev:.1f} dB "
+								f"below threshold {var_threshold:.1f} dB (likely noise)"
+							)
+							is_active = False
+							# Roll back the last_active_time bump so a noise-only
+							# slice doesn't keep the channel "warm" within the hold
+							# time window and trigger another suppression next slice.
+							if prior_last_active_time is None:
+								self.channel_last_active_time.pop(channel_freq, None)
+							else:
+								self.channel_last_active_time[channel_freq] = prior_last_active_time
+							continue
 
 				trim_start, trim_end, offset, turning_on, turning_off = self._prepare_channel_transition(
 					samples, channel_freq, idx, snr_db,

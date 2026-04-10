@@ -82,6 +82,15 @@ DC_SPIKE_BINS = 3
 # Higher values reduce noise but make narrowband signals harder to distinguish
 WELCH_SEGMENTS = 8
 
+# Minimum power variance (in dB) across segments for a channel to be considered
+# active.  Used to reject stationary noise that crosses the SNR threshold but
+# contains no real signal.  Voice and data signals fluctuate substantially over
+# time as syllables, frames, or bursts come and go (typically 5-15 dB swings
+# within a 200 ms slice).  Stationary noise produces variance close to the
+# natural sampling variance of an 8-segment Welch PSD (~1-2 dB).  A threshold
+# of 3 dB cleanly separates the cases.
+ACTIVATION_VARIANCE_DB = 3.0
+
 # ==============================================================================
 # Noise Floor Estimation Constants
 # ==============================================================================

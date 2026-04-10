@@ -122,3 +122,70 @@ class TestChannelPower:
 		for i, ch_freq in enumerate(sc.channels):
 			individual = sc._get_channel_power(psd_db, ch_freq)
 			assert batch_powers[i] == pytest.approx(individual, abs=0.1)
+
+
+class TestSegmentPowerVariance:
+
+	def test_variance_low_for_stationary_noise (self, scanner_instance):
+
+		"""
+		Stationary Gaussian noise should produce low temporal variance across
+		segment PSDs — this is the discriminator that lets us reject noise-only
+		channel triggers.
+		"""
+
+		sc = scanner_instance
+		iq = iq_generators.generate_noise_iq(sc.sample_rate, 0.5)[:sc.samples_per_slice]
+		_, segment_psds = sc._calculate_psd_data(iq, include_segment_psd=True)
+		assert segment_psds is not None and len(segment_psds) >= 2
+
+		# Test variance for a representative channel near the centre
+		ch_freq = sc.channels[len(sc.channels) // 2]
+		stddev = sc._segment_power_variance(ch_freq, segment_psds)
+
+		# Stationary noise should have variance close to the natural sampling
+		# variance of an 8-segment Welch PSD — well below 3 dB.
+		assert stddev < 3.0, f"Expected stationary noise variance < 3 dB, got {stddev:.2f} dB"
+
+	def test_variance_high_for_modulated_signal (self, scanner_instance):
+
+		"""
+		An amplitude-modulated signal should produce high temporal variance
+		across segment PSDs as its envelope rises and falls.
+		"""
+
+		sc = scanner_instance
+
+		# Build an AM-modulated carrier at a target channel frequency.
+		# Choose a modulation rate slow enough that segments capture the
+		# envelope at clearly different points (one full cycle across the slice).
+		n = sc.samples_per_slice
+		t = numpy.arange(n) / sc.sample_rate
+		duration_s = n / sc.sample_rate
+		audio_freq = 2.0 / duration_s  # 2 cycles across the slice
+		mod_depth = 0.95
+		envelope = 1.0 + mod_depth * numpy.sin(2.0 * numpy.pi * audio_freq * t)
+
+		# Place at the first channel offset from centre to avoid DC mask
+		ch_freq = sc.channels[0]
+		offset_hz = ch_freq - sc.center_freq
+		carrier = numpy.exp(2j * numpy.pi * offset_hz * t)
+		iq = (envelope * carrier).astype(numpy.complex64)
+
+		_, segment_psds = sc._calculate_psd_data(iq, include_segment_psd=True)
+		assert segment_psds is not None and len(segment_psds) >= 2
+
+		stddev = sc._segment_power_variance(ch_freq, segment_psds)
+
+		# Heavy AM should produce variance well above the 3 dB discriminator
+		assert stddev > 3.0, f"Expected modulated signal variance > 3 dB, got {stddev:.2f} dB"
+
+	def test_variance_zero_for_too_few_segments (self, scanner_instance):
+
+		"""With fewer than 2 segments, variance should return 0.0 (cannot compute)."""
+
+		sc = scanner_instance
+		ch_freq = sc.channels[0]
+
+		assert sc._segment_power_variance(ch_freq, []) == 0.0
+		assert sc._segment_power_variance(ch_freq, None) == 0.0

@@ -34,7 +34,7 @@ Different SDR devices have very different capabilities, and settings that work w
 
 **Key practical differences:**
 
-- **Sensitivity and SNR thresholds**: Higher-sensitivity devices (AirSpy HF+, AirSpy R2) detect weaker signals than the RTL-SDR. This means an `snr_threshold_db` that works well on RTL-SDR (e.g., 4.5 dB) may trigger on too many weak/noisy signals on an AirSpy. Consider raising the threshold to 6-10 dB for higher-sensitivity devices.
+- **Sensitivity and SNR thresholds**: Higher-sensitivity devices (AirSpy HF+, AirSpy R2) detect weaker signals than the RTL-SDR. This means an `snr_threshold_db` that works well on RTL-SDR (e.g., 4.5 dB) may trigger on too many weak/noisy signals on an AirSpy. Consider raising the threshold to 6-10 dB for higher-sensitivity devices, *and* enable [`activation_variance_db`](#rejecting-emptynoise-recordings) to filter out the noise triggers that the SNR check can't catch.
 
 - **Sample rates**: The AirSpy HF+ Discovery only supports specific discrete sample rates (0.192, 0.228, 0.384, 0.456, 0.650, 0.768, 0.912 MHz). If you request an unsupported rate, the device will use the nearest supported rate and a warning will be logged. Always check the supported rates in the startup log and set `sample_rate` accordingly.
 
@@ -44,6 +44,7 @@ Different SDR devices have very different capabilities, and settings that work w
 
 ## Key Features & Optimizations
 - **Advanced Signal Detection**: Uses Welch's Power Spectral Density (PSD) estimation for stable, low-variance activity detection. The noise floor is EMA-smoothed across slices to eliminate jitter, with a warmup period that absorbs SDR hardware startup transients before detection begins.
+- **Statistical Noise Rejection**: A temporal variance check at channel turn-on distinguishes real signals (voice, data bursts — high variance) from stationary noise (low variance), eliminating the "empty hiss" recordings that plague high-sensitivity receivers. Works for any modulation type. See [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings) below.
 - **Parallel Multi-Channel Recording**: Simultaneously detects and records all active channels in a band - unlike traditional handheld scanners which only play one channel at a time.
 - **High-Fidelity Demodulation**: Implements stateful AM and NFM demodulation with continuous phase tracking and DC-blocking, eliminating pops and discontinuities between audio blocks.
 - **Precise Transition Trimming**: After coarse PSD-based detection, demodulated audio is scanned at sample level to find exact signal boundaries. Padding is added around the boundary and faded with a half-cosine S-curve, preserving signal content (including attack transients) while eliminating clicks.
@@ -161,9 +162,9 @@ recording:
   disk_flush_interval_seconds: 5
   audio_sample_rate: 16000
   audio_output_dir: "./audio"
-  fade_in_ms: 3
-  fade_out_ms: 5
-  soft_limit_drive: 2.0
+  fade_in_ms: 15
+  fade_out_ms: 50
+  soft_limit_drive: 1.25
 ```
 - `buffer_size_seconds`: max in-memory audio per channel before drops.
 - `disk_flush_interval_seconds`: how often to flush to disk.
@@ -203,6 +204,7 @@ Per-band keys:
 - `modulation`: `AM` or `NFM`.
 - `recording_enabled`: enable recording for this band. Optional, defaults to `false` (can also be set in `band_defaults`).
 - `snr_threshold_db`: detection threshold (dB above noise floor).
+- `activation_variance_db`: optional minimum power variance (dB) across the detection window required for a channel to be considered active. Filters out stationary-noise triggers. Applies to all bands regardless of recording state. See [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings) below. Defaults to `3.0`; set to `0` to disable.
 - `sdr_gain_db`: numeric or `auto`.
 - `sdr_gain_elements`: optional dict mapping gain element names to dB values for per-stage control (e.g., `{LNA: 10, MIX: 5, VGA: 12}`). Available elements are logged at startup. Takes priority over `sdr_gain_db`.
 - `sdr_device_settings`: optional dict of device-specific settings passed via SoapySDR (e.g., `{biastee: "true"}`). Available settings are logged at DEBUG level on startup.
@@ -350,6 +352,103 @@ The `snr_threshold_db` setting controls how far above the noise floor a signal m
 - Available gain element names and their valid ranges are logged at INFO level on startup. Check these before setting values.
 - Optimal values depend on your antenna, band, and local RF environment — a rooftop antenna in a city needs different gain from a small whip in a rural area.
 - Airband (AM, 118-137 MHz) typically needs less gain than PMR (NFM, 446 MHz) because aircraft transmitters are more powerful (5-25W) than PMR handhelds (0.5W).
+
+## Rejecting empty/noise recordings
+
+### The problem
+
+SNR thresholds detect any signal that's louder than the noise floor — but they can't distinguish a *real* signal from a *noisy* one. With sensitive receivers like the AirSpy HF+ Discovery, you'll often see channels register 6-10 dB SNR yet contain only hissing static when played back. Raising `snr_threshold_db` doesn't help: the SNR is genuinely high, because the noise in that channel really is louder than the band-wide noise floor.
+
+What's needed is a way to tell **stationary noise** apart from **real, time-varying signals**.
+
+### The solution: temporal variance
+
+Real signals fluctuate over time:
+
+- **Voice** (AM airband, NFM PMR/marine): syllables, gaps, attack and release create 5-15 dB power swings within a 200 ms detection window
+- **TDMA data** (TETRA, DMR): timeslot structure produces sharp on/off transitions
+- **Burst data** (ACARS, VDL Mode 2): the entire transmission is a short burst, with quiet on either side
+- **Beacons / morse**: dot/dash patterns create clear modulation
+
+Stationary noise — atmospheric, thermal, or computer-generated interference — produces **near-constant power** across the same window. Its temporal standard deviation is close to the natural sampling variance of an ideal PSD estimate (1-2 dB), regardless of how high its average power crosses the SNR threshold.
+
+The scanner measures the standard deviation of each channel's power across the 8 segment PSDs that make up the Welch detection window. At the moment a channel transitions from inactive to active, if that standard deviation falls below `activation_variance_db`, the activation itself is suppressed — the channel never enters the active state, so no detection event fires and no recording is created. The check applies to every band regardless of whether recording is enabled.
+
+### Example
+
+Imagine a "noisy" channel with average power 9 dB above the noise floor and a real voice transmission also at 9 dB SNR:
+
+| Source | Avg SNR | Per-segment power (dB above floor) | Std dev |
+| :--- | :--- | :--- | :--- |
+| Stationary noise | 9 dB | 9.1, 8.8, 9.0, 9.2, 8.9, 9.1, 8.7, 9.2 | **0.18 dB** |
+| Voice transmission | 9 dB | 4.0, 12.5, 14.1, 7.0, 13.8, 11.2, 5.5, 3.9 | **4.3 dB** |
+
+With `activation_variance_db: 3.0`, the noise is suppressed (0.18 < 3.0) and the voice is recorded (4.3 > 3.0). Both have the *same average SNR* — the variance check is what distinguishes them.
+
+### Configuration
+
+```yaml
+bands:
+  air_civil_bristol_airspyhf:
+    type: AIR
+    freq_start: 125.5e+6
+    freq_end: 126.0e+6
+    sample_rate: 0.912e6
+    snr_threshold_db: 6
+    activation_variance_db: 3.0  # Reject stationary-noise triggers
+    sdr_gain_db: auto
+```
+
+The check runs **only at the moment a channel turns on**. Once a recording is in progress, brief gaps in the audio (silences between words) don't interrupt it — those are handled by the existing hold-time logic. Recordings end naturally when the SNR drops below the OFF threshold for longer than the hold time.
+
+### How it interacts with other settings
+
+| Setting | Relationship |
+| :--- | :--- |
+| `snr_threshold_db` | Runs first. Channels below the SNR threshold never get evaluated by the variance check. |
+| `activation_variance_db` | Runs second, only on turn-on transitions, only when the SNR check passed. |
+| Hysteresis (built-in 3 dB margin) | Unchanged. Once a recording starts, it continues until SNR drops below `snr_threshold_db - 3`. |
+| Hold time (`recording_hold_time_ms`) | Unchanged. Brief drops in SNR during active recording are tolerated. |
+
+The variance check is fundamentally a *gate*, not a *filter* — it decides whether to consider a channel active, then steps out of the way.
+
+### Tuning guidance
+
+| Symptom | Action |
+| :--- | :--- |
+| Default works | Leave it alone — the default of `3.0 dB` is chosen to cleanly separate noise from any modulated signal |
+| Real signals (voice, data) being rejected | Lower the threshold: try `2.0` or `2.5` |
+| Noise still triggers recordings | Raise the threshold: try `4.0` or `5.0` |
+| Want to disable entirely | Set to `0` |
+| Want to compare with/without | Run two scanner instances on different bands, one with the field set, one with `activation_variance_db: 0` |
+
+### How to confirm it's working
+
+Suppression events are logged at **DEBUG** level (they're frequent enough that logging them at INFO would clutter normal output). Run the scanner with debug logging enabled to see them:
+
+```bash
+PYTHONUNBUFFERED=1 substation --band air_civil_bristol_airspyhf --device-type airspyhf 2>&1 | grep suppressed
+```
+
+Or set the root log level to DEBUG by modifying the logging configuration. You'll then see lines like:
+
+```
+Channel 18 suppressed: power variance 0.4 dB below threshold 3.0 dB (likely noise)
+```
+
+This means the variance check rejected an activation that the SNR check would have accepted. Real signals don't produce this log line — they pass straight through to recording.
+
+If you've enabled debug logging and see *no* suppression lines while still getting empty recordings, it means the noise has more variance than expected (e.g., bursty interference rather than constant hiss). Raise the threshold or investigate the interference source.
+
+### Generality
+
+The check operates on raw channel power computed from FFT bins, not on demodulated audio. This means it works identically for:
+
+- AM airband voice
+- NFM PMR, marine VHF, business radio, amateur 2m
+- TDMA data (TETRA, DMR) — frame structure produces strong variance
+- Burst data (ACARS, VDL Mode 2) — bursts produce maximum variance against silence
+- Any future modulation type added to the scanner — no demodulator-specific tuning needed
 
 ## Parallel Scans (Multiple Devices)
 Run one process per device:
