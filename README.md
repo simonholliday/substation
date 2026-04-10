@@ -8,39 +8,232 @@ Substation is a high-performance tool for monitoring and recording radio activit
 
 By connecting a supported USB receiver (like an RTL-SDR or HackRF), you can scan wide ranges of the radio spectrum - such as Airband or Maritime frequencies - and automatically record transmissions as they occur. The software handles the technical signal processing and hardware management in the background, allowing for efficient 24/7 monitoring even on modest hardware like a Raspberry Pi.
 
-## Hardware Requirements
-To use this software, a compatible Software Defined Radio (SDR) USB device is required. The code has been specifically tested and verified with the following hardware:
+## Supported Devices
 
-*   **[RTL-SDR Blog V4 and V3](https://www.rtl-sdr.com/about-rtl-sdr/)**: High-quality, low-cost receivers. 24 MHz - 1.7 GHz, up to 2.4 MHz sample rate.
-*   **[HackRF One](https://greatscottgadgets.com/hackrf/one/)**: A wideband transceiver capable of monitoring much larger frequency spans. 1 MHz - 6 GHz, 2-20 MHz sample rate.
-*   **[AirSpy R2](https://airspy.com/airspy-r2/)**: High-dynamic-range receiver with 12-bit ADC. 24 MHz - 1.8 GHz, 2.5/10 MHz sample rate. Requires SoapySDR (see below).
-*   **[AirSpy HF+ Discovery](https://airspy.com/airspy-hf-discovery/)**: Precision HF/VHF receiver. 0.5 kHz - 31 MHz + 60-260 MHz, up to 768 kHz bandwidth. Requires SoapySDR (see below).
-*   Any other device supported by **[SoapySDR](https://github.com/pothosware/SoapySDR)** via the `soapy:<driver>` device type.
+To use this software, a compatible Software Defined Radio (SDR) USB device is required. Each supported device below has a self-contained card with its specifications, recommended starting configuration, common gotchas, and a copy-pasteable example band so you can get a working scan in a few minutes. Different SDR devices have very different capabilities — settings that work well on one device may need adjusting on another, and the cards capture the differences that actually matter in practice.
 
-### Device Characteristics
+### Quick Reference
 
-Different SDR devices have very different capabilities, and settings that work well on one device may need adjusting on another. Understanding these differences helps you get the best results.
+| Device                  | Frequency range                | Max BW   | ADC    | Best for                  |
+| :---------------------- | :----------------------------- | :------- | :----- | :------------------------ |
+| RTL-SDR Blog V4 / V3    | 24 MHz - 1.766 GHz             | 2.4 MHz  | 8-bit  | General VHF/UHF, low cost |
+| HackRF One              | 1 MHz - 6 GHz                  | 20 MHz   | 8-bit  | Wideband monitoring       |
+| AirSpy R2               | 24 MHz - 1.8 GHz               | 10 MHz   | 12-bit | High-quality VHF/UHF      |
+| AirSpy HF+ Discovery    | 0.5 kHz - 31 MHz, 60 - 260 MHz | 768 kHz  | 18-bit | HF / VHF precision        |
 
-| | RTL-SDR Blog V4 | HackRF One | AirSpy R2 | AirSpy HF+ Discovery |
-| :--- | :--- | :--- | :--- | :--- |
-| **Frequency range** | 24 MHz - 1.7 GHz | 1 MHz - 6 GHz | 24 MHz - 1.8 GHz | 0.5 kHz - 31 MHz, 60-260 MHz |
-| **Max bandwidth** | 2.4 MHz | 20 MHz | 10 MHz | 768 kHz |
-| **ADC resolution** | 8-bit | 8-bit | 12-bit (16-bit effective) | 18-bit |
-| **Sensitivity** | Good | Moderate | Very good | Excellent (HF specialist) |
-| **AGC** | Hardware AGC | No AGC | Via SoapySDR | Hardware AGC (multi-loop) |
-| **Gain stages** | Single (auto or manual) | LNA + VGA (manual only) | LNA + Mixer + VGA | LNA (on/off) + RF attenuator |
-| **Best for** | General VHF/UHF, low cost | Wideband monitoring | High-quality VHF/UHF | HF and VHF precision |
-| **Sample rates** | Up to 2.4 MHz | 2-20 MHz | 2.5 or 10 MHz | 0.192-0.912 MHz (discrete) |
+Any other device with a SoapySDR driver module installed can be used too — see [Other SoapySDR Devices](#other-soapysdr-devices) below.
 
-**Key practical differences:**
+### RTL-SDR Blog V4 / V3
 
-- **Sensitivity and SNR thresholds**: Higher-sensitivity devices (AirSpy HF+, AirSpy R2) detect weaker signals than the RTL-SDR. This means an `snr_threshold_db` that works well on RTL-SDR (e.g., 4.5 dB) may trigger on too many weak/noisy signals on an AirSpy. Consider raising the threshold to 6-10 dB for higher-sensitivity devices, *and* enable [`activation_variance_db`](#rejecting-emptynoise-recordings) to filter out the noise triggers that the SNR check can't catch.
+A high-quality, low-cost general-purpose receiver. The natural starting point for new users — well-supported, easy to drive, and good enough for most VHF/UHF scanning. Limited dynamic range from its 8-bit ADC.
 
-- **Sample rates**: The AirSpy HF+ Discovery only supports specific discrete sample rates (0.192, 0.228, 0.384, 0.456, 0.650, 0.768, 0.912 MHz). If you request an unsupported rate, the device will use the nearest supported rate and a warning will be logged. Always check the supported rates in the startup log and set `sample_rate` accordingly.
+| Spec               | Value                                                  |
+| :----------------- | :----------------------------------------------------- |
+| Frequency range    | 24 MHz - 1.766 GHz (with gaps)                         |
+| Max bandwidth      | 2.4 MHz                                                |
+| Sample rates       | Continuous, up to 2.4 MHz (typical: 2.048 MHz)         |
+| ADC resolution     | 8-bit                                                  |
+| Gain architecture  | Single stage                                           |
+| AGC                | Hardware AGC                                           |
+| Driver             | `pyrtlsdr` (>=0.3.0,<0.4.0) — Python binding           |
+| `--device-type`    | `rtl`, `rtlsdr`, `rtl-sdr`                             |
+| Best for           | General VHF/UHF scanning, low cost, easy setup         |
 
-- **Gain architecture**: Each device has a different gain structure. The HackRF has no automatic gain control — it will warn and set sensible defaults if you use `sdr_gain_db: auto`. The AirSpy HF+ Discovery has an RF attenuator (negative dB range) rather than a conventional gain amplifier. See the [Gain Tuning](#gain-tuning) section for details.
+**Setup** — see [installation.txt §1](installation.txt) for the librtlsdr fork build and the DVB-T driver blacklist step.
 
-- **Band definitions**: Because of these differences, you may want separate band entries for different devices. For example, `air_civil_bristol` (1.024 MHz, threshold 4.5 dB) for RTL-SDR and `air_civil_bristol_airspyhf` (0.912 MHz, threshold 6-8 dB) for the AirSpy HF+.
+**Recommended starting config**
+- `snr_threshold_db: 4.5`
+- `sdr_gain_db: auto` (engages hardware AGC, which is well-tuned for most bands)
+- `activation_variance_db: 3.0` (default — leave alone unless you see false triggers)
+- `sample_rate: 2.048e6` for most bands
+
+**Gotchas**
+- The Blog V4 needs the [rtl-sdr-blog fork](https://github.com/rtlsdrblog/rtl-sdr-blog) of librtlsdr. The standard distro `librtlsdr` is missing the `rtlsdr_set_dithering` symbol that newer pyrtlsdr versions need; this is why the project pins `pyrtlsdr<0.4.0`.
+- The default Linux DVB-T driver claims the device on insertion as a TV tuner — it must be blacklisted (installation.txt covers this).
+- The 8-bit ADC limits dynamic range. A strong adjacent station can desensitise weak ones in the same capture.
+- Manual gain values are typically 20-40 dB if you don't want AGC.
+
+**Working example band**
+
+```yaml
+air_civil_bristol:
+    type: AIR
+    freq_start: 125.5e+6
+    freq_end: 126.0e+6
+    sample_rate: 1.024e6
+```
+
+**References**
+- Manufacturer page: [https://www.rtl-sdr.com/about-rtl-sdr/](https://www.rtl-sdr.com/about-rtl-sdr/)
+- Driver fork: [https://github.com/rtlsdrblog/rtl-sdr-blog](https://github.com/rtlsdrblog/rtl-sdr-blog)
+- Python binding: [https://github.com/pyrtlsdr/pyrtlsdr](https://github.com/pyrtlsdr/pyrtlsdr)
+
+### HackRF One
+
+A wideband transceiver covering 1 MHz to 6 GHz with up to 20 MHz of instantaneous bandwidth — by far the widest single-tune capture of any device here. The trade-off is no hardware AGC and the same 8-bit ADC dynamic-range limit as the RTL-SDR.
+
+| Spec               | Value                                                              |
+| :----------------- | :----------------------------------------------------------------- |
+| Frequency range    | 1 MHz - 6 GHz                                                      |
+| Max bandwidth      | 20 MHz (16 MHz is the practical reliable maximum)                  |
+| Sample rates       | Continuous, 2 - 20 MHz                                             |
+| ADC resolution     | 8-bit                                                              |
+| Gain architecture  | LNA (0-40 dB, 8 dB steps) + VGA (0-62 dB, 2 dB steps)              |
+| AGC                | None — `auto` falls back to a sensible default and warns           |
+| Driver             | `python_hackrf` (with fallback to `hackrf` / `pyhackrf`)           |
+| `--device-type`    | `hackrf`, `hackrf-one`, `hackrfone`                                |
+| Best for           | Wideband monitoring, multi-band capture in a single tune           |
+
+**Setup** — see [installation.txt §2](installation.txt) for the USB buffer tuning (`usbcore.usbfs_memory_mb=1000`) and [installation.txt §3](installation.txt) for the `libhackrf-dev` system package.
+
+**Recommended starting config**
+- `snr_threshold_db: 6`
+- `sdr_gain_db: 36` (or `auto` to accept the LNA=32 / VGA=30 default)
+- `activation_variance_db: 3.0`
+- `sample_rate: 16e6` for the widest single capture; lower (2-4 MHz) for narrow bands
+
+**Gotchas**
+- **No hardware AGC.** Setting `sdr_gain_db: auto` does not enable AGC — there isn't one. The wrapper logs a warning and sets sensible defaults (LNA=32, VGA=30) so the device still works.
+- A numeric `sdr_gain_db` is silently clamped and stepped to the LNA's 8 dB grid and the VGA's 2 dB grid. Asking for 35 dB gets you 32. Check the startup log if the actual values matter.
+- High sample rates (~16-20 MHz) require raising the kernel USB buffer limit; otherwise samples will be dropped. See [installation.txt §2](installation.txt).
+- The 8-bit ADC has the same dynamic-range caveats as the RTL-SDR — wide captures including a strong station can desensitise weak ones.
+- Multiple Python bindings exist (`python_hackrf`, `hackrf`, `pyhackrf`) with different APIs; the wrapper auto-detects whichever is installed.
+
+**Working example band**
+
+```yaml
+dmr:
+    type: DMR
+    freq_start: 452.5e+6
+    freq_end: 460.5e+6
+    sample_rate: 12.5e+6
+```
+
+**References**
+- Manufacturer page: [https://greatscottgadgets.com/hackrf/one/](https://greatscottgadgets.com/hackrf/one/)
+- Python binding: [https://pypi.org/project/python-hackrf/](https://pypi.org/project/python-hackrf/)
+
+### AirSpy R2
+
+A high-dynamic-range VHF/UHF receiver with a 12-bit ADC (≈16-bit effective from oversampling) and three independently tuneable gain stages. Considerably more sensitive than the RTL-SDR for the same money tier, with enough bandwidth (10 MHz) to cover practical surveillance bands in a single tune.
+
+| Spec               | Value                                                                         |
+| :----------------- | :---------------------------------------------------------------------------- |
+| Frequency range    | 24 MHz - 1.8 GHz                                                              |
+| Max bandwidth      | 10 MHz                                                                        |
+| Sample rates       | Discrete: 2.5 MHz or 10 MHz                                                   |
+| ADC resolution     | 12-bit (≈16-bit effective from oversampling)                                  |
+| Gain architecture  | LNA + Mixer + VGA (per-element control via `sdr_gain_elements`)               |
+| AGC                | Hardware AGC via SoapySDR                                                     |
+| Driver             | SoapySDR + `soapysdr-module-airspy` (system package)                          |
+| `--device-type`    | `airspy`, `airspy-r2`, `airspyr2`                                             |
+| Best for           | High-quality VHF/UHF, wide single-band capture, weak-signal work              |
+
+**Setup** — see [installation.txt §4](installation.txt) for the SoapySDR core and the AirSpy module. The Python venv **must** be created with `--system-site-packages` so it can access the system-installed SoapySDR Python bindings.
+
+**Recommended starting config**
+- `snr_threshold_db: 6` (the higher sensitivity makes the RTL default 4.5 dB too noisy)
+- `sdr_gain_db: auto` to start; only move to per-element tuning if you need to optimise noise figure
+- `activation_variance_db: 3.0`
+- `sample_rate: 2.5e6` for narrow bands, `10e6` for wide ones
+
+**Gotchas**
+- **Sample rates are discrete.** Asking for anything other than 2.5 MHz or 10 MHz silently snaps to the nearest supported rate and logs a warning. Always check the startup log to confirm the rate the device actually accepted.
+- For per-element tuning, **maximise LNA first**, set Mixer moderate, fine-tune with VGA (this is the LNA-first principle described in [Gain Tuning](#gain-tuning) below). The element names and ranges are logged at INFO level when the device starts up.
+- Requires a venv built with `--system-site-packages`.
+
+**Working example band** — PMR446 with per-element gain control:
+
+```yaml
+pmr_airspy:
+    type: PMR
+    freq_start: 446.00625e+6
+    freq_end: 446.19375e+6
+    sample_rate: 2.5e6
+    sdr_gain_elements:
+      LNA: 10
+      MIX: 5
+      VGA: 12
+```
+
+Run with:
+
+```bash
+substation --band pmr_airspy --device-type airspy --device-index 0
+```
+
+**References**
+- Manufacturer page: [https://airspy.com/airspy-r2/](https://airspy.com/airspy-r2/)
+- SoapySDR driver: [https://github.com/pothosware/SoapyAirspy](https://github.com/pothosware/SoapyAirspy)
+- SoapySDR project: [https://github.com/pothosware/SoapySDR](https://github.com/pothosware/SoapySDR)
+
+### AirSpy HF+ Discovery
+
+A precision HF and lower-VHF receiver. Exceptional sensitivity and dynamic range in its bands; not a wideband scanner — its maximum bandwidth is 768 kHz. Best in class for HF listening, weak-signal work, and narrow-band airband / amateur scanning.
+
+| Spec               | Value                                                                              |
+| :----------------- | :--------------------------------------------------------------------------------- |
+| Frequency range    | 0.5 kHz - 31 MHz, 60 - 260 MHz (two separate bands, not contiguous)                |
+| Max bandwidth      | 768 kHz                                                                            |
+| Sample rates       | Discrete: typically 0.192, 0.228, 0.384, 0.456, 0.650, 0.768, 0.912 MHz (see log)  |
+| ADC resolution     | 18-bit                                                                             |
+| Gain architecture  | LNA on/off (0 or +6 dB) + RF *attenuator* (-48 to 0 dB)                            |
+| AGC                | Hardware multi-loop AGC (recommended starting point)                               |
+| Driver             | SoapySDR + `soapysdr-module-airspyhf` (system package)                             |
+| `--device-type`    | `airspyhf`, `airspy-hf`, `airspyhf+`                                               |
+| Best for           | HF and lower-VHF precision work, weak-signal listening, narrow-band scanning       |
+
+**Setup** — see [installation.txt §4](installation.txt). On Raspberry Pi OS the `soapysdr-module-airspyhf` package may not be available in the distro repos; the install guide covers building it from source. As with the AirSpy R2, the venv **must** be created with `--system-site-packages`.
+
+**Recommended starting config**
+- `snr_threshold_db: 6` (essential — the device is sensitive enough that the RTL default 4.5 dB triggers on near-noise)
+- `sdr_gain_db: auto` (engages the well-tuned hardware multi-loop AGC)
+- `activation_variance_db: 3.0` (**also essential** — without it the high sensitivity surfaces stationary noise as false channel activations; see [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings))
+- `sample_rate: 0.912e6` for the widest capture
+
+**Gotchas**
+- **Sample rates are discrete.** The exact list depends on firmware — check the startup log for the rates your device actually reports. Asking for an unsupported rate silently snaps to the nearest and logs a warning.
+- **The RF gain element is an *attenuator*, not an amplifier.** Negative dB. `RF: 0` means *no* attenuation (maximum signal); `RF: -24` means 24 dB of attenuation. This is the opposite of every other device here.
+- The LNA is binary (0 or 6 dB) — there is no smooth manual control of the front end.
+- **CF32 samples are delivered well below the [-1, 1] range** that the demodulator expects. The wrapper auto-calibrates this on startup by measuring the median RMS of warmup blocks and applying a normalisation scale; you'll see an `IQ calibration: ...` line in the startup log. No user action required.
+- Front-end overload looks like duplicate signals on adjacent channels. If you see them, increase RF attenuation (`RF: -24` or lower).
+- Requires a venv built with `--system-site-packages`.
+
+**Working example band** — Bristol airband:
+
+```yaml
+air_civil_bristol_airspyhf:
+    type: AIR
+    freq_start: 125.5e+6
+    freq_end: 126.0e+6
+    sample_rate: 0.912e6
+    snr_threshold_db: 6
+    sdr_gain_db: auto
+    activation_variance_db: 3.0
+```
+
+Run with:
+
+```bash
+substation --band air_civil_bristol_airspyhf --device-type airspyhf --device-index 0
+```
+
+**References**
+- Manufacturer page: [https://airspy.com/airspy-hf-discovery/](https://airspy.com/airspy-hf-discovery/)
+- SoapySDR driver: [https://github.com/pothosware/SoapyAirspyHF](https://github.com/pothosware/SoapyAirspyHF)
+- SoapySDR project: [https://github.com/pothosware/SoapySDR](https://github.com/pothosware/SoapySDR)
+
+### Other SoapySDR Devices
+
+Any device with a SoapySDR driver module installed can be used via `--device-type soapy:<driver>` (for example, `soapy:lime` or `soapy:plutosdr`). To discover what's connected and what driver name to use, run:
+
+```bash
+SoapySDRUtil --find
+```
+
+The same `sdr_gain_db`, `sdr_gain_elements`, and `sdr_device_settings` config keys apply, and the wrapper's startup log will show the available gain elements, sample rates, antennas, and device-specific settings reported by the driver — use these to guide your configuration in the same way as the AirSpy cards above.
+
+**Reference:** [SoapySDR project](https://github.com/pothosware/SoapySDR)
 
 ## Key Features & Optimizations
 - **Advanced Signal Detection**: Uses Welch's Power Spectral Density (PSD) estimation for stable, low-variance activity detection. The noise floor is EMA-smoothed across slices to eliminate jitter, with a warmup period that absorbs SDR hardware startup transients before detection begins.
@@ -254,55 +447,13 @@ If you open a recording in a professional audio tool or a BWF viewer, you will s
 | **Time Reference** | `1152000` | Sample count since midnight (for precise timing) |
 
 
-## AirSpy Examples
-
-Scan PMR446 with an AirSpy R2 (higher dynamic range than RTL-SDR, with per-element gain control):
-
-```bash
-substation --band pmr --device-type airspy --device-index 0
-```
-
-To fine-tune the AirSpy R2's gain stages for best noise figure, set per-element gains in `config.yaml` instead of a single `sdr_gain_db` value. Available element names and their ranges are logged at INFO level on startup — use those to guide your values:
-
-```yaml
-bands:
-  pmr:
-    type: PMR
-    freq_start: 446.00625e+6
-    freq_end: 446.19375e+6
-    sample_rate: 2.5e6
-    sdr_gain_elements:
-      LNA: 10     # Adjust based on ranges shown in startup log
-      MIX: 5
-      VGA: 12
-```
-
-Scan HF shortwave bands with an AirSpy HF+ Discovery:
-
-```bash
-substation --band amateur_hf_20m --device-type airspyhf --device-index 0
-```
-
-The HF+ Discovery has a maximum bandwidth of 768 kHz, so `sample_rate` must be set accordingly:
-
-```yaml
-bands:
-  amateur_hf_20m:
-    freq_start: 14.0e+6
-    freq_end: 14.35e+6
-    channel_spacing: 3.0e+3
-    sample_rate: 768.0e+3
-    modulation: AM
-    recording_enabled: true
-    snr_threshold_db: 6.0
-    sdr_gain_db: auto
-```
-
 ## Gain Tuning
+
+Each device card above carries the gain settings that work as a starting point for that specific device. This section explains the *why* behind those settings — the principles that apply to any SDR with multiple gain stages, so you can reason about adjustments when the defaults aren't quite right.
 
 SDR gain controls how much the received signal is amplified before digitisation. Too little gain and weak signals are lost in the noise floor; too much and strong signals overdrive the ADC, causing distortion and spurious detections.
 
-**Simple approach (recommended starting point)**: set `sdr_gain_db` to a numeric value or `auto`. When set to a single number, SoapySDR distributes the gain across the device's internal stages automatically — this produces good results for most setups without any per-element knowledge. Start here and only move to per-element tuning if you want to squeeze out the last bit of performance.
+**Simple approach (recommended starting point)**: set `sdr_gain_db` to a numeric value or `auto`. When set to a single number, the driver distributes the gain across the device's internal stages automatically — this produces good results for most setups without any per-element knowledge. Start here and only move to per-element tuning if you want to squeeze out the last bit of performance.
 
 **Per-element tuning (advanced)**: devices with multiple gain stages (like the AirSpy R2) allow individual control via `sdr_gain_elements`. This can improve reception quality because the *order* of gain stages matters for noise performance:
 
@@ -314,38 +465,12 @@ SDR gain controls how much the received signal is amplified before digitisation.
 
 The general principle is: **maximise gain early in the chain** (LNA) and **minimise gain late** (VGA), within the limits of what doesn't cause overload. This keeps the signal-to-noise ratio as high as possible through the receive chain.
 
-**Device-specific gain notes**:
-
-*RTL-SDR*: Simple single-stage gain. `sdr_gain_db: auto` enables hardware AGC which works well for most bands. Manual values of 20-40 dB are typical.
-
-*HackRF One*: No hardware AGC — `sdr_gain_db: auto` will set sensible defaults (LNA=32, VGA=30) and log a warning. For manual control, the value is clamped to hardware step sizes (LNA: 0-40 in 8 dB steps, VGA: 0-62 in 2 dB steps).
-
-*AirSpy R2*: Three gain stages (LNA, Mixer, VGA). Start with `sdr_gain_db: auto` or a moderate overall value. For per-element control, maximise LNA first, set Mixer moderate, and use VGA to fine-tune.
-
-*AirSpy HF+ Discovery*: Has an unusual gain architecture — the RF element is an **attenuator** (range -48 to 0 dB, where 0 means no attenuation) and the LNA is a simple on/off (0 or 6 dB). The `sdr_gain_db: auto` mode engages the device's built-in multi-loop AGC, which is a good starting point. For manual control:
-
-```yaml
-sdr_gain_elements:
-  LNA: 6       # LNA on (maximum sensitivity)
-  RF: 0        # No attenuation (maximum signal)
-```
-
-If you're getting too many false triggers on weak signals, you can add attenuation:
-
-```yaml
-sdr_gain_elements:
-  LNA: 6
-  RF: -10      # 10 dB attenuation — reduces noise triggers
-```
-
 **SNR threshold tuning**:
 
-The `snr_threshold_db` setting controls how far above the noise floor a signal must be before it's detected. The right value depends on your device's sensitivity:
+The `snr_threshold_db` setting controls how far above the noise floor a signal must be before it's detected. Each device card above lists a sensible starting value for that hardware. To adjust:
 
-- **RTL-SDR**: 4-5 dB works well — the 8-bit ADC limits sensitivity naturally.
-- **AirSpy R2 / HF+ Discovery**: Start at 6-8 dB. These devices see signals the RTL-SDR can't, so a higher threshold filters out weak transmissions that would produce noisy recordings.
-- If you're getting recordings that are mostly noise, raise the threshold by 1-2 dB at a time.
-- If you're missing transmissions you can hear on a handheld scanner, lower it.
+- If you're getting recordings that are mostly noise, raise the threshold by 1-2 dB at a time, *and* enable [`activation_variance_db`](#rejecting-emptynoise-recordings) if you haven't already — variance rejection catches the noise triggers that the SNR check can't distinguish.
+- If you're missing transmissions you can hear on a handheld scanner, lower the threshold.
 - The OFF threshold is always 3 dB below the ON threshold (hysteresis) to prevent rapid toggling.
 
 **General tips**:
