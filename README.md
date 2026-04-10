@@ -8,6 +8,30 @@ Substation is a high-performance tool for monitoring and recording radio activit
 
 By connecting a supported USB receiver (like an RTL-SDR or HackRF), you can scan wide ranges of the radio spectrum - such as Airband or Maritime frequencies - and automatically record transmissions as they occur. The software handles the technical signal processing and hardware management in the background, allowing for efficient 24/7 monitoring even on modest hardware like a Raspberry Pi.
 
+## Contents
+
+- [Supported Devices](#supported-devices)
+    - [Quick Reference](#quick-reference)
+    - [RTL-SDR Blog V4 / V3](#rtl-sdr-blog-v4-v3)
+    - [HackRF One](#hackrf-one)
+    - [AirSpy R2](#airspy-r2)
+    - [AirSpy HF+ Discovery](#airspy-hf-discovery)
+    - [Other SoapySDR Devices](#other-soapysdr-devices)
+- [Key Features & Optimizations](#key-features-optimizations)
+- [Quick Start](#quick-start)
+- [Command Line](#command-line)
+- [Python Module Usage](#python-module-usage)
+- [Configuration](#configuration)
+- [SoapySDR Installation](#soapysdr-installation-airspy-and-other-devices)
+- [Broadcast WAV & Metadata](#broadcast-wav-bwf-metadata)
+- [Gain Tuning](#gain-tuning)
+- [Rejecting Empty/Noise Recordings](#rejecting-emptynoise-recordings)
+- [Parallel Scans](#parallel-scans-multiple-devices)
+- [Resource and Performance Notes](#resource-and-performance-notes)
+- [Limitations](#limitations)
+- [Author](#author)
+- [License](#license)
+
 ## Supported Devices
 
 To use this software, a compatible Software Defined Radio (SDR) USB device is required. Each supported device below has a self-contained card with its specifications, recommended starting configuration, common gotchas, and a copy-pasteable example band so you can get a working scan in a few minutes. Different SDR devices have very different capabilities — settings that work well on one device may need adjusting on another, and the cards capture the differences that actually matter in practice.
