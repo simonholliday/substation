@@ -31,22 +31,39 @@ def _pick_if_decimation (sample_rate: float, audio_sample_rate: int, oversample:
 	downstream rational resampler tries to allocate a 50-million-tap
 	filter (~400 MB) and locks the system up.
 
-	This helper searches a window around the ideal decimation value for
-	an integer divisor of sample_rate (so the IF decimation step uses
-	fast integer downsampling), and returns the closest such divisor.
-	If no integer divisor exists in the search window, it falls back to
-	the rounded value (which will trigger rational resampling — but the
-	defensive backstop in _decimate_common will catch the pathological
-	cases).
+	This helper picks a decimation factor with two preferences, in order:
 
-	The selection prefers larger decimation factors when distances are
-	tied: a higher decimation = lower IF rate = less downstream work.
+	1. **"Clean chain" divisors first.**  A divisor d such that *both*
+	   `sample_rate % d == 0` AND `(sample_rate // d) % audio_sample_rate == 0`
+	   means the downstream decimate_audio call will also take its integer
+	   (sosfilt-based) path.  That matters because the rational resample
+	   path in filters._decimate_common is not genuinely stateful — it
+	   emits a short tail transient at every block boundary, producing
+	   an audible ~5 Hz click in recordings at the slice rate.  Picking
+	   a clean-chain divisor avoids the rational path entirely.
+
+	2. **Any integer divisor of sample_rate.**  Falls back when no clean
+	   chain exists (e.g. AirSpy R2 at 2.5 MHz → 16 kHz: 2500000 = 2^5·5^7
+	   and 16000 = 2^7·5^3 have incompatible power-of-two factors, so no
+	   integer divisor of 2500000 is also a multiple of 16000).  The
+	   rational-resample path still kicks in here; it's the lesser evil
+	   versus the pathological filter size that the naive code would
+	   otherwise produce.
+
+	Within whichever tier applies, the candidate closest to the ideal
+	is chosen (ties broken by preferring the larger decimation = lower
+	IF rate = less downstream CPU).  If no integer divisor exists in
+	the search window at all, the rounded ideal is returned as a last
+	resort and the defensive backstop in _decimate_common will catch
+	the pathological cases.
 
 	Args:
 		sample_rate: SDR sample rate in Hz
 		audio_sample_rate: Final audio rate in Hz
 		oversample: How many times the audio rate the IF should sit at
-			(typically 4 for NFM to give the FM discriminator headroom)
+			(typically 4 for NFM to give the FM discriminator headroom).
+			Dropping from 4x to 3x is fine when it's the price of
+			landing in the clean-chain tier.
 
 	Returns:
 		An integer decimation factor.  Guaranteed >= 1.
@@ -72,8 +89,23 @@ def _pick_if_decimation (sample_rate: float, audio_sample_rate: int, oversample:
 		# (or the backstop in _decimate_common will refuse and warn).
 		return ideal
 
-	# Pick the candidate closest to the ideal.  Tie-break by preferring
-	# the larger decimation factor (lower IF rate, less downstream cost).
+	# Prefer candidates whose resulting IF rate is also a clean multiple
+	# of audio_sample_rate — see the docstring for why this matters.
+	clean_chain_candidates = [
+		d for d in candidates
+		if (sr_int // d) % audio_sample_rate == 0
+	]
+
+	if clean_chain_candidates:
+		# Pick the clean-chain candidate closest to the ideal.  Tie-break
+		# by preferring the larger decimation factor (lower IF rate).
+		return min(clean_chain_candidates, key=lambda d: (abs(d - ideal), -d))
+
+	# No clean chain exists for this sample-rate pair — fall back to the
+	# closest integer divisor.  The audio decimation stage will then use
+	# the rational resample_poly path with its block-boundary tail
+	# transient, but for bands where this branch fires the alternative
+	# is pathological filter sizes, so we accept the trade-off.
 	return min(candidates, key=lambda d: (abs(d - ideal), -d))
 
 

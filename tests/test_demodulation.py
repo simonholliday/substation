@@ -100,42 +100,104 @@ class TestPickIfDecimation:
 	"""
 	Tests for the _pick_if_decimation helper.
 
-	Regression tests for the AirSpy R2 hang: with sample_rate=2500000 and
-	audio_sample_rate=16000, the previous code rounded to if_decimation=39
-	which produced if_rate=64103 (coprime with 2500000) and a 50-million-
-	tap rational resampling filter.  The helper must always pick a value
-	that exactly divides sample_rate so the IF decimation step uses fast
-	integer downsampling.
+	Regression tests for two separate issues:
+
+	1. AirSpy R2 hang: with sample_rate=2500000 and audio_sample_rate=16000,
+	   the previous naive round(sample_rate / target_if_rate) produced
+	   if_decimation=39 → if_rate=64103 (coprime with 2500000) → a 50-million-
+	   tap rational resampling filter that locked up the system.  The helper
+	   must always pick a value that exactly divides sample_rate so the IF
+	   decimation step uses fast integer downsampling.
+
+	2. AirSpy HF+ block-boundary click: with sample_rate=912000 and
+	   audio_sample_rate=16000, the earlier helper picked if_decimation=15
+	   → if_rate=60800, which is an integer divisor of 912000 but NOT a
+	   multiple of 16000.  That forced the downstream decimate_audio call
+	   into its rational resample_poly path, which emits a short tail
+	   transient at every block boundary and produces an audible ~5 Hz click
+	   in recordings.  The helper must prefer "clean chain" candidates where
+	   *both* sample_rate % d == 0 AND (sample_rate // d) % audio_sample_rate
+	   == 0, so the audio stage stays on its stateful integer path.
 	"""
 
 	def test_airspy_r2_2_5mhz (self):
-		"""AirSpy R2 native rate must produce a clean integer divisor."""
+		"""
+		AirSpy R2 native rate must produce a clean integer divisor.
+
+		No clean-chain candidate exists for 2_500_000 → 16_000 (prime
+		factorisations have incompatible power-of-two factors), so the
+		helper falls back to any integer divisor of 2500000 closest to
+		the ideal — which is still d=40.
+		"""
 		dec = substation.dsp.demodulation._pick_if_decimation(2_500_000, 16_000, 4.0)
 		assert 2_500_000 % dec == 0, f"if_decimation {dec} must evenly divide 2500000"
-		# Expected pick: 40 (closest integer divisor of 2500000 to ideal 39)
 		assert dec == 40
 
 	def test_rtlsdr_1024khz_unchanged (self):
-		"""RTL-SDR PMR config must still pick if_decimation=16 (preserves prior behaviour)."""
+		"""
+		RTL-SDR PMR config must still pick if_decimation=16 — 16 is both
+		a divisor of 1024000 AND yields a clean 64000 → 16000 audio stage,
+		so it's the clean-chain winner and matches the pre-change behaviour.
+		"""
 		dec = substation.dsp.demodulation._pick_if_decimation(1_024_000, 16_000, 4.0)
 		assert dec == 16
+		assert (1_024_000 // dec) % 16_000 == 0
 
 	def test_hackrf_2_4mhz (self):
-		"""HackRF 2.4 MHz path picks a clean divisor."""
+		"""
+		HackRF 2.4 MHz path prefers d=30 (clean chain) over d=40 (dirty
+		chain).  At ideal=38, clean candidates in the window are
+		{25, 30, 50, 75}; d=30 is closest.  Yields if_rate=80000 which
+		divides cleanly into 16000 (factor 5).
+		"""
 		dec = substation.dsp.demodulation._pick_if_decimation(2_400_000, 16_000, 4.0)
 		assert 2_400_000 % dec == 0
-		assert dec == 40   # ideal 38, closest divisor 40
+		assert (2_400_000 // dec) % 16_000 == 0, \
+			f"if_rate {2_400_000 // dec} must be a multiple of 16000 (clean chain)"
+		assert dec == 30
 
 	def test_hackrf_dmr_12_5mhz (self):
-		"""HackRF DMR wide-band path picks a clean divisor."""
+		"""
+		HackRF DMR wide-band path picks a clean integer divisor.
+
+		No clean-chain candidate exists for 12_500_000 → 16_000 (same
+		power-of-two mismatch as AirSpy R2), so the helper falls back to
+		d=200 — still the closest integer divisor to the ideal.
+		"""
 		dec = substation.dsp.demodulation._pick_if_decimation(12_500_000, 16_000, 4.0)
 		assert 12_500_000 % dec == 0
-		assert dec == 200   # ideal 195, divisors include 200
+		assert dec == 200
 
-	def test_airspy_hf_912khz (self):
-		"""AirSpy HF+ Discovery native rate picks a clean divisor."""
+	def test_airspy_hf_912khz_clean_chain (self):
+		"""
+		AirSpy HF+ Discovery native rate picks d=19, yielding if_rate=48000
+		which is exactly 3 × 16000.  This is the fix for the block-boundary
+		click on the air_civil_bristol_airspyhf band: before the clean-chain
+		preference was added, the helper picked d=15 (closer to the ideal
+		14 but NOT a clean chain), and the audio decimation stage fell into
+		the rational resample_poly path with its tail transient.
+		"""
 		dec = substation.dsp.demodulation._pick_if_decimation(912_000, 16_000, 4.0)
+		assert dec == 19
 		assert 912_000 % dec == 0
+		if_rate = 912_000 // dec
+		assert if_rate == 48_000
+		assert if_rate % 16_000 == 0, \
+			"if_rate must be a multiple of audio_sample_rate so the audio stage stays on the integer path"
+
+	def test_clean_chain_is_preferred_over_closer_dirty_chain (self):
+		"""
+		Proves the clean-chain tier genuinely wins over the nearest-divisor
+		tier when both are available.  For 912_000 → 16_000, the absolute
+		closest integer divisor to ideal=14 is d=15 (distance 1), but d=15
+		gives the dirty if_rate=60800 (not a multiple of 16000).  The
+		clean-chain candidate d=19 is further from the ideal (distance 5)
+		but gives the clean if_rate=48000.  The helper must pick d=19.
+		"""
+		dec = substation.dsp.demodulation._pick_if_decimation(912_000, 16_000, 4.0)
+		# If the clean-chain preference were absent, we'd expect 15 here.
+		assert dec != 15, "clean-chain preference must override nearest-divisor"
+		assert dec == 19
 
 	def test_returns_at_least_one (self):
 		"""For very low sample rates, the helper must never return 0."""
