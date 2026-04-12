@@ -444,6 +444,7 @@ recording:
 - `discard_empty_enabled`: automatically discard noise-only recordings using spectral flatness analysis (default: true). Applies at two points: before activation (rejects noise triggers without starting a recording) and after recording close (catches recordings that became mostly noise). See [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings).
 - `min_recording_seconds`: discard recordings shorter than this duration (default: 0.5). Catches brief transients (radar pulses, ignition noise) that pass the spectral checks but produce useless sub-second files. Set to `0` to disable.
 - `audio_silence_timeout_ms`: stop recording when demodulated audio has been silent for this duration (default: 3000). Catches AM carriers that persist after voice stops, where RF SNR stays above threshold but there is no useful content. Set to `0` to disable and rely on RF-only detection.
+- `trim_carrier_transients`: remove the sharp key-on/key-off click transients that AM transmitters produce (default: false). Only trims transients bordered by silence — voice transients (consonants) are never affected. Recommended for AM airband listening.
 
 Band Defaults
 ```

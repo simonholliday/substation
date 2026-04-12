@@ -1198,6 +1198,7 @@ class RadioScanner:
 			filename_suffix=filename_suffix,
 			soft_limit_drive=self.soft_limit_drive,
 			noise_reduction_enabled=self.recording_config.noise_reduction_enabled,
+			trim_carrier_transients=self.recording_config.trim_carrier_transients,
 			dynamics_curve_enabled=self.recording_config.dynamics_curve_enabled,
 			dynamics_curve_config=self.recording_config.dynamics_curve,
 		)

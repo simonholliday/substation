@@ -209,3 +209,63 @@ class TestCheckEmpty:
 		path = str(tmp_path / "short.wav")
 		soundfile.write(path, short, sr)
 		assert substation.recording.ChannelRecorder.check_empty(path) is True
+
+
+class TestTrimCarrierTransients:
+
+	SR = 16000
+
+	def _make_signal (self, has_start_click: bool = True, has_end_click: bool = True) -> numpy.ndarray:
+		"""Build: [noise + click + gap + voice + gap + click + noise]."""
+		noise_level = 0.005
+		rng = numpy.random.RandomState(42)
+
+		pre_noise = rng.randn(int(self.SR * 0.01)).astype(numpy.float32) * noise_level
+		# Realistic carrier transient: ~5ms sharp spike with exponential decay
+		click_len = int(self.SR * 0.005)
+		click_env = 0.5 * numpy.exp(-numpy.linspace(0, 5, click_len))
+		click_on = (click_env * numpy.sign(rng.randn(click_len))).astype(numpy.float32)
+		gap = rng.randn(int(self.SR * 0.02)).astype(numpy.float32) * noise_level
+		voice = (0.15 * numpy.sin(2 * numpy.pi * 300 * numpy.arange(self.SR) / self.SR)).astype(numpy.float32)
+		click_off = (click_env[::-1] * numpy.sign(rng.randn(click_len))).astype(numpy.float32)
+		post_noise = rng.randn(int(self.SR * 0.01)).astype(numpy.float32) * noise_level
+
+		parts = []
+		parts.append(pre_noise)
+		if has_start_click:
+			parts.append(click_on)
+			parts.append(gap)
+		parts.append(voice)
+		if has_end_click:
+			parts.append(gap.copy())
+			parts.append(click_off)
+		parts.append(post_noise)
+		return numpy.concatenate(parts)
+
+	def test_removes_start_transient (self):
+		audio = self._make_signal(has_start_click=True, has_end_click=False)
+		original_len = len(audio)
+		trimmed = substation.recording._trim_carrier_transient_start(audio, self.SR)
+		assert len(trimmed) < original_len
+		assert numpy.abs(trimmed[0]) < 0.05
+
+	def test_removes_end_transient (self):
+		audio = self._make_signal(has_start_click=False, has_end_click=True)
+		original_len = len(audio)
+		trimmed = substation.recording._trim_carrier_transient_end(audio, self.SR)
+		assert len(trimmed) < original_len
+		assert numpy.abs(trimmed[-1]) < 0.05
+
+	def test_preserves_voice_only_signal (self):
+		"""Signal without carrier transients should be unchanged."""
+		audio = self._make_signal(has_start_click=False, has_end_click=False)
+		trimmed_start = substation.recording._trim_carrier_transient_start(audio, self.SR)
+		trimmed_end = substation.recording._trim_carrier_transient_end(audio, self.SR)
+		assert len(trimmed_start) == len(audio)
+		assert len(trimmed_end) == len(audio)
+
+	def test_voice_starting_loud_is_not_trimmed (self):
+		"""A signal that starts with loud voice (no preceding silence) must not be trimmed."""
+		voice = (0.2 * numpy.sin(2 * numpy.pi * 500 * numpy.arange(self.SR) / self.SR)).astype(numpy.float32)
+		trimmed = substation.recording._trim_carrier_transient_start(voice, self.SR)
+		assert len(trimmed) == len(voice)

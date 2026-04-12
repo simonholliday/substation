@@ -25,10 +25,117 @@ import numpy
 import numpy.typing
 import soundfile
 
+import substation.constants
 import substation.dsp.noise_reduction
 
 
 logger = logging.getLogger(__name__)
+
+
+def _trim_carrier_transient_start (audio: numpy.typing.NDArray[numpy.float32], sample_rate: int) -> numpy.typing.NDArray[numpy.float32]:
+
+	"""
+	Remove a carrier key-ON transient from the start of the audio.
+
+	Scans the first 50ms for a sharp spike preceded by silence.  A
+	carrier transient is identified by: (1) short duration (<15ms),
+	(2) peak amplitude much higher than the pre-spike region (ratio >
+	CARRIER_TRANSIENT_RATIO).  Voice transients fail criterion 2
+	because they are preceded by other voice content, not silence.
+	"""
+
+	scan_len = min(len(audio), int(sample_rate * 0.05))
+	if scan_len < 10:
+		return audio
+
+	env = numpy.abs(audio[:scan_len])
+	win = max(1, int(sample_rate * 0.0005))
+	env_s = numpy.convolve(env, numpy.ones(win) / win, mode='same')
+
+	spike_idx = int(numpy.argmax(env_s))
+	spike_peak = float(env_s[spike_idx])
+
+	# The pre-spike silence region ends before the smoothing window
+	# reaches the peak — ensures the click's rising edge doesn't
+	# contaminate the noise estimate.
+	pre_end = max(0, spike_idx - win)
+	min_pre = int(sample_rate * 0.003)
+	if pre_end < min_pre:
+		return audio
+
+	pre_rms = float(numpy.sqrt(numpy.mean(audio[:pre_end] ** 2)))
+	if pre_rms < 1e-6:
+		pre_rms = 1e-6
+
+	if spike_peak / pre_rms < substation.constants.CARRIER_TRANSIENT_RATIO:
+		return audio
+
+	# Find where the spike decays back toward noise.
+	threshold = pre_rms * substation.constants.CARRIER_TRANSIENT_RATIO
+	decay_win = max(1, int(sample_rate * 0.002))
+	spike_end = spike_idx
+	for j in range(spike_idx, len(env_s)):
+		if env_s[j] >= threshold:
+			spike_end = j
+		elif j - spike_end > decay_win:
+			break
+
+	if (spike_end - spike_idx) / sample_rate * 1000 > 15:
+		return audio
+
+	trim_point = min(spike_end + decay_win, len(audio))
+	return audio[trim_point:]
+
+
+def _trim_carrier_transient_end (audio: numpy.typing.NDArray[numpy.float32], sample_rate: int) -> numpy.typing.NDArray[numpy.float32]:
+
+	"""
+	Remove a carrier key-OFF transient from the end of the audio.
+
+	Scans the last 500ms for a sharp spike followed by silence.  Same
+	detection criteria as _trim_carrier_transient_start but applied to
+	the recording tail.  Uses a wider scan window than the start
+	because the key-OFF click may be followed by hold-timer noise.
+	"""
+
+	scan_len = min(len(audio), int(sample_rate * 0.5))
+	if scan_len < 10:
+		return audio
+
+	tail = audio[-scan_len:]
+	env = numpy.abs(tail)
+	win = max(1, int(sample_rate * 0.0005))
+	env_s = numpy.convolve(env, numpy.ones(win) / win, mode='same')
+
+	spike_idx = int(numpy.argmax(env_s))
+	spike_peak = float(env_s[spike_idx])
+
+	post_start = min(scan_len, spike_idx + win)
+	min_post = int(sample_rate * 0.003)
+	if post_start > scan_len - min_post:
+		return audio
+
+	post_rms = float(numpy.sqrt(numpy.mean(tail[post_start:] ** 2)))
+	if post_rms < 1e-6:
+		post_rms = 1e-6
+
+	if spike_peak / post_rms < substation.constants.CARRIER_TRANSIENT_RATIO:
+		return audio
+
+	threshold = post_rms * substation.constants.CARRIER_TRANSIENT_RATIO
+	decay_win = max(1, int(sample_rate * 0.002))
+	spike_start = spike_idx
+	for j in range(spike_idx, -1, -1):
+		if env_s[j] >= threshold:
+			spike_start = j
+		elif spike_start - j > decay_win:
+			break
+
+	if (spike_idx - spike_start) / sample_rate * 1000 > 15:
+		return audio
+
+	trim_point = len(audio) - scan_len + max(0, spike_start - decay_win)
+	return audio[:trim_point]
 
 
 class _BextMetadata (typing.TypedDict):
@@ -83,6 +190,7 @@ class ChannelRecorder:
 		filename_suffix: str | None = None,
 		soft_limit_drive: float = 1.25,
 		noise_reduction_enabled: bool = True,
+		trim_carrier_transients: bool = False,
 		dynamics_curve_enabled: bool = False,
 		dynamics_curve_config: typing.Any = None,
 	) -> None:
@@ -134,6 +242,8 @@ class ChannelRecorder:
 		self.soft_limit_drive = max(0.1, float(soft_limit_drive))
 		self.soft_limit_scale = 1.0 / math.tanh(self.soft_limit_drive)
 		self.noise_reduction_enabled = noise_reduction_enabled
+		self.trim_carrier_transients = trim_carrier_transients
+		self._first_flush_done = False
 		self.dynamics_curve_enabled = dynamics_curve_enabled
 		self.dynamics_curve_config = dynamics_curve_config
 		self.initial_noise_floor_db: float | None = None
@@ -381,6 +491,18 @@ class ChannelRecorder:
 		Args:
 			samples: Audio samples as float32 in range [-1.0, 1.0]
 		"""
+
+		# Carrier transient trimming: remove the sharp key-ON click on the
+		# first flush and the key-OFF click on the final flush.  Runs
+		# before noise reduction so the transient doesn't contaminate the
+		# noise estimate.
+		if self.trim_carrier_transients and samples.size > 0:
+			if not self._first_flush_done:
+				samples = _trim_carrier_transient_start(samples, self.audio_sample_rate)
+			if self._closing.is_set():
+				samples = _trim_carrier_transient_end(samples, self.audio_sample_rate)
+
+		self._first_flush_done = True
 
 		# Apply noise reduction using faster spectral subtraction method
 		# This is 5-10x faster than the noisereduce library.  We catch the

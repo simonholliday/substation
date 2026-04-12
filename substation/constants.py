@@ -141,6 +141,16 @@ AUDIO_SILENCE_RMS_THRESHOLD = 0.01
 # speculative demod check) and Gate 3b (post-recording whole-file check).
 SPECTRAL_FLATNESS_THRESHOLD = 0.15
 
+# Carrier transient detection thresholds.  AM transmitters produce sharp
+# clicks when keying on/off.  A carrier transient has peak amplitude
+# exceeding CARRIER_TRANSIENT_RATIO × the local noise floor, AND the
+# region on its outer side (before key-ON, after key-OFF) has RMS below
+# CARRIER_TRANSIENT_SILENCE_RATIO × noise floor.  Voice transients
+# (plosive consonants) fail the silence criterion because they are
+# surrounded by other voice content.
+CARRIER_TRANSIENT_RATIO = 8.0
+CARRIER_TRANSIENT_SILENCE_RATIO = 2.0
+
 # ==============================================================================
 # Noise Floor Estimation Constants
 # ==============================================================================

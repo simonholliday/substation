@@ -50,6 +50,11 @@ recording:
     # stops).  Set to 0 to rely on RF-only detection.
     audio_silence_timeout_ms: 3000
 
+    # Remove sharp key-on/key-off click transients from recordings.
+    # Only trims transients bordered by silence — voice content is never
+    # affected.  Recommended for AM airband listening.
+    trim_carrier_transients: false
+
     # Discard noise-only recordings automatically using spectral flatness
     # analysis.  Applies at turn-ON (rejects noise triggers before recording
     # starts) and at turn-OFF (discards files that became mostly noise).

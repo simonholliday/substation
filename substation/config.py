@@ -301,6 +301,7 @@ class RecordingConfig(pydantic.BaseModel):
 	discard_empty_enabled: bool = pydantic.Field(default=True)
 	min_recording_seconds: float = pydantic.Field(default=0.5, ge=0.0)
 	audio_silence_timeout_ms: float = pydantic.Field(default=3000.0, ge=0.0)
+	trim_carrier_transients: bool = pydantic.Field(default=False)
 	dynamics_curve_enabled: bool = pydantic.Field(default=False)
 	dynamics_curve: DynamicsCurveConfig = pydantic.Field(default_factory=DynamicsCurveConfig)
 
