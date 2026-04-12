@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import pathlib
 import time
 import typing
 
@@ -33,13 +34,13 @@ class RadioScanner:
 	to prevent rapid state toggling when signals hover near the threshold.
 	"""
 
-	def __init__ (self, config_path: str = 'config.yaml', band_name: str = 'pmr', device_type: str = 'rtlsdr', device_index: int = 0, config: typing.Any | None = None) -> None:
+	def __init__ (self, config_path: pathlib.Path | None = None, band_name: str = 'pmr', device_type: str = 'rtlsdr', device_index: int = 0, config: typing.Any | None = None) -> None:
 
 		"""
 		Initialize the scanner with configuration
 
 		Args:
-			config_path: Path to the YAML configuration file
+			config_path: Optional path to user config override file
 			band_name: Name of the band to scan (default: 'pmr')
 			device_type: SDR type ('rtlsdr' or 'hackrf')
 			device_index: Device index for the selected SDR type
@@ -60,6 +61,18 @@ class RadioScanner:
 			raise KeyError(f"Band '{band_name}' not found in configuration. Available bands: {available}")
 
 		self.band_config = self.config.bands[band_name]
+
+		if self.band_config.device_overrides:
+			device_family = substation.devices.normalize_device_family(device_type)
+			override = self.band_config.device_overrides.get(device_family)
+			if override:
+				merged = self.band_config.model_dump()
+				del merged['device_overrides']
+				for field, value in override.model_dump(exclude_none=True).items():
+					merged[field] = value
+				self.band_config = substation.config.BandConfig.model_validate(merged)
+				logger.info("Applied device overrides for '%s'", device_family)
+
 		self.scanner_config = self.config.scanner
 		self.recording_config = self.config.recording
 

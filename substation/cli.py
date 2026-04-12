@@ -13,6 +13,7 @@ Typical usage:
 import argparse
 import asyncio
 import logging
+import pathlib
 import sys
 
 import substation
@@ -21,17 +22,17 @@ import substation.scanner
 
 logger = logging.getLogger(__name__)
 
-def list_bands (config_path: str) -> None:
+def list_bands (config_path: pathlib.Path | None) -> None:
 
 	"""
-	Display a summary of all bands defined in the configuration file.
+	Display a summary of all bands defined in the configuration.
 
 	Loads the configuration and prints a formatted table showing each band's
 	name, frequency range, modulation type, and channel spacing. Useful for
 	discovering what bands are available before starting a scan.
 
 	Args:
-		config_path: Path to YAML configuration file
+		config_path: Optional path to user config override file
 
 	Exits:
 		Exits with code 1 if configuration cannot be loaded
@@ -41,7 +42,7 @@ def list_bands (config_path: str) -> None:
 		config_data = substation.config.load_config(config_path)
 		bands = config_data.bands
 
-		print(f"\nAvailable bands in {config_path}:")
+		print("\nAvailable bands:")
 		print("=" * 60)
 
 		for band_name, band_config in bands.items():
@@ -63,7 +64,7 @@ def list_bands (config_path: str) -> None:
 		print(f"Error loading configuration: {e}", file=sys.stderr)
 		sys.exit(1)
 
-async def run_scanner (config_path: str, band_name: str, device_type: str, device_index: int) -> None:
+async def run_scanner (config_path: pathlib.Path | None, band_name: str, device_type: str, device_index: int) -> None:
 
 	"""
 	Initialize and run the scanner.
@@ -75,7 +76,7 @@ async def run_scanner (config_path: str, band_name: str, device_type: str, devic
 	4. Runs the scan loop until interrupted (Ctrl+C) or error
 
 	Args:
-		config_path: Path to YAML configuration file
+		config_path: Optional path to user config override file
 		band_name: Name of the band to scan (must exist in config.bands)
 		device_type: SDR device type ('rtlsdr' or 'hackrf')
 		device_index: Device index for multi-device setups (0 for first device)
@@ -149,11 +150,11 @@ Examples:
 		"""
 	)
 
-	# Configuration file location
+	# User config override file (merged on top of config.yaml.default)
 	parser.add_argument(
 		'--config', '-c',
-		default='config.yaml',
-		help='Path to configuration file (default: config.yaml)'
+		default=None,
+		help='Path to user config override file (default: config.yaml in CWD if it exists)'
 	)
 
 	# Which band to scan (required for scanning, not for --list-bands)
@@ -187,9 +188,11 @@ Examples:
 
 	args = parser.parse_args()
 
+	config_path = pathlib.Path(args.config) if args.config else None
+
 	# Handle --list-bands mode (doesn't require --band)
 	if args.list_bands:
-		list_bands(args.config)
+		list_bands(config_path)
 		return 0
 
 	# Validate that --band is provided for scanning mode
@@ -199,7 +202,7 @@ Examples:
 
 	# Run the scanner asynchronously
 	try:
-		asyncio.run(run_scanner(config_path=args.config, band_name=args.band, device_type=args.device_type, device_index=args.device_index))
+		asyncio.run(run_scanner(config_path=config_path, band_name=args.band, device_type=args.device_type, device_index=args.device_index))
 		return 0
 
 	except KeyboardInterrupt:

@@ -1,4 +1,4 @@
-"""Tests for channel frequency calculation and IQ extraction."""
+"""Tests for channel frequency calculation, IQ extraction, and device overrides."""
 
 import fractions
 
@@ -6,6 +6,7 @@ import numpy
 import pytest
 
 import substation.config
+import substation.devices
 import substation.scanner
 
 import iq_generators
@@ -95,3 +96,70 @@ class TestChannelExtraction:
 			# Wrap to [-pi, pi]
 			phase_jump = min(phase_jump, 2 * numpy.pi - phase_jump)
 			assert phase_jump < 0.5  # radians — small jump
+
+
+class TestNormalizeDeviceFamily:
+
+	def test_rtlsdr_aliases (self):
+		assert substation.devices.normalize_device_family("rtlsdr") == "rtlsdr"
+		assert substation.devices.normalize_device_family("rtl") == "rtlsdr"
+		assert substation.devices.normalize_device_family("RTL-SDR") == "rtlsdr"
+
+	def test_hackrf_aliases (self):
+		assert substation.devices.normalize_device_family("hackrf") == "hackrf"
+		assert substation.devices.normalize_device_family("HackRF-One") == "hackrf"
+
+	def test_airspy_aliases (self):
+		assert substation.devices.normalize_device_family("airspy") == "airspy"
+		assert substation.devices.normalize_device_family("airspy-r2") == "airspy"
+		assert substation.devices.normalize_device_family("AirSpyR2") == "airspy"
+
+	def test_airspyhf_aliases (self):
+		assert substation.devices.normalize_device_family("airspyhf") == "airspyhf"
+		assert substation.devices.normalize_device_family("airspy-hf") == "airspyhf"
+		assert substation.devices.normalize_device_family("airspyhf+") == "airspyhf"
+
+	def test_soapy_driver (self):
+		assert substation.devices.normalize_device_family("soapy:lime") == "lime"
+		assert substation.devices.normalize_device_family("soapy:airspy") == "airspy"
+
+	def test_unknown_passthrough (self):
+		assert substation.devices.normalize_device_family("bladerf") == "bladerf"
+
+
+class TestDeviceOverrideApplied:
+
+	def test_override_applied_on_matching_device (self, minimal_config_dict):
+		"""Device override should replace base values when device matches."""
+		minimal_config_dict["bands"]["test_nfm"]["device_overrides"] = {
+			"airspy": {"sample_rate": 2.5e6, "snr_threshold_db": 8.0},
+		}
+		config = substation.config.validate_config(minimal_config_dict)
+		sc = substation.scanner.RadioScanner(
+			config=config, band_name="test_nfm", device_type="airspy",
+		)
+		assert sc.sample_rate == 2.5e6
+		assert sc.snr_threshold_db == 8.0
+
+	def test_override_not_applied_on_different_device (self, minimal_config_dict):
+		"""Device override should not be applied when device doesn't match."""
+		minimal_config_dict["bands"]["test_nfm"]["device_overrides"] = {
+			"airspy": {"sample_rate": 2.5e6},
+		}
+		config = substation.config.validate_config(minimal_config_dict)
+		sc = substation.scanner.RadioScanner(
+			config=config, band_name="test_nfm", device_type="rtlsdr",
+		)
+		assert sc.sample_rate == 1.024e6
+
+	def test_override_preserves_base_fields (self, minimal_config_dict):
+		"""Fields not in the override should keep their base values."""
+		minimal_config_dict["bands"]["test_nfm"]["device_overrides"] = {
+			"airspy": {"sample_rate": 2.5e6},
+		}
+		config = substation.config.validate_config(minimal_config_dict)
+		sc = substation.scanner.RadioScanner(
+			config=config, band_name="test_nfm", device_type="airspy",
+		)
+		# snr_threshold_db should be unchanged from base config
+		assert sc.snr_threshold_db == 12.0

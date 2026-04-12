@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import fractions
 import logging
+import pathlib
 import typing
 
 import pydantic
@@ -364,6 +365,39 @@ class BandTypeConfig(pydantic.BaseModel):
 		return _normalize_gain(value)
 
 
+class DeviceOverrideConfig(pydantic.BaseModel):
+	"""Device-specific overrides for a band.
+
+	All fields are optional — only specified fields override the band's
+	base values when the matching device type is selected at runtime.
+
+	Attributes:
+		sample_rate: Device-specific SDR sample rate (must cover band span).
+		sdr_gain_db: Gain in dB or 'auto'.
+		sdr_gain_elements: Per-element gain mapping (e.g., LNA, MIX, VGA).
+		sdr_device_settings: Device-specific settings (e.g., bias tee).
+		snr_threshold_db: Device-specific SNR threshold.
+		activation_variance_db: Device-specific variance threshold.
+	"""
+
+	model_config = pydantic.ConfigDict(extra='forbid')
+
+	sample_rate: float | None = pydantic.Field(default=None, gt=0)
+	sdr_gain_db: float | str | None = None
+	sdr_gain_elements: dict[str, float] | None = None
+	sdr_device_settings: dict[str, str] | None = None
+	snr_threshold_db: float | None = None
+	activation_variance_db: float | None = pydantic.Field(default=None, ge=0)
+
+	@pydantic.field_validator('sdr_gain_db', mode='before')
+	@classmethod
+	def _validate_gain (cls, value: typing.Any) -> typing.Any:
+		"""Normalize gain to 'auto' or float, preserving None as 'not overridden'."""
+		if value is None:
+			return None
+		return _normalize_gain(value)
+
+
 class BandConfig(pydantic.BaseModel):
 	"""
 	Configuration for a specific band to scan.
@@ -446,6 +480,7 @@ class BandConfig(pydantic.BaseModel):
 	sdr_gain_elements: dict[str, float] | None = None
 	sdr_device_settings: dict[str, str] | None = None
 	activation_variance_db: float | None = pydantic.Field(default=None, ge=0)
+	device_overrides: dict[str, DeviceOverrideConfig] | None = None
 
 	@pydantic.field_validator('modulation', 'type', mode='before')
 	@classmethod
@@ -564,24 +599,80 @@ class AppConfig(pydantic.BaseModel):
 		return self
 
 
-def _load_raw_config (config_path: str) -> dict:
+def _deep_merge (
+	base: dict[str, typing.Any],
+	override: dict[str, typing.Any],
+) -> dict[str, typing.Any]:
 
+	"""Recursively merge *override* onto *base*, returning a new dict.
+
+	For each key in override: if both values are dicts, recurse; otherwise the
+	override value wins (including explicit None / YAML null).  Keys present in
+	base but absent from override are preserved unchanged.  Neither input is
+	mutated.
 	"""
-	Load raw configuration data from YAML file.
+
+	result = dict(base)
+
+	for key, override_value in override.items():
+		base_value = result.get(key)
+		if isinstance(base_value, dict) and isinstance(override_value, dict):
+			result[key] = _deep_merge(base_value, override_value)
+		elif isinstance(base_value, dict) and override_value is None:
+			pass
+		else:
+			result[key] = override_value
+
+	return result
+
+
+def _locate_default_config () -> pathlib.Path:
+
+	"""Return the path to the bundled config.yaml.default.
+
+	Raises FileNotFoundError if the file is missing (broken installation).
+	"""
+
+	default = pathlib.Path(__file__).parent.parent / "config.yaml.default"
+
+	if not default.exists():
+		raise FileNotFoundError(
+			f"Bundled config.yaml.default not found at {default}. "
+			"The package installation may be corrupted."
+		)
+
+	return default
+
+
+def _resolve_user_config_path (
+	explicit: pathlib.Path | None,
+) -> pathlib.Path | None:
+
+	"""Return the user's config override path, or None if no user config exists.
+
+	Priority: explicit path argument → ./config.yaml in CWD → None.
+	When an explicit path is provided it must exist; no CWD fallback is tried.
+	"""
+
+	if explicit is not None:
+		if explicit.exists():
+			return explicit
+
+		raise FileNotFoundError(f"Config file not found: {explicit}")
+
+	cwd_config = pathlib.Path.cwd() / "config.yaml"
+	if cwd_config.exists():
+		return cwd_config
+
+	return None
+
+
+def _load_raw_config (config_path: pathlib.Path) -> dict:
+
+	"""Load raw configuration data from YAML file.
 
 	Performs basic validation (file exists, contains valid YAML, root is a dict)
 	but doesn't validate the structure or types yet (that's done by Pydantic).
-
-	Args:
-		config_path: Path to YAML configuration file
-
-	Returns:
-		Raw configuration as a dictionary
-
-	Raises:
-		FileNotFoundError: If config file doesn't exist
-		ValueError: If file is empty or root element is not a dict
-		yaml.YAMLError: If file contains invalid YAML syntax
 	"""
 
 	with open(config_path, 'r') as f:
@@ -678,30 +769,32 @@ def _apply_band_defaults (data: dict) -> dict:
 	return merged
 
 
-def load_config (config_path: str) -> AppConfig:
+def load_config (path: pathlib.Path | None = None) -> AppConfig:
 
-	"""
-	Load and validate configuration from YAML file.
+	"""Load configuration, merging config.yaml.default with config.yaml.
 
-	This is the main entry point for loading configuration. It:
-	1. Loads raw YAML from file
-	2. Applies band type defaults
-	3. Validates using Pydantic (type checking, range validation, etc.)
-
-	Args:
-		config_path: Path to YAML configuration file
-
-	Returns:
-		Validated AppConfig object
-
-	Raises:
-		FileNotFoundError: If config file doesn't exist
-		ValueError: If config structure is invalid
-		pydantic.ValidationError: If config values are invalid
+	Always loads config.yaml.default as the base.  If a user config.yaml exists
+	(or an explicit path is given), it is deep-merged on top so user settings
+	override defaults while unspecified keys inherit default values.
 	"""
 
-	data = _load_raw_config(config_path)
-	data = _apply_band_defaults(data)
+	default_path = _locate_default_config()
+	base = _load_raw_config(default_path)
+
+	user_path = _resolve_user_config_path(path)
+
+	if user_path is not None and user_path.resolve() == default_path.resolve():
+		user_path = None
+
+	if user_path is not None:
+		user = _load_raw_config(user_path)
+		raw = _deep_merge(base, user)
+		logger.debug("Loaded config from %s + %s", default_path.name, user_path.name)
+	else:
+		raw = base
+		logger.debug("Loaded config from %s (no user overrides)", default_path.name)
+
+	data = _apply_band_defaults(raw)
 
 	return AppConfig.model_validate(data)
 

@@ -1,0 +1,591 @@
+scanner:
+
+    # Number of samples to request from SDR device at a time
+    sdr_device_sample_size: 131072
+
+    # Time in milliseconds that we will sample a band before processing the data
+    # Should be a multiple of band_sample_size (we will check this in the code)
+    band_time_slice_ms: 200
+
+    # Async sample queue depth (buffer for temporary processing slowdowns)
+    # Each entry is ~2 MB (sdr_device_sample_size * 8 bytes), so 200 = ~400 MB max
+    # Higher values tolerate bursts when multiple channels activate simultaneously
+    # Recommended: 100-200 for normal use, 50-100 for memory-constrained systems
+    sample_queue_maxsize: 200
+
+    # Frequency calibration using a known strong signal (e.g., WFM broadcast)
+    # Set to null to disable calibration
+    # Example: 93.7e+6 for a strong FM radio station at 93.7 MHz
+    calibration_frequency_hz: 93.7e+6
+    
+    # Stuck channel detection: warn if a channel remains active for longer than X seconds.
+    # Particularly helpful for identifying interference or stuck transmitters.
+    # Set to null to disable. Recommended: 30-120 seconds.
+    stuck_channel_threshold_seconds: 60
+
+recording:
+
+    # Maximum in-memory buffer per channel (seconds)
+    buffer_size_seconds: 30
+
+    # How often to flush buffer to disk (seconds)
+    disk_flush_interval_seconds: 5
+
+    # Audio output sample rate (Hz) - 16kHz mono WAV
+    audio_sample_rate: 16000
+
+    # Output directory for recordings
+    audio_output_dir: "./audio"
+
+    # Linear fade in/out durations in milliseconds
+    fade_in_ms: 15
+    fade_out_ms: 50
+
+    # Soft limiter drive for post-processing; 1.5–3.0 is typical (higher = stronger limiting)
+    soft_limit_drive: 1.25
+
+    # Audio silence timeout in milliseconds.  Stops recording when demodulated
+    # audio has been silent for this long, even if the RF carrier is still
+    # present (common on AM airband where the carrier persists after voice
+    # stops).  Set to 0 to rely on RF-only detection.
+    audio_silence_timeout_ms: 3000
+
+    # Remove sharp key-on/key-off click transients from recordings.
+    # Only trims transients bordered by silence — voice content is never
+    # affected.  Recommended for AM airband listening.
+    trim_carrier_transients: false
+
+    # Discard noise-only recordings automatically using spectral flatness
+    # analysis.  Applies at turn-ON (rejects noise triggers before recording
+    # starts) and at turn-OFF (discards files that became mostly noise).
+    # See README.md "Rejecting empty/noise recordings" for details.
+    discard_empty_enabled: true
+
+    # Minimum recording duration in seconds.  Recordings shorter than this
+    # are deleted on close — catches brief transients (radar pulses, ignition
+    # noise) that pass spectral checks but produce useless files.  Set to 0
+    # to keep all recordings regardless of length.
+    min_recording_seconds: 0.5
+
+    # Experimental: dual-region expander applied per-sample to recorded audio.
+    # Cuts the level of quiet samples (downward expansion, suppresses noise)
+    # and gently boosts loud samples (upward expansion, gives voice presence).
+    # Disabled by default — set dynamics_curve_enabled: true to trial it.
+    # See README.md and substation/dsp/noise_reduction.py for details.
+    dynamics_curve_enabled: false
+    dynamics_curve:
+        threshold_dbfs: -25.0   # Dividing line between cut and boost regions
+        cut_db: 6.0             # Reduction at midpoint of cut S-curve (max = 2x at floor)
+        boost_db: 1.5           # Peak boost in the boost hump
+        floor_dbfs: -60.0       # Hard silence below this level
+        cut_curve: 0.5          # 0..1; 0.5 = symmetric, <0.5 = steeper near threshold
+        boost_curve: 0.5        # 0..1; same skew control for the boost hump
+
+band_defaults:
+
+    # Generic narrow-FM voice bands (UHF business radio, amateur 2m,
+    # marine VHF, fire ground, etc.).  Each band sets its own
+    # channel_spacing because conventions differ between services.
+    NFM:
+        modulation: NFM
+        recording_enabled: false
+
+    # Default settings for PMR bands
+    PMR:
+        channel_spacing: 12.5e+3
+        modulation: NFM
+        recording_enabled: true
+        snr_threshold_db: 4.5
+        sdr_gain_db: 36
+
+    # Default settings for DMR bands
+    DMR:
+        channel_spacing: 12.5e+3
+        modulation: NFM
+        snr_threshold_db: 15
+        sdr_gain_db: 24
+
+    # Default settings for airband voice (AM)
+    AIR:
+        channel_spacing: !fraction 25000/3
+        modulation: AM
+        recording_enabled: true
+        snr_threshold_db: 4.5
+        sdr_gain_db: 30
+
+    # TETRA: detection only (no demodulator implemented).
+    # Bands using this type will detect channel activity but cannot record audio.
+    # The uplink frequency for a given channel sits 10 MHz below the paired
+    # downlink frequency.
+    TETRA:
+        channel_spacing: 25.0e+3
+        modulation: TETRA
+        snr_threshold_db: 3.5
+        sdr_gain_db: 36
+
+    # HF / shortwave on AirSpy HF+ Discovery.
+    # Each HF band sets its own modulation (USB / LSB / AM) explicitly,
+    # because the right choice depends on the band's content:
+    #   - 80m, 40m  → LSB by amateur convention (below 10 MHz)
+    #   - 20m, 17m, 15m, 12m, 10m, HFGCS, VOLMET → USB (above 10 MHz)
+    #   - International broadcast and pirate radio → AM
+    # Channel spacing of 5 kHz comfortably contains a single ~2.7 kHz
+    # SSB transmission per channel.
+    HF:
+        channel_spacing: 5.0e+3
+        recording_enabled: true
+        snr_threshold_db: 6
+        sdr_gain_db: auto
+
+    # Digital data bands (ACARS, VDL Mode 2, etc.).  Detection only —
+    # there is no demodulator for these protocols, so recording is
+    # disabled by default.
+    DATA:
+        recording_enabled: false
+
+bands:
+
+    # Practical maximum sample rates:
+    # - RTL-SDR Blog V4: 2.4MHz
+    # - HackRF One: 16MHz
+    # - AirSpy R2: 10MHz
+    # - AirSpy HF+ Discovery: 768kHz
+    #
+    # Per-element gain control (SoapySDR devices):
+    # Some devices expose multiple gain stages that can be tuned individually
+    # for optimal noise figure. Available element names and their ranges are
+    # logged at INFO level on startup. Example for AirSpy R2:
+    #   sdr_gain_elements:
+    #     LNA: 10
+    #     MIX: 5
+    #     VGA: 12
+    # When sdr_gain_elements is set, sdr_gain_db is ignored.
+    #
+    # Device-specific settings (SoapySDR devices):
+    # Passed through to SoapySDR's writeSetting() API. Available settings
+    # are logged at DEBUG level on startup. Example:
+    #   sdr_device_settings:
+    #     biastee: "true"
+    #
+    # Rejecting empty/noise recordings:
+    # Use activation_variance_db to suppress channel triggers that look
+    # statistically flat (likely stationary noise rather than real signal).
+    # Real signals show 5-15+ dB variance over a detection window; noise
+    # shows under 2 dB.  Defaults to 3.0; set to 0 to disable.
+    # Useful for sensitive devices like the AirSpy HF+. Example:
+    #   activation_variance_db: 3.0
+    #
+    # Per-device tuning (device_overrides):
+    # Different SDR devices may need different sample rates, gain, or
+    # sensitivity settings for the same band.  Instead of duplicating the
+    # entire band definition, add a device_overrides section.  When you
+    # run --device-type <name>, matching overrides are merged onto the
+    # band's base config.  See README.md for full documentation.  Example:
+    #   device_overrides:
+    #     airspy:
+    #       sample_rate: 2.5e6
+    #       sdr_gain_elements: {LNA: 14, MIX: 5, VGA: 12}
+
+    pmr:
+        type: PMR
+        freq_start: 446.00625e+6
+        freq_end: 446.19375e+6
+        sample_rate: 1.024e6
+        exclude_channel_indices: [1, 2, 3]
+
+    # Air
+
+    air_civil_1:
+        type: AIR
+        freq_start: 118.0e+6
+        freq_end: 127.5e+6
+        sample_rate: 12.5e+6
+
+    air_civil_2:
+        type: AIR
+        freq_start: 127.5e+6
+        freq_end: 137.0e+6
+        sample_rate: 12.5e+6
+
+    # Specific Bristol/Local Area (Faster scanning)
+
+    air_civil_bristol:
+        type: AIR
+        freq_start: 125.5e+6
+        freq_end: 126.0e+6
+        sample_rate: 1.024e6
+        exclude_channel_indices: [26, 27, 34, 35]
+        device_overrides:
+            # AirSpy HF+ Discovery — sensitive narrow-band receiver.
+            # The HF+ is sensitive enough that the standard SNR threshold
+            # catches stationary noise as well as real signals;
+            # activation_variance_db filters out those noise triggers.
+            airspyhf:
+                sample_rate: 0.912e6
+                snr_threshold_db: 6
+                sdr_gain_db: auto
+                activation_variance_db: 3.0
+
+    # UK Military Airband
+    air_military_uhf:
+        type: AIR
+        freq_start: 225.0e+6
+        freq_end: 400.0e+6
+        channel_spacing: 25.0e+3
+        sample_rate: 2.4e+6
+        sdr_gain_db: 36
+
+    # ACARS Digital Data (Standard)
+    air_acars_primary:
+        type: DATA
+        freq_start: 131.5e+6
+        freq_end: 131.9e+6
+        channel_spacing: 25.0e+3
+        sample_rate: 1.0e+6
+        modulation: AM
+        snr_threshold_db: 15
+        sdr_gain_db: 36
+
+    # VDL Mode 2 (High-speed Digital Aviation Data)
+    air_vdl_m2:
+        type: DATA
+        freq_start: 136.9e+6
+        freq_end: 136.975e+6
+        channel_spacing: 25.0e+3
+        sample_rate: 1.0e+6
+        modulation: AM
+        snr_threshold_db: 15
+        sdr_gain_db: 36
+
+    # Fire Ground Simplex (Analog - used at scene of incidents)
+    fire_ground_uhf:
+        type: NFM
+        freq_start: 457.0e+6
+        freq_end: 457.5e+6
+        channel_spacing: 12.5e+3
+        sample_rate: 1.0e+6
+        modulation: NFM
+        snr_threshold_db: 15
+        sdr_gain_db: 24
+
+    # Amateur Radio 2m Band (UK)
+    amateur_2m:
+        type: NFM
+        freq_start: 144.0e+6
+        freq_end: 146.0e+6
+        channel_spacing: 12.5e+3
+        sample_rate: 2.4e+6
+        modulation: NFM
+        snr_threshold_db: 4.5
+        sdr_gain_db: 36
+
+    # Marine VHF (Focus on International Calling Ch 16)
+    marine_vhf_calling:
+        type: NFM
+        freq_start: 156.0e+6
+        freq_end: 157.4e+6
+        channel_spacing: 25.0e+3  # Marine can be 12.5 or 25, 25 is common for older gear
+        sample_rate: 2.4e+6
+        modulation: NFM
+        snr_threshold_db: 5.0
+        sdr_gain_db: 30
+
+    # UK Simple Business Radio (UHF)
+    business_simple_uk_uhf:
+        type: NFM
+        freq_start: 449.3e+6
+        freq_end: 449.5e+6
+        channel_spacing: 12.5e+3
+        sample_rate: 1.024e+6
+        modulation: NFM
+        snr_threshold_db: 6.0
+        sdr_gain_db: 36
+
+    # -----------------------------------------------------------------
+    # DMR (UK)
+    # -----------------------------------------------------------------
+
+    # All UK DMR — requires high-bandwidth device (e.g. HackRF)
+    dmr:
+        type: DMR
+        freq_start: 452.5e+6
+        freq_end: 460.5e+6
+        sample_rate: 12.5e+6
+
+    # DMR slices for RTL-SDR (2.4 MHz bandwidth limit)
+    dmr_1:
+        type: DMR
+        freq_start: 452.5e+6
+        freq_end: 454.5e+6
+        sample_rate: 2.4e+6
+
+    dmr_2:
+        type: DMR
+        freq_start: 457.5e+6
+        freq_end: 459.5e+6
+        sample_rate: 2.4e+6
+
+    dmr_3:
+        type: DMR
+        freq_start: 458.5e+6
+        freq_end: 460.5e+6
+        sample_rate: 2.4e+6
+
+    dmr_4:
+        type: DMR
+        freq_start: 453.0e+6
+        freq_end: 453.3e+6
+        sample_rate: 2.4e+6
+
+    dmr_5:
+        type: DMR
+        freq_start: 455.0e+6
+        freq_end: 457.0e+6
+        sample_rate: 2.4e+6
+
+    # -----------------------------------------------------------------
+    # TETRA / Airwave (UK)
+    # -----------------------------------------------------------------
+
+    # Airwave Downlink (always-on)
+
+    tetra_airwave_downlink:
+        type: TETRA
+        freq_start: 390.0e+6
+        freq_end: 395.0e+6
+        sample_rate: 10.0e+6
+
+    tetra_airwave_downlink_1:
+        type: TETRA
+        freq_start: 390.0e+6
+        freq_end: 391.9e+6
+        sample_rate: 2.4e+6
+
+    tetra_airwave_downlink_2:
+        type: TETRA
+        freq_start: 391.5e+6
+        freq_end: 393.4e+6
+        sample_rate: 2.4e+6
+
+    tetra_airwave_downlink_3:
+        type: TETRA
+        freq_start: 393.1e+6
+        freq_end: 395.0e+6
+        sample_rate: 2.4e+6
+
+    # Airwave Uplink
+
+    tetra_airwave_uplink:
+        type: TETRA
+        freq_start: 380.0e+6
+        freq_end: 385.0e+6
+        sample_rate: 10.0e+6
+
+    tetra_airwave_uplink_1:
+        type: TETRA
+        freq_start: 380.0e+6
+        freq_end: 381.9e+6
+        sample_rate: 2.4e+6
+
+    tetra_airwave_uplink_2:
+        type: TETRA
+        freq_start: 381.5e+6
+        freq_end: 383.4e+6
+        sample_rate: 2.4e+6
+
+    tetra_airwave_uplink_3:
+        type: TETRA
+        freq_start: 383.1e+6
+        freq_end: 385.0e+6
+        sample_rate: 2.4e+6
+
+    # London-only Emergency Services Extensions
+
+    tetra_london_extension:
+        type: TETRA
+        freq_start: 420.0e+6
+        freq_end: 423.0e+6
+        sample_rate: 2.4e+6
+
+    # Commercial Downlink
+
+    tetra_commercial_downlink:
+        type: TETRA
+        freq_start: 420.0e+6
+        freq_end: 425.0e+6
+        sample_rate: 10.0e+6
+
+    tetra_commercial_downlink_1:
+        type: TETRA
+        freq_start: 420.0e+6
+        freq_end: 421.9e+6
+        sample_rate: 2.4e+6
+
+    tetra_commercial_downlink_2:
+        type: TETRA
+        freq_start: 421.5e+6
+        freq_end: 423.4e+6
+        sample_rate: 2.4e+6
+
+    tetra_commercial_downlink_3:
+        type: TETRA
+        freq_start: 423.1e+6
+        freq_end: 425.0e+6
+        sample_rate: 2.4e+6
+
+    # Commercial Uplink
+
+    tetra_commercial_uplink:
+        type: TETRA
+        freq_start: 410.0e+6
+        freq_end: 420.0e+6
+        sample_rate: 16.0e+6
+
+    # Prison/Civil (450-462.4 MHz)
+
+    tetra_prison_civil:
+        type: TETRA
+        freq_start: 450.0e+6
+        freq_end: 462.4e+6
+        sample_rate: 16.0e+6
+
+    tetra_prison_civil_1:
+        type: TETRA
+        freq_start: 450.0e+6
+        freq_end: 451.9e+6
+        sample_rate: 2.4e+6
+
+    tetra_prison_civil_2:
+        type: TETRA
+        freq_start: 451.5e+6
+        freq_end: 453.4e+6
+        sample_rate: 2.4e+6
+
+    tetra_prison_civil_3:
+        type: TETRA
+        freq_start: 453.1e+6
+        freq_end: 455.0e+6
+        sample_rate: 2.4e+6
+
+    tetra_prison_civil_4:
+        type: TETRA
+        freq_start: 454.6e+6
+        freq_end: 456.5e+6
+        sample_rate: 2.4e+6
+
+    tetra_prison_civil_5:
+        type: TETRA
+        freq_start: 456.1e+6
+        freq_end: 458.0e+6
+        sample_rate: 2.4e+6
+
+    tetra_prison_civil_6:
+        type: TETRA
+        freq_start: 457.7e+6
+        freq_end: 459.6e+6
+        sample_rate: 2.4e+6
+
+    tetra_prison_civil_7:
+        type: TETRA
+        freq_start: 459.2e+6
+        freq_end: 461.1e+6
+        sample_rate: 2.4e+6
+
+    tetra_prison_civil_8:
+        type: TETRA
+        freq_start: 460.8e+6
+        freq_end: 462.4e+6
+        sample_rate: 2.4e+6
+
+    # -----------------------------------------------------------------
+    # HF / Shortwave (for AirSpy HF+ Discovery or similar)
+    # -----------------------------------------------------------------
+    #
+    # Curated for capturing random multilingual voice, numbers stations,
+    # military comms, pirates, amateur DX, utility signals.  All bands
+    # deliberately AVOID ITU international broadcast windows so they
+    # will not pick up music or news stations.
+    #
+    # Each band specifies its own modulation explicitly (USB, LSB, or AM)
+    # so the demodulator matches what's actually being transmitted.
+    #
+    # Time-of-day guide:
+    #   Night     →  hf_amateur_80m, hf_night_4mhz
+    #   Day       →  hf_day_11mhz,    hf_amateur_20m
+    #   Anytime   →  hf_amateur_40m
+    #   Sun morn  →  hf_pirate_48m
+    #
+    # SAMPLE RATES: the values below are deliberately wide enough to
+    # cover the full band of interest in a single tune.  If CPU load is
+    # a concern, narrowing each band's freq_start/freq_end and dropping
+    # to a smaller AirSpy HF+ supported rate (192 / 228 / 384 / 456 /
+    # 650 / 768 / 912 kHz) would reduce per-slice work proportionally.
+
+    # 80m amateur phone — European LSB voice, many languages, night band.
+    hf_amateur_80m:
+        type: HF
+        modulation: LSB
+        freq_start: 3.600e+6
+        freq_end: 3.800e+6
+        sample_rate: 0.228e6
+
+    # 4 MHz night band — UVB-76 "The Buzzer" (4625), HFGCS night (4724),
+    # marine SSB (4125), Russian/CIS military voice activity.
+    # Default modulation is USB because most of the traffic in this
+    # window (HFGCS, marine SSB) is USB-modulated.  UVB-76 itself is
+    # technically full-carrier AM — it will still be audible through
+    # the USB demodulator (the buzz tone is intelligible in any
+    # demodulator), but if you prefer cleaner UVB-76 capture switch
+    # this band to modulation: AM.
+    # activation_variance_db is lowered to 1.0 so UVB-76's slow buzz
+    # pattern crosses the threshold (the default 3.0 would suppress it).
+    hf_night_4mhz:
+        type: HF
+        modulation: USB
+        freq_start: 4.100e+6
+        freq_end: 4.750e+6
+        sample_rate: 0.768e6
+        activation_variance_db: 1.0
+
+    # European pirate radio window (48m) — operators in NL/DE dominant,
+    # peak activity Sunday mornings 09:00-11:00 UTC.  Hot zone 6225-6280.
+    # Pirates traditionally broadcast in AM (which is part of why they
+    # have that distinctive "old radio" sound), so this is the one HF
+    # band where AM is the *correct* default rather than the "weird
+    # sampling" choice.
+    hf_pirate_48m:
+        type: HF
+        modulation: AM
+        freq_start: 6.200e+6
+        freq_end: 6.400e+6
+        sample_rate: 0.228e6
+
+    # 40m amateur phone — busiest amateur band globally, LSB voice
+    # (amateur convention below 10 MHz), usable day and night with
+    # different skip distances.
+    hf_amateur_40m:
+        type: HF
+        modulation: LSB
+        freq_start: 7.100e+6
+        freq_end: 7.200e+6
+        sample_rate: 0.192e6
+
+    # 11 MHz day band — HFGCS US Air Force day frequency (11175 USB,
+    # the busy one with most Skyking traffic), Shannon VOLMET aviation
+    # weather (11253 USB), naval weather FAX (11086.5).  All USB.
+    hf_day_11mhz:
+        type: HF
+        modulation: USB
+        freq_start: 10.950e+6
+        freq_end: 11.550e+6
+        sample_rate: 0.768e6
+
+    # 20m amateur phone — premier daytime DX band, international USB
+    # voice (amateur convention above 10 MHz), maximum language
+    # variety when propagation is open.
+    hf_amateur_20m:
+        type: HF
+        modulation: USB
+        freq_start: 14.150e+6
+        freq_end: 14.350e+6
+        sample_rate: 0.228e6

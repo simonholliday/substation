@@ -283,12 +283,12 @@ The same `sdr_gain_db`, `sdr_gain_elements`, and `sdr_device_settings` config ke
 
 ## Quick Start
 1) Install dependencies (see `installation.txt` for SDR drivers).
-2) Configure bands in `config.yaml`.
-3) Install package in editable mode:
+2) Install package in editable mode:
 ```bash
 pip install -e .
 ```
-4) Run:
+3) Run (works out of the box with the default configuration):
+
 
 ```bash
 substation --band air_civil_bristol --device-type rtlsdr --device-index 0
@@ -345,7 +345,7 @@ async def main () -> None:
 	"""
 
 	# Load configuration
-	config_data = substation.config.load_config ("config.yaml")
+	config_data = substation.config.load_config ()
 
 	# Initialize scanner instance
 	scanner = substation.scanner.RadioScanner (
@@ -399,14 +399,35 @@ The sender emits the following OSC messages:
 Sends are non-blocking UDP (fire-and-forget); transient socket errors are logged as warnings and never raised back into the scanner. See [examples/scan_osc.py](examples/scan_osc.py) for a working script.
 
 Options:
-- `--config`, `-c`: path to config file (default `config.yaml`).
+- `--config`, `-c`: path to user config override file (default: `config.yaml` in CWD if it exists).
 - `--band`, `-b`: band name to scan (required unless `--list-bands`).
 - `--device-type`, `-t`: `rtlsdr`, `hackrf`, `airspy`, `airspyhf`, or `soapy:<driver>` (default `rtlsdr`).
 - `--device-index`, `-i`: device index (default `0`).
 - `--list-bands`: list available bands and exit.
 
 ## Configuration
-Config file is YAML. The top-level keys are `scanner`, `recording`, `band_defaults`, and `bands`.
+
+Substation uses a two-layer configuration system:
+
+- **`config.yaml.default`** ships with the package and contains all known bands and sensible defaults. This file is always loaded first.
+- **`config.yaml`** (optional) is your user override file. Create it in the working directory and specify only the settings you want to change — everything else inherits from the defaults.
+
+For example, to override just the audio output directory:
+```yaml
+recording:
+  audio_output_dir: /mnt/ssd/audio
+```
+
+To override a single field in a specific band:
+```yaml
+bands:
+  pmr:
+    snr_threshold_db: 6.0
+```
+
+Use `--config <path>` to specify a different user override file. Use `--list-bands` to see all available bands.
+
+The top-level keys are `scanner`, `recording`, `band_defaults`, and `bands`.
 
 Scanner
 ```
@@ -481,6 +502,57 @@ Per-band keys:
 - `sdr_gain_elements`: optional dict mapping gain element names to dB values for per-stage control (e.g., `{LNA: 10, MIX: 5, VGA: 12}`). Available elements are logged at startup. Takes priority over `sdr_gain_db`.
 - `sdr_device_settings`: optional dict of device-specific settings passed via SoapySDR (e.g., `{biastee: "true"}`). Available settings are logged at DEBUG level on startup.
 - `exclude_channel_indices`: 1-based channel numbers to skip (no analysis, no recording). These match the channel numbers shown in log output and filenames.
+- `device_overrides`: per-device tuning — see [Device-Specific Overrides](#device-specific-overrides) below.
+
+### Device-Specific Overrides
+
+Different SDR devices have different sample rates, gain architectures, and sensitivity characteristics. Rather than creating a separate band definition for each device (e.g. `pmr_rtlsdr`, `pmr_airspy`, `pmr_hackrf`), you can define a band once and provide per-device tuning with `device_overrides`.
+
+**How it works:** When you run `substation --band pmr --device-type airspy`, the scanner checks if the `pmr` band has a `device_overrides.airspy` section. If so, those fields are merged onto the band config, overriding the base values. Fields not mentioned in the override keep their base values.
+
+```yaml
+bands:
+  pmr:
+    type: PMR
+    freq_start: 446.00625e+6
+    freq_end: 446.19375e+6
+    sample_rate: 1.024e6          # default for RTL-SDR
+    device_overrides:
+      airspy:                      # applied when --device-type is airspy
+        sample_rate: 2.5e6
+        sdr_gain_elements:
+          LNA: 14
+          MIX: 5
+          VGA: 12
+```
+
+With this configuration:
+- `--band pmr --device-type rtlsdr` → uses base config (sample_rate 1.024 MHz, default gain)
+- `--band pmr --device-type airspy` → applies the override (sample_rate 2.5 MHz, per-element gain)
+
+**Override keys** are canonical device family names:
+
+| `--device-type` aliases | Override key |
+| :--- | :--- |
+| `rtl`, `rtlsdr`, `rtl-sdr` | `rtlsdr` |
+| `hackrf`, `hackrf-one`, `hackrfone` | `hackrf` |
+| `airspy`, `airspy-r2`, `airspyr2` | `airspy` |
+| `airspyhf`, `airspy-hf`, `airspyhf+` | `airspyhf` |
+| `soapy:<driver>` | the driver name (e.g. `lime`) |
+
+**Supported override fields:** `sample_rate`, `sdr_gain_db`, `sdr_gain_elements`, `sdr_device_settings`, `snr_threshold_db`, `activation_variance_db`.
+
+The default config ships with some device overrides already set — for example, `air_civil_bristol` has an `airspyhf` override with tuning appropriate for the AirSpy HF+ Discovery. You can add your own overrides in `config.yaml` using the standard inheritance mechanism:
+
+```yaml
+# config.yaml — user overrides only
+bands:
+  pmr:
+    device_overrides:
+      airspy:
+        sample_rate: 2.5e6
+        sdr_gain_elements: {LNA: 14, MIX: 5, VGA: 12}
+```
 
 ## SoapySDR Installation (AirSpy and other devices)
 

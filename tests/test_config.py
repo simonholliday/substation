@@ -2,6 +2,7 @@
 
 import fractions
 import logging
+import pathlib
 
 import pydantic
 import pytest
@@ -17,15 +18,16 @@ import substation.constants
 
 class TestYamlLoading:
 
-	def test_load_valid_yaml (self, tmp_path, minimal_config_dict):
+	def test_load_raw_config (self, tmp_path, minimal_config_dict):
 		cfg_path = tmp_path / "config.yaml"
 		cfg_path.write_text(yaml.dump(minimal_config_dict))
-		config = substation.config.load_config(str(cfg_path))
-		assert "test_nfm" in config.bands
+		data = substation.config._load_raw_config(cfg_path)
+		assert "bands" in data
+		assert "test_nfm" in data["bands"]
 
 	def test_load_missing_file (self):
 		with pytest.raises(FileNotFoundError):
-			substation.config.load_config("/nonexistent/config.yaml")
+			substation.config.load_config(pathlib.Path("/nonexistent/config.yaml"))
 
 	def test_fraction_tag (self, tmp_path):
 		content = "value: !fraction 25000/3\n"
@@ -38,7 +40,62 @@ class TestYamlLoading:
 		path = tmp_path / "empty.yaml"
 		path.write_text("")
 		with pytest.raises(ValueError):
-			substation.config.load_config(str(path))
+			substation.config._load_raw_config(path)
+
+	def test_load_config_defaults_only (self):
+		"""load_config() with no user config loads config.yaml.default."""
+		config = substation.config.load_config()
+		assert len(config.bands) > 0
+
+	def test_load_config_with_user_override (self, tmp_path, monkeypatch):
+		"""User config overrides specific values from defaults."""
+		user_cfg = tmp_path / "config.yaml"
+		user_cfg.write_text(yaml.dump({
+			"recording": {"audio_output_dir": "/tmp/test_override"},
+		}))
+		config = substation.config.load_config(user_cfg)
+		assert config.recording.audio_output_dir == "/tmp/test_override"
+		# Other recording defaults should be preserved
+		assert config.recording.audio_sample_rate == 16000
+
+
+# ---------------------------------------------------------------------------
+# Deep merge
+# ---------------------------------------------------------------------------
+
+class TestDeepMerge:
+
+	def test_scalar_override (self):
+		base = {"a": 1, "b": 2}
+		override = {"a": 10}
+		result = substation.config._deep_merge(base, override)
+		assert result == {"a": 10, "b": 2}
+
+	def test_nested_dict_merge (self):
+		base = {"section": {"x": 1, "y": 2}}
+		override = {"section": {"x": 10}}
+		result = substation.config._deep_merge(base, override)
+		assert result == {"section": {"x": 10, "y": 2}}
+
+	def test_new_key_added (self):
+		base = {"a": 1}
+		override = {"b": 2}
+		result = substation.config._deep_merge(base, override)
+		assert result == {"a": 1, "b": 2}
+
+	def test_none_override_preserves_base_dict (self):
+		"""YAML section with all children commented out parses as None."""
+		base = {"section": {"x": 1, "y": 2}}
+		override = {"section": None}
+		result = substation.config._deep_merge(base, override)
+		assert result == {"section": {"x": 1, "y": 2}}
+
+	def test_inputs_not_mutated (self):
+		base = {"section": {"x": 1}}
+		override = {"section": {"x": 10}}
+		substation.config._deep_merge(base, override)
+		assert base == {"section": {"x": 1}}
+		assert override == {"section": {"x": 10}}
 
 
 # ---------------------------------------------------------------------------
@@ -293,3 +350,57 @@ class TestExcludeChannelIndices:
 		minimal_config_dict["bands"]["test_nfm"]["exclude_channel_indices"] = [-1]
 		with pytest.raises(pydantic.ValidationError):
 			substation.config.validate_config(minimal_config_dict)
+
+
+class TestDeviceOverrides:
+
+	def test_device_overrides_accepted (self, minimal_config_dict):
+		"""device_overrides dict should be accepted by config validation."""
+		minimal_config_dict["bands"]["test_nfm"]["device_overrides"] = {
+			"airspy": {"sample_rate": 2.5e6, "sdr_gain_elements": {"LNA": 14}},
+		}
+		config = substation.config.validate_config(minimal_config_dict)
+		overrides = config.bands["test_nfm"].device_overrides
+		assert overrides is not None
+		assert "airspy" in overrides
+		assert overrides["airspy"].sample_rate == 2.5e6
+
+	def test_device_overrides_none_by_default (self, app_config):
+		"""device_overrides should be None when not specified."""
+		assert app_config.bands["test_nfm"].device_overrides is None
+
+	def test_device_overrides_extra_field_rejected (self, minimal_config_dict):
+		"""Typos in override fields are caught by extra='forbid'."""
+		minimal_config_dict["bands"]["test_nfm"]["device_overrides"] = {
+			"airspy": {"sampl_rate": 2.5e6},
+		}
+		with pytest.raises(pydantic.ValidationError):
+			substation.config.validate_config(minimal_config_dict)
+
+	def test_device_overrides_gain_auto (self, minimal_config_dict):
+		"""'auto' string should be normalized in device overrides."""
+		minimal_config_dict["bands"]["test_nfm"]["device_overrides"] = {
+			"airspyhf": {"sdr_gain_db": "Auto"},
+		}
+		config = substation.config.validate_config(minimal_config_dict)
+		assert config.bands["test_nfm"].device_overrides["airspyhf"].sdr_gain_db == "auto"
+
+	def test_device_overrides_gain_none_preserved (self, minimal_config_dict):
+		"""None gain in override means 'not overridden', not 'auto'."""
+		minimal_config_dict["bands"]["test_nfm"]["device_overrides"] = {
+			"airspy": {"sample_rate": 2.5e6},
+		}
+		config = substation.config.validate_config(minimal_config_dict)
+		assert config.bands["test_nfm"].device_overrides["airspy"].sdr_gain_db is None
+
+	def test_device_overrides_multiple_devices (self, minimal_config_dict):
+		"""Multiple device overrides on the same band."""
+		minimal_config_dict["bands"]["test_nfm"]["device_overrides"] = {
+			"airspy": {"sample_rate": 2.5e6},
+			"airspyhf": {"sample_rate": 0.912e6, "snr_threshold_db": 6},
+		}
+		config = substation.config.validate_config(minimal_config_dict)
+		overrides = config.bands["test_nfm"].device_overrides
+		assert overrides["airspy"].sample_rate == 2.5e6
+		assert overrides["airspyhf"].sample_rate == 0.912e6
+		assert overrides["airspyhf"].snr_threshold_db == 6

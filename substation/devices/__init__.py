@@ -16,6 +16,32 @@ import typing
 import substation.devices.base
 
 
+_DEVICE_FAMILIES: dict[str, str] = {
+	'rtl': 'rtlsdr', 'rtlsdr': 'rtlsdr', 'rtl-sdr': 'rtlsdr',
+	'hackrf': 'hackrf', 'hackrf-one': 'hackrf', 'hackrfone': 'hackrf',
+	'airspy': 'airspy', 'airspy-r2': 'airspy', 'airspyr2': 'airspy',
+	'airspyhf': 'airspyhf', 'airspy-hf': 'airspyhf', 'airspyhf+': 'airspyhf',
+}
+
+
+def normalize_device_family (device_type: str) -> str:
+	"""Return the canonical device family name for a CLI device type string.
+
+	Maps all aliases to a canonical name (e.g. 'rtl', 'rtl-sdr' → 'rtlsdr').
+	For 'soapy:<driver>' strings, returns the driver name.
+	"""
+
+	key = device_type.lower()
+
+	if key in _DEVICE_FAMILIES:
+		return _DEVICE_FAMILIES[key]
+
+	if key.startswith('soapy:'):
+		return key.split(':', 1)[1]
+
+	return key
+
+
 def create_device (device_type: str, device_index: int = 0) -> substation.devices.base.BaseDevice:
 	"""
 	Factory function to create SDR device instances.
@@ -60,31 +86,20 @@ def create_device (device_type: str, device_index: int = 0) -> substation.device
 		device.gain = 'auto'
 	"""
 
-	device_type_lower = device_type.lower()
+	family = normalize_device_family(device_type)
 
 	# Lazy imports: only load the binding for the requested device type.
-	if device_type_lower in ('rtl', 'rtlsdr', 'rtl-sdr'):
+	if family == 'rtlsdr':
 		import substation.devices.rtlsdr
 		return substation.devices.rtlsdr.RtlSdrDevice(device_index)
 
-	if device_type_lower in ('hackrf', 'hackrf-one', 'hackrfone'):
+	if family == 'hackrf':
 		import substation.devices.hackrf
 		return substation.devices.hackrf.HackRfDevice(device_index)
 
-	# AirSpy R2 via SoapySDR
-	if device_type_lower in ('airspy', 'airspy-r2', 'airspyr2'):
+	# SoapySDR-based devices (AirSpy R2, AirSpy HF+, generic)
+	if family in ('airspy', 'airspyhf') or device_type.lower().startswith('soapy:'):
 		import substation.devices.soapysdr
-		return substation.devices.soapysdr.SoapySdrDevice('airspy', device_index)
-
-	# AirSpy HF+ Discovery via SoapySDR
-	if device_type_lower in ('airspyhf', 'airspy-hf', 'airspyhf+'):
-		import substation.devices.soapysdr
-		return substation.devices.soapysdr.SoapySdrDevice('airspyhf', device_index)
-
-	# Generic SoapySDR passthrough: "soapy:<driver>"
-	if device_type_lower.startswith('soapy:'):
-		driver = device_type_lower.split(':', 1)[1]
-		import substation.devices.soapysdr
-		return substation.devices.soapysdr.SoapySdrDevice(driver, device_index)
+		return substation.devices.soapysdr.SoapySdrDevice(family, device_index)
 
 	raise ValueError(f"Unsupported device_type: {device_type}")

@@ -60,15 +60,26 @@ def _trim_carrier_transient_start (audio: numpy.typing.NDArray[numpy.float32], s
 	# contaminate the noise estimate.
 	pre_end = max(0, spike_idx - win)
 	min_pre = int(sample_rate * 0.003)
+
 	if pre_end < min_pre:
-		return audio
-
-	pre_rms = float(numpy.sqrt(numpy.mean(audio[:pre_end] ** 2)))
-	if pre_rms < 1e-6:
-		pre_rms = 1e-6
-
-	if spike_peak / pre_rms < substation.constants.CARRIER_TRANSIENT_RATIO:
-		return audio
+		# Spike is at the very start — no pre-silence available.
+		# Compare against signal body (20-50ms in) instead.
+		body_start = int(sample_rate * 0.02)
+		body_end = min(len(audio), int(sample_rate * 0.05))
+		if body_end <= body_start:
+			return audio
+		body_rms = float(numpy.sqrt(numpy.mean(audio[body_start:body_end] ** 2)))
+		if body_rms < 1e-6:
+			return audio
+		if spike_peak / body_rms < substation.constants.CARRIER_TRANSIENT_RATIO:
+			return audio
+		pre_rms = body_rms
+	else:
+		pre_rms = float(numpy.sqrt(numpy.mean(audio[:pre_end] ** 2)))
+		if pre_rms < 1e-6:
+			pre_rms = 1e-6
+		if spike_peak / pre_rms < substation.constants.CARRIER_TRANSIENT_RATIO:
+			return audio
 
 	# Find where the spike decays back toward noise.
 	threshold = pre_rms * substation.constants.CARRIER_TRANSIENT_RATIO

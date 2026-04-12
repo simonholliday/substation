@@ -14,7 +14,7 @@ class TestListBands:
 	def test_list_bands_prints_names (self, tmp_path, minimal_config_dict, capsys):
 		cfg_path = tmp_path / "config.yaml"
 		cfg_path.write_text(yaml.dump(minimal_config_dict))
-		substation.cli.list_bands(str(cfg_path))
+		substation.cli.list_bands(cfg_path)
 		captured = capsys.readouterr()
 		assert "test_nfm" in captured.out
 

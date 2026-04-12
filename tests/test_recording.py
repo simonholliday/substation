@@ -269,3 +269,19 @@ class TestTrimCarrierTransients:
 		voice = (0.2 * numpy.sin(2 * numpy.pi * 500 * numpy.arange(self.SR) / self.SR)).astype(numpy.float32)
 		trimmed = substation.recording._trim_carrier_transient_start(voice, self.SR)
 		assert len(trimmed) == len(voice)
+
+	def test_transient_at_sample_zero (self):
+		"""A carrier transient right at sample 0 (no pre-silence) should be trimmed."""
+		rng = numpy.random.RandomState(99)
+		noise_level = 0.005
+		# Transient at sample 0: sharp spike decaying over ~5ms
+		click_len = int(self.SR * 0.005)
+		click_env = 0.5 * numpy.exp(-numpy.linspace(0, 5, click_len))
+		click = (click_env * numpy.sign(rng.randn(click_len))).astype(numpy.float32)
+		# Then quiet gap + voice
+		gap = rng.randn(int(self.SR * 0.02)).astype(numpy.float32) * noise_level
+		voice = (0.02 * numpy.sin(2 * numpy.pi * 300 * numpy.arange(self.SR) / self.SR)).astype(numpy.float32)
+		audio = numpy.concatenate([click, gap, voice])
+		trimmed = substation.recording._trim_carrier_transient_start(audio, self.SR)
+		assert len(trimmed) < len(audio)
+		assert numpy.abs(trimmed[0]) < 0.05
