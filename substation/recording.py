@@ -180,17 +180,22 @@ def _trim_carrier_transient_end (audio: numpy.typing.NDArray[numpy.float32], sam
 	duration, exponential decay) but is followed by silence rather than
 	preceded by it.
 
-	Scans the last 500ms.  The window is wide because the RF hold timer
-	may keep the recording running after the key-OFF click.
+	Scans the last 500ms backwards from the end, finding the *last*
+	spike that exceeds the detection threshold and passes all checks.
+	This mirrors the start-trim's "earliest first" strategy — voice
+	content earlier in the window won't mask a later transient.
 
-	Checks (mirroring start-trim):
+	Checks:
 	  1. Post-silence: region after spike is at noise floor (ratio > 8x)
 	  2. Duration: spike is under 15ms
 	  3. Pre-silence: 20ms before spike is quiet (< 25% of spike peak)
 	"""
 
-	# --- Scan window: last 500ms ---
-	scan_len = min(len(audio), int(sample_rate * 0.5))
+	# --- Scan window: last 4 seconds ---
+	# Wide because the audio silence timeout (default 3s) keeps the
+	# recording running long after the key-OFF transient.  The transient
+	# can easily be 500ms+ from the end of the file.
+	scan_len = min(len(audio), int(sample_rate * 4.0))
 	if scan_len < 10:
 		return audio
 
@@ -201,15 +206,38 @@ def _trim_carrier_transient_end (audio: numpy.typing.NDArray[numpy.float32], sam
 	win = max(1, int(sample_rate * 0.0005))  # 0.5ms = 8 samples at 16kHz
 	env_s = numpy.convolve(env, numpy.ones(win) / win, mode='same')
 
-	spike_idx = int(numpy.argmax(env_s))
+	ratio_threshold = substation.constants.CARRIER_TRANSIENT_RATIO
+
+	# --- Noise estimate ---
+	# Use the 10th percentile of the scan region.  For the end-trim,
+	# the scan window contains voice + transient + noise floor; the
+	# 10th percentile captures the quiet noise floor regardless of
+	# how much voice content is in the window.
+	noise_est = float(numpy.percentile(env, 10))
+	if noise_est < 1e-6:
+		noise_est = 1e-6
+	detect_threshold = noise_est * ratio_threshold
+
+	# --- Find latest candidate ---
+	# Walk backward from the end to find the last sample exceeding the
+	# detection threshold.  By searching from the end, we find the
+	# key-OFF transient even when louder voice content precedes it.
+	above = numpy.where(env_s > detect_threshold)[0]
+	if len(above) == 0:
+		return audio
+
+	# The last threshold crossing is our candidate.  Find the local
+	# peak within 15ms before it (the crossing may be on the falling
+	# edge; the true peak is nearby).
+	last_above = int(above[-1])
+	peak_search_start = max(0, last_above - int(sample_rate * 0.015))
+	spike_idx = peak_search_start + int(numpy.argmax(env_s[peak_search_start:last_above + 1]))
 	spike_peak = float(env_s[spike_idx])
 
 	# --- Check 1: Post-silence ---
-	# The region after the spike must be at noise floor.  This is the
-	# primary discriminator: a key-OFF transient is followed by silence,
-	# while a voice consonant at the end of speech is preceded by voice.
+	# The region after the spike must be at noise floor.
 	post_start = min(scan_len, spike_idx + win)
-	min_post = int(sample_rate * 0.003)  # 3ms minimum post-silence region
+	min_post = int(sample_rate * 0.003)  # 3ms minimum post-silence
 	if post_start > scan_len - min_post:
 		return audio
 
@@ -217,13 +245,12 @@ def _trim_carrier_transient_end (audio: numpy.typing.NDArray[numpy.float32], sam
 	if post_rms < 1e-6:
 		post_rms = 1e-6
 
-	if spike_peak / post_rms < substation.constants.CARRIER_TRANSIENT_RATIO:
+	if spike_peak / post_rms < ratio_threshold:
 		return audio
 
 	# --- Check 2: Duration (brief spike) ---
-	# Walk backward from the peak to find the onset.  The transient
-	# must be under 15ms total.  2ms settling window for decay detection.
-	threshold = post_rms * substation.constants.CARRIER_TRANSIENT_RATIO
+	# Walk backward from the peak to find the onset.
+	threshold = post_rms * ratio_threshold
 	decay_win = max(1, int(sample_rate * 0.002))  # 2ms settling window
 	spike_start = spike_idx
 	for j in range(spike_idx, -1, -1):
@@ -238,8 +265,7 @@ def _trim_carrier_transient_end (audio: numpy.typing.NDArray[numpy.float32], sam
 
 	# --- Check 3: Pre-silence (quiet before the spike) ---
 	# The 20ms region before the spike must be quiet relative to the
-	# spike peak (< 25%).  Rejects voice-final energy that happens to
-	# be followed by a quiet tail.
+	# spike peak (< 25%).
 	pre_check_end = max(0, spike_start - decay_win)
 	pre_check_start = max(0, pre_check_end - int(sample_rate * 0.02))  # 20ms
 	if pre_check_end > pre_check_start:
