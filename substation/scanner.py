@@ -155,8 +155,9 @@ class RadioScanner:
 		self.buffer_size_seconds = self.recording_config.buffer_size_seconds
 		self.disk_flush_interval = self.recording_config.disk_flush_interval_seconds
 		self.audio_output_dir = self.recording_config.audio_output_dir
+		self.audio_format = self.recording_config.audio_format
 		# fade_in_ms / fade_out_ms are passed to ChannelRecorder and applied
-		# during WAV writing (after carrier transient trimming).
+		# during audio file writing (after carrier transient trimming).
 		self.soft_limit_drive = self.recording_config.soft_limit_drive
 		self.hold_time_seconds = self.recording_config.recording_hold_time_ms / 1000.0
 		self.audio_silence_timeout = self.recording_config.audio_silence_timeout_ms / 1000.0
@@ -1279,6 +1280,7 @@ class RadioScanner:
 			dynamics_curve_enabled=self.recording_config.dynamics_curve_enabled,
 			dynamics_curve_config=self.recording_config.dynamics_curve,
 			start_time=self.clock.now() if self.clock else None,
+			audio_format=self.audio_format,
 		)
 
 		# Pass the band-wide noise floor if we have it

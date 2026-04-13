@@ -31,8 +31,17 @@ recording:
     # How often to flush buffer to disk (seconds)
     disk_flush_interval_seconds: 5
 
-    # Audio output sample rate (Hz) - 16kHz mono WAV
+    # Audio output sample rate (Hz) - 16kHz mono
     audio_sample_rate: 16000
+
+    # Output file format: 'wav' or 'flac'
+    #   wav  — uncompressed, with Broadcast WAV (BEXT) metadata embedding
+    #          sample-accurate timestamps for timeline placement in audio
+    #          editors (Audacity, Reaper, iZotope RX).
+    #   flac — lossless compressed (~39% smaller), with Vorbis comment
+    #          metadata (date, time, frequency as text tags).  Does not
+    #          support BEXT timeline metadata.
+    audio_format: wav
 
     # Output directory for recordings
     audio_output_dir: "./audio"

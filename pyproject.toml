@@ -27,6 +27,7 @@ dependencies = [
     "PyYAML>=6.0",
     "scipy>=1.10.0",
     "soundfile>=0.12.1",
+    "mutagen>=1.45",
     # SoapySDR (for AirSpy and other devices) is a system package — install
     # via apt (python3-soapysdr) and use --system-site-packages on the venv.
     # See installation.txt section 4.
@@ -83,6 +84,7 @@ module = [
     "scipy.signal",
     "SoapySDR",
     "rtlsdr",
+    "mutagen",
     "noisereduce",
     "soundfile",
 ]

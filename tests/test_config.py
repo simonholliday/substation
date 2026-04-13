@@ -160,6 +160,17 @@ class TestRecordingValidation:
 		with pytest.raises(pydantic.ValidationError):
 			substation.config.validate_config(minimal_config_dict)
 
+	def test_invalid_audio_format_raises (self, minimal_config_dict):
+		minimal_config_dict["recording"] = {"audio_format": "mp3"}
+		with pytest.raises(pydantic.ValidationError):
+			substation.config.validate_config(minimal_config_dict)
+
+	def test_valid_audio_formats (self, minimal_config_dict):
+		for fmt in ("wav", "flac"):
+			minimal_config_dict["recording"] = {"audio_format": fmt}
+			config = substation.config.validate_config(minimal_config_dict)
+			assert config.recording.audio_format == fmt
+
 
 # ---------------------------------------------------------------------------
 # Band defaults inheritance

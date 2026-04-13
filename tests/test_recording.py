@@ -1,9 +1,10 @@
-"""Tests for ChannelRecorder: ring buffer, WAV output, BEXT metadata."""
+"""Tests for ChannelRecorder: ring buffer, WAV/FLAC output, BEXT metadata."""
 
 import asyncio
 import struct
 import threading
 
+import mutagen.flac
 import numpy
 import pytest
 import soundfile
@@ -170,6 +171,88 @@ class TestBextMetadata:
 		with open(rec.filepath, 'rb') as f:
 			raw = f.read()
 		assert b'bext' in raw
+
+
+class TestFlacOutput:
+
+	def test_flac_file_created (self, tmp_path):
+		"""FLAC recorder creates a .flac file with valid audio."""
+		rec = _make_recorder(tmp_path, max_seconds=1.0)
+		rec.audio_format = 'flac'
+		# Re-create with FLAC format
+		rec = substation.recording.ChannelRecorder(
+			channel_freq=446.00625e6,
+			channel_index=0,
+			band_name="test",
+			audio_sample_rate=16000,
+			buffer_size_seconds=1.0,
+			disk_flush_interval_seconds=999,
+			audio_output_dir=str(tmp_path),
+			modulation="NFM",
+			filename_suffix="test",
+			soft_limit_drive=2.0,
+			noise_reduction_enabled=False,
+			audio_format='flac',
+		)
+		rec.append_audio(numpy.ones(1600, dtype=numpy.float32) * 0.3)
+		loop = asyncio.new_event_loop()
+		loop.run_until_complete(rec._flush_buffer_to_disk())
+		loop.run_until_complete(rec.close())
+		loop.close()
+
+		assert rec.filepath.endswith(".flac")
+		data, sr = soundfile.read(rec.filepath)
+		assert sr == 16000
+		assert len(data) > 0
+
+	def test_flac_lossless_roundtrip (self, tmp_path):
+		"""FLAC is lossless: int16 samples written and read back are identical."""
+		# Write int16 samples directly to a FLAC file via soundfile,
+		# then read back and verify bit-identical.
+		original = (numpy.sin(numpy.linspace(0, 100, 3200)) * 16000).astype(numpy.int16)
+		flac_path = str(tmp_path / "roundtrip.flac")
+		soundfile.write(flac_path, original, 16000, subtype='PCM_16')
+		readback, sr = soundfile.read(flac_path, dtype='int16')
+		assert sr == 16000
+		assert numpy.array_equal(original, readback)
+
+	def test_flac_metadata_present (self, tmp_path):
+		"""FLAC files have Vorbis comment metadata."""
+		rec = substation.recording.ChannelRecorder(
+			channel_freq=446.00625e6, channel_index=0, band_name="test",
+			audio_sample_rate=16000, buffer_size_seconds=1.0,
+			disk_flush_interval_seconds=999, audio_output_dir=str(tmp_path),
+			modulation="NFM", noise_reduction_enabled=False, audio_format='flac',
+		)
+		rec.append_audio(numpy.ones(1600, dtype=numpy.float32) * 0.3)
+		loop = asyncio.new_event_loop()
+		loop.run_until_complete(rec._flush_buffer_to_disk())
+		loop.run_until_complete(rec.close())
+		loop.close()
+
+		flac = mutagen.flac.FLAC(rec.filepath)
+		assert 'DATE' in flac
+		assert 'CREATION_TIME' in flac
+		assert 'COMMENT' in flac
+		assert '446' in flac['COMMENT'][0]
+
+	def test_flac_no_bext_chunk (self, tmp_path):
+		"""FLAC files should not contain a BEXT chunk."""
+		rec = substation.recording.ChannelRecorder(
+			channel_freq=446e6, channel_index=0, band_name="test",
+			audio_sample_rate=16000, buffer_size_seconds=1.0,
+			disk_flush_interval_seconds=999, audio_output_dir=str(tmp_path),
+			noise_reduction_enabled=False, audio_format='flac',
+		)
+		rec.append_audio(numpy.ones(1600, dtype=numpy.float32) * 0.3)
+		loop = asyncio.new_event_loop()
+		loop.run_until_complete(rec._flush_buffer_to_disk())
+		loop.run_until_complete(rec.close())
+		loop.close()
+
+		with open(rec.filepath, 'rb') as f:
+			raw = f.read()
+		assert b'bext' not in raw
 
 
 class TestCheckEmpty:

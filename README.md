@@ -25,7 +25,7 @@ By connecting a supported USB receiver (like an RTL-SDR or HackRF), you can scan
     - [OSC event forwarding](#osc-event-forwarding)
 - [Configuration](#configuration)
 - [SoapySDR Installation](#soapysdr-installation-airspy-and-other-devices)
-- [Broadcast WAV Metadata](#broadcast-wav-metadata)
+- [Recording Metadata](#recording-metadata)
 - [Gain Tuning](#gain-tuning)
 - [Rejecting Empty/Noise Recordings](#rejecting-emptynoise-recordings)
 - [Dynamics Curve (Experimental)](#dynamics-curve-experimental)
@@ -279,7 +279,7 @@ The same `sdr_gain_db`, `sdr_gain_elements`, and `sdr_device_settings` config ke
     - **Noise-Floor-Guided Spectral Subtraction**: The band-wide PSD noise floor is passed to the spectral subtraction stage for more reliable noise frame classification, reducing musical noise artifacts compared to percentile-only heuristics.
     - **Float64 Filter State**: IIR filter states (channel extraction, decimation) use double precision to prevent rounding drift in long-running sessions.
 - **Parallel Scanning**: Supports multiple SDR devices (RTL-SDR and HackRF) simultaneously with asynchronous I/O.
-- **Archive Ready**: Automatic recording to Broadcast WAV (BWF) with embedded metadata (frequency, timestamps, modulation).
+- **Archive Ready**: Automatic recording to WAV (with Broadcast WAV/BEXT metadata) or FLAC (lossless compressed, ~39% smaller) with embedded metadata (frequency, timestamps, modulation).
 
 ## Quick Start
 1) Install dependencies (see `installation.txt` for SDR drivers).
@@ -466,6 +466,7 @@ recording:
   buffer_size_seconds: 30
   disk_flush_interval_seconds: 5
   audio_sample_rate: 16000
+  audio_format: wav
   audio_output_dir: "./audio"
   fade_in_ms: 15
   fade_out_ms: 50
@@ -473,7 +474,8 @@ recording:
 ```
 - `buffer_size_seconds`: max in-memory audio per channel before drops.
 - `disk_flush_interval_seconds`: how often to flush to disk.
-- `audio_sample_rate`: output WAV rate (Hz).
+- `audio_sample_rate`: output rate (Hz).
+- `audio_format`: `wav` (default) or `flac`. WAV embeds Broadcast WAV (BEXT) metadata with sample-accurate timestamps for timeline placement in audio editors. FLAC is lossless compressed (~39% smaller) with text-based metadata tags (no timeline positioning support).
 - `fade_in_ms`/`fade_out_ms`: half-cosine fades applied to the padding region at channel start/stop (signal content is never attenuated).
 - `soft_limit_drive`: post-processing soft limiter drive. Typical range 1.5-3.0 (higher = stronger limiting).
 - `noise_reduction_enabled`: toggle spectral subtraction noise reduction (default: true).
@@ -597,10 +599,12 @@ The Python virtual environment **must** be created with `--system-site-packages`
 python3 -m venv --system-site-packages /home/si/venvs/substation
 ```
 
-## Broadcast WAV Metadata
-Each recording captures industry-standard **Broadcast WAV (BWF)** metadata (EBU Tech 3285). This embeds technical details directly into the audio file, making it ideal for archival and automated post-processing.
+## Recording Metadata
+Each recording embeds metadata directly in the audio file.
 
-**Compatibility**: These are standard `.wav` files. They will play perfectly in any normal audio player (VLC, Windows Media Player, Audacity, mobile devices, etc.).
+**WAV format** (default): Industry-standard Broadcast WAV (BWF/BEXT, EBU Tech 3285) with sample-accurate timestamps. Audio editors like Audacity, Reaper, and iZotope RX can place recordings on a timeline at their real capture time. These are standard `.wav` files that play in any audio player.
+
+**FLAC format**: Vorbis comment tags store the same fields (band, frequency, date, time, modulation) as text. FLAC files are ~39% smaller than WAV but cannot carry the sample-accurate `time_reference` used for timeline placement in audio editors.
 
 ### Metadata Example
 If you open a recording in a professional audio tool or a BWF viewer, you will see fields like these:

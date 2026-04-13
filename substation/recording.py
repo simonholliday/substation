@@ -1,13 +1,14 @@
 """
-Channel recording management with Broadcast WAV format support.
+Channel recording management with WAV and FLAC output support.
 
-Handles buffered audio recording to WAV files with industry-standard Broadcast
-WAV (BWF) metadata. The recorder uses a memory buffer to avoid blocking the main
-processing thread, and flushes to disk periodically in the background.
+Handles buffered audio recording to WAV or FLAC files. WAV files include
+industry-standard Broadcast WAV (BWF/BEXT) metadata with sample-accurate
+timestamps for timeline placement in audio editors. FLAC files are lossless
+compressed (~39% smaller) with Vorbis comment metadata (date and frequency
+as text tags, but no timeline positioning support).
 
-Broadcast WAV format includes additional metadata chunks (BEXT) that store
-information like channel frequency, timestamp, and encoding history - useful
-for archival and post-processing.
+The recorder uses a memory buffer to avoid blocking the main processing
+thread, and flushes to disk periodically in the background.
 """
 
 import asyncio
@@ -21,6 +22,7 @@ import threading
 import typing
 import uuid
 
+import mutagen.flac
 import numpy
 import numpy.typing
 import soundfile
@@ -312,8 +314,9 @@ class ChannelRecorder:
 	which is critical for real-time operation. If processing falls behind, old
 	samples are dropped rather than causing the entire system to stall.
 
-	Broadcast WAV metadata (BEXT chunk) includes channel frequency, timestamp,
-	and modulation type, making the recordings self-documenting and archival-friendly.
+	Metadata: WAV files get a Broadcast WAV (BEXT) chunk with sample-accurate
+	timestamps for timeline placement in audio editors. FLAC files get Vorbis
+	comments with the same fields as text (no timeline positioning support).
 	"""
 
 	def __init__ (
@@ -335,16 +338,17 @@ class ChannelRecorder:
 		dynamics_curve_enabled: bool = False,
 		dynamics_curve_config: typing.Any = None,
 		start_time: datetime.datetime | None = None,
+		audio_format: str = 'wav',
 	) -> None:
 
 		"""
-		Initialize a channel recorder and open the output WAV file.
+		Initialize a channel recorder and open the output audio file.
 
-		Creates the output directory structure, opens a WAV file for writing,
-		prepares Broadcast WAV metadata, and sets up the memory buffer for
+		Creates the output directory structure, opens a WAV or FLAC file for
+		writing, prepares metadata, and sets up the memory buffer for
 		accumulating audio samples.
 
-		Files are organized as: output_dir/YYYY-MM-DD/band_name/filename.wav
+		Files are organized as: output_dir/YYYY-MM-DD/band_name/filename.{wav,flac}
 		This hierarchy makes it easy to find recordings by date and band.
 
 		Args:
@@ -380,6 +384,7 @@ class ChannelRecorder:
 		self.audio_sample_rate = audio_sample_rate
 		self.disk_flush_interval = disk_flush_interval_seconds
 		self.modulation = modulation
+		self.audio_format = audio_format
 		# Precompute soft limiter parameters for efficiency.
 		# Ceiling is 0.98 (-0.18 dB) rather than 1.0 to prevent inter-sample
 		# (true-peak) overshoot: tanh limits individual samples, but the
@@ -417,7 +422,7 @@ class ChannelRecorder:
 		self.time_reference = int(seconds_since_midnight * audio_sample_rate)
 
 		# Build filename with timestamp, band, and channel information
-		# Format: YYYY-MM-DD_HH-MM-SS_band_channel_[suffix].wav
+		# Format: YYYY-MM-DD_HH-MM-SS_band_channel_[suffix].{wav,flac}
 		# Example: 2026-01-25_14-30-45_pmr_0_12.5dB_rtlsdr_0.wav
 		date_str = self.start_time.strftime("%Y-%m-%d")
 		time_str = self.start_time.strftime("%H-%M-%S")
@@ -427,9 +432,10 @@ class ChannelRecorder:
 		if filename_suffix:
 			filename += "_" + filename_suffix
 
-		filename += ".wav"
+		ext = '.flac' if audio_format == 'flac' else '.wav'
+		filename += ext
 
-		# Organize files: base_dir/YYYY-MM-DD/band_name/filename.wav
+		# Organize files: base_dir/YYYY-MM-DD/band_name/filename.{wav,flac}
 		# This hierarchical structure makes it easy to manage recordings by date and band
 		self.filepath = os.path.abspath(os.path.join(audio_output_dir, date_str, band_name, filename))
 
@@ -446,22 +452,23 @@ class ChannelRecorder:
 				# if stat() hasn't updated its cache yet. We ignore this safely.
 				pass
 
-		# Open WAV file for writing using soundfile library
-		# soundfile is chosen because it supports Broadcast WAV extensions
-		# PCM_16 = 16-bit signed integer audio (standard CD quality)
+		# Open audio file for writing using soundfile library.
+		# PCM_16 = 16-bit signed integer audio, used for both WAV and FLAC.
+		# FLAC compression level 8 gives best compression (~39% saving)
+		# with no measurable speed penalty on short radio recordings.
 
-		self.wav_file = soundfile.SoundFile(
+		sf_format = 'FLAC' if audio_format == 'flac' else 'WAV'
+		self.audio_file = soundfile.SoundFile(
 			self.filepath,
 			mode='w',
 			samplerate=audio_sample_rate,
 			channels=1,  # Mono (single channel)
 			subtype='PCM_16',  # 16-bit PCM encoding
-			format='WAV'
+			format=sf_format,
 		)
 
-		# Prepare Broadcast WAV (BWF) metadata according to EBU Tech 3285 standard
-		# BEXT chunk contains machine-readable metadata about the recording
-		# This makes the files self-documenting and suitable for archival
+		# Prepare recording metadata (used for BEXT in WAV, Vorbis comments in FLAC).
+		# Stored as a dict and written after the file is closed.
 
 		# Description field: store channel info as JSON (max 256 chars in spec)
 		# This allows easy parsing of metadata without manual filename parsing
@@ -490,9 +497,9 @@ class ChannelRecorder:
 			f"Frequency={channel_freq/1e6:.5f}MHz\r\n"
 		)
 
-		# Store BEXT metadata to write when file is closed
-		# We can't write it now because we don't know the final file size yet
-		# (BEXT chunk is appended after all audio data is written)
+		# Store metadata to write when file is closed.
+		# For WAV, the BEXT chunk is appended after all audio data is written.
+		# For FLAC, Vorbis comments are written via mutagen after close.
 
 		self.bext_metadata: _BextMetadata = {
 			'description': bwf_description,
@@ -707,17 +714,17 @@ class ChannelRecorder:
 		with self._write_lock:
 
 			# Write to WAV file (soundfile handles float32 to int16 conversion)
-			self.wav_file.write(samples)
+			self.audio_file.write(samples)
 			self.total_samples_written += len(samples)
 
 	async def close (self) -> None:
 
 		"""
-		Close the recorder, flush remaining buffer, and finalize the WAV file.
+		Close the recorder, flush remaining buffer, and finalize the audio file.
 
 		Ensures any background flush task is stopped, writes remaining audio,
-		closes the WAV file handle, and appends the BEXT metadata chunk so the
-		recording is self-describing.
+		closes the file handle, and writes metadata (BEXT for WAV, Vorbis
+		comments for FLAC).
 		"""
 
 		self._closing.set()
@@ -740,12 +747,15 @@ class ChannelRecorder:
 		# Final flush of any remaining samples
 		await self._flush_buffer_to_disk()
 
-		# Close WAV file (this writes headers)
-		self.wav_file.close()
+		# Close audio file (this writes headers)
+		self.audio_file.close()
 
-		# Write BEXT chunk for Broadcast Wave Format
+		# Write metadata after the file is closed
 		if self.bext_metadata:
-			self._append_bext_chunk()
+			if self.audio_format == 'flac':
+				self._write_flac_metadata()
+			else:
+				self._append_bext_chunk()
 
 		duration_seconds = self.total_samples_written / self.audio_sample_rate
 		logger.debug(f"Stopped recording channel {self.channel_index} (f = {self.channel_freq/1e6:.5f} MHz) - Duration: {duration_seconds:.1f}s, File: {self.filepath}")
@@ -842,3 +852,35 @@ class ChannelRecorder:
 			logger.debug(f"Appended BEXT chunk to {self.filepath} (New RIFF size: {new_riff_size})")
 		except Exception as e:
 			logger.error(f"Failed to append BEXT chunk to {self.filepath}: {e}")
+
+	def _write_flac_metadata (self) -> None:
+
+		"""
+		Write Vorbis comments to a FLAC file after it has been closed.
+
+		Stores the same metadata fields as the BEXT chunk (band, frequency,
+		date, time, modulation) as Vorbis comment tags.  Note: FLAC cannot
+		carry the sample-accurate time_reference that enables broadcast
+		timeline placement in audio editors — date and time are stored as
+		text strings only.
+		"""
+
+		if not self.bext_metadata:
+			return
+
+		try:
+			flac = mutagen.flac.FLAC(self.filepath)
+
+			flac['COMMENT'] = self.bext_metadata['description']
+			flac['ENCODED_BY'] = self.bext_metadata['originator']
+			flac['ORIGINATOR_REFERENCE'] = self.bext_metadata['originator_reference']
+			flac['DATE'] = self.bext_metadata['origination_date']
+			flac['CREATION_TIME'] = self.bext_metadata['origination_time']
+			flac['TIME_REFERENCE'] = str(self.bext_metadata['time_reference'])
+			flac['CODING_HISTORY'] = self.bext_metadata['coding_history'].rstrip('\r\n')
+
+			flac.save()
+			logger.debug(f"Wrote Vorbis comments to {self.filepath}")
+
+		except Exception as e:
+			logger.error(f"Failed to write FLAC metadata to {self.filepath}: {e}")

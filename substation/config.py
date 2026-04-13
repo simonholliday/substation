@@ -247,8 +247,15 @@ class RecordingConfig(pydantic.BaseModel):
 			16000 (16 kHz) is sufficient for voice and uses half the disk space
 			of 32 kHz. Higher rates preserve more high-frequency content.
 
-		audio_output_dir: Directory where WAV files are saved.
-			Files are organized as: output_dir/YYYY-MM-DD/band_name/filename.wav
+		audio_format: Output audio file format: 'wav' or 'flac'.
+			WAV (default) is uncompressed and embeds broadcast metadata (BEXT)
+			with sample-accurate timestamps, allowing audio editors to place
+			recordings on a timeline at their real capture time.
+			FLAC is lossless compressed (~39% smaller) but cannot carry BEXT
+			timeline metadata — date and time are stored as text tags only.
+
+		audio_output_dir: Directory where audio files are saved.
+			Files are organized as: output_dir/YYYY-MM-DD/band_name/filename.{wav,flac}
 
 		fade_in_ms: Fade-in duration in milliseconds when recording starts.
 			Prevents clicks from sudden audio onset. None = no fade. 50-100ms typical.
@@ -291,6 +298,7 @@ class RecordingConfig(pydantic.BaseModel):
 	buffer_size_seconds: float = pydantic.Field(default=30.0, gt=0.0)
 	disk_flush_interval_seconds: float = pydantic.Field(default=5.0, gt=0.0)
 	audio_sample_rate: int = pydantic.Field(default=16000, gt=0)
+	audio_format: typing.Literal['wav', 'flac'] = 'wav'
 	audio_output_dir: str = './audio'
 	fade_in_ms: float | None = pydantic.Field(default=None, ge=0.0)
 	fade_out_ms: float | None = pydantic.Field(default=None, ge=0.0)
