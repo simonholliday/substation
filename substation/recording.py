@@ -334,6 +334,7 @@ class ChannelRecorder:
 		fade_out_ms: float | None = None,
 		dynamics_curve_enabled: bool = False,
 		dynamics_curve_config: typing.Any = None,
+		start_time: datetime.datetime | None = None,
 	) -> None:
 
 		"""
@@ -406,7 +407,7 @@ class ChannelRecorder:
 		self._ring_frames_flushed: int = 0  # Monotonic total frames already flushed
 
 		# Recording start time (used for filename and BWF metadata)
-		self.start_time = datetime.datetime.now()
+		self.start_time = start_time if start_time is not None else datetime.datetime.now()
 
 		# Calculate TimeReference: sample count since midnight
 		# This is part of the Broadcast WAV spec and allows precise synchronization
@@ -798,8 +799,8 @@ class ChannelRecorder:
 		description = self.bext_metadata['description'].encode('ascii', errors='replace')[:256].ljust(256, b'\x00')
 		originator = self.bext_metadata['originator'].encode('ascii', errors='replace')[:32].ljust(32, b'\x00')
 		originator_ref = self.bext_metadata['originator_reference'].encode('ascii', errors='replace')[:32].ljust(32, b'\x00')
-		origination_date = self.bext_metadata['origination_date'].encode('ascii')[:10].ljust(10, b'\x00')
-		origination_time = self.bext_metadata['origination_time'].encode('ascii')[:8].ljust(8, b'\x00')
+		origination_date = self.bext_metadata['origination_date'].encode('ascii', errors='replace')[:10].ljust(10, b'\x00')
+		origination_time = self.bext_metadata['origination_time'].encode('ascii', errors='replace')[:8].ljust(8, b'\x00')
 		time_reference = self.bext_metadata['time_reference']
 		version = self.bext_metadata['version']
 		umid = b'\x00' * 64

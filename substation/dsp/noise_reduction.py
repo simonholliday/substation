@@ -23,8 +23,6 @@ mild harmonic distortion on signals near the threshold; the curves are
 shaped to keep this benign at sensible parameter values.
 """
 
-from __future__ import annotations
-
 import numpy
 import numpy.lib.stride_tricks
 import scipy.signal

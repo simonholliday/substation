@@ -299,6 +299,7 @@ def demodulate_nfm (
 	alpha = 1.0 / (1.0 + if_rate * tau)
 
 	if 'deemph_zi' not in state:
+		# Start from silence: lfilter_zi gives the correct shape, * 0.0 zeroes it.
 		state['deemph_zi'] = scipy.signal.lfilter_zi([alpha], [1, alpha - 1]) * 0.0
 
 	demod_deemph, state['deemph_zi'] = scipy.signal.lfilter(

@@ -8,10 +8,12 @@ Typical usage:
 	python -m substation --band pmr                 # Scan PMR band
 	python -m substation --list-bands               # Show available bands
 	python -m substation --band airband --device-type hackrf  # Use HackRF
+	python -m substation --band pmr --iq-file recording.wav --center-freq 446059313
 """
 
 import argparse
 import asyncio
+import datetime
 import logging
 import pathlib
 import sys
@@ -67,13 +69,7 @@ def list_bands (config_path: pathlib.Path | None) -> None:
 async def run_scanner (config_path: pathlib.Path | None, band_name: str, device_type: str, device_index: int) -> None:
 
 	"""
-	Initialize and run the scanner.
-
-	This is the main async entry point that:
-	1. Loads configuration from file
-	2. Validates that the requested band exists
-	3. Creates a RadioScanner instance
-	4. Runs the scan loop until interrupted (Ctrl+C) or error
+	Initialize and run the scanner with a live SDR device.
 
 	Args:
 		config_path: Optional path to user config override file
@@ -86,20 +82,17 @@ async def run_scanner (config_path: pathlib.Path | None, band_name: str, device_
 	"""
 
 	try:
-		# Load and validate configuration
 		config_data = substation.config.load_config(config_path)
 
 		if not band_name:
 			logger.error("No band specified. Use --band to select a band.")
 			sys.exit(1)
 
-		# Verify band exists in configuration
 		if band_name not in config_data.bands:
 			available = ', '.join(config_data.bands.keys())
 			logger.error(f"Band '{band_name}' not found. Available bands: {available}")
 			sys.exit(1)
 
-		# Create scanner instance
 		scan = substation.scanner.RadioScanner(
 			config_path=config_path,
 			config=config_data,
@@ -108,13 +101,68 @@ async def run_scanner (config_path: pathlib.Path | None, band_name: str, device_
 			device_index=device_index
 		)
 
-		# Run the scan loop (blocks until interrupted)
 		await scan.scan ()
 
 	except Exception as e:
-		# Log unexpected errors with full traceback
 		logger.error(f"Error running scanner: {e}", exc_info=True)
 		sys.exit(1)
+
+
+async def run_scanner_file (config_path: pathlib.Path | None, band_name: str, iq_file: str, center_freq: float, start_time: datetime.datetime) -> None:
+
+	"""
+	Process an IQ WAV file through the scanner pipeline.
+
+	Streams the file at full speed (no real-time pacing) using a virtual
+	clock that advances with sample position.  Output recordings use the
+	virtual timestamps for directory and file naming.
+
+	Args:
+		config_path: Optional path to user config override file
+		band_name: Name of the band to scan
+		iq_file: Path to 2-channel IQ WAV file
+		center_freq: Center frequency of the recording in Hz
+		start_time: Start datetime for the recording (used for output timestamps)
+	"""
+
+	try:
+		config_data = substation.config.load_config(config_path)
+
+		if band_name not in config_data.bands:
+			available = ', '.join(config_data.bands.keys())
+			logger.error(f"Band '{band_name}' not found. Available bands: {available}")
+			sys.exit(1)
+
+		# Read sample rate from the WAV file to initialise the virtual clock
+		import soundfile
+		info = soundfile.info(iq_file)
+		file_sample_rate = float(info.samplerate)
+
+		clock = substation.scanner.VirtualClock(start_time, file_sample_rate)
+
+		scan = substation.scanner.RadioScanner(
+			config=config_data,
+			band_name=band_name,
+			device_type='file',
+			clock=clock,
+			device_kwargs={
+				'file_path': iq_file,
+				'center_freq': center_freq,
+			},
+		)
+
+		logger.info(
+			f"IQ file playback: {iq_file} — "
+			f"center {center_freq/1e6:.6f} MHz, "
+			f"start {start_time.strftime('%Y-%m-%d %H:%M:%S')}"
+		)
+
+		await scan.scan()
+
+	except Exception as e:
+		logger.error(f"Error processing IQ file: {e}", exc_info=True)
+		sys.exit(1)
+
 
 def main () -> int:
 
@@ -122,23 +170,17 @@ def main () -> int:
 	Main entry point for the command-line interface.
 
 	Parses command-line arguments, sets up logging, and dispatches to either
-	list_bands() or run_scanner() based on the arguments.
-
-	The logging format includes timestamps and log levels for easier troubleshooting.
-	Default level is INFO, which shows scanner activity without excessive detail.
+	list_bands(), run_scanner(), or run_scanner_file() based on the arguments.
 
 	Returns:
 		Exit code: 0 for success, 1 for error
 	"""
 
-	# Configure logging with timestamps for all output
-	# Level INFO shows scanning activity without excessive debug detail
 	logging.basicConfig(
 		level=logging.INFO,
 		format='%(asctime)s - %(levelname)s - %(message)s'
 	)
 
-	# Set up argument parser with help text and examples
 	parser = argparse.ArgumentParser(
 		description='Substation - Software-defined radio band scanner',
 		formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -147,6 +189,7 @@ Examples:
   substation --band pmr                    # Scan PMR band with RTL-SDR
   substation --band marine --device-type hackrf  # Scan marine band with HackRF
   substation --list-bands                  # List all available bands
+  substation --band pmr --iq-file rec.wav --center-freq 446059313  # File playback
 		"""
 	)
 
@@ -186,6 +229,26 @@ Examples:
 		help='List available bands and exit'
 	)
 
+	# IQ file playback
+	parser.add_argument(
+		'--iq-file',
+		default=None,
+		help='IQ WAV file to process (2-channel I/Q). Replaces live SDR device.'
+	)
+
+	parser.add_argument(
+		'--center-freq',
+		type=float,
+		default=None,
+		help='Center frequency of the IQ recording in Hz (required with --iq-file)'
+	)
+
+	parser.add_argument(
+		'--start-time',
+		default=None,
+		help='Start time of the recording as "YYYY-MM-DD HH:MM:SS" (default: 2000-01-01 00:00:00)'
+	)
+
 	args = parser.parse_args()
 
 	config_path = pathlib.Path(args.config) if args.config else None
@@ -200,17 +263,44 @@ Examples:
 		print("Error: --band is required unless using --list-bands.", file=sys.stderr)
 		return 1
 
-	# Run the scanner asynchronously
+	# IQ file playback mode
+	if args.iq_file:
+		if args.center_freq is None:
+			print("Error: --center-freq is required with --iq-file.", file=sys.stderr)
+			return 1
+
+		if args.start_time:
+			try:
+				start_dt = datetime.datetime.strptime(args.start_time, "%Y-%m-%d %H:%M:%S")
+			except ValueError:
+				print('Error: --start-time must be "YYYY-MM-DD HH:MM:SS".', file=sys.stderr)
+				return 1
+		else:
+			start_dt = datetime.datetime(2000, 1, 1)
+
+		try:
+			asyncio.run(run_scanner_file(
+				config_path=config_path,
+				band_name=args.band,
+				iq_file=args.iq_file,
+				center_freq=args.center_freq,
+				start_time=start_dt,
+			))
+			return 0
+		except KeyboardInterrupt:
+			return 0
+		except Exception:
+			return 1
+
+	# Live SDR scanning mode
 	try:
 		asyncio.run(run_scanner(config_path=config_path, band_name=args.band, device_type=args.device_type, device_index=args.device_index))
 		return 0
 
 	except KeyboardInterrupt:
-		# Ctrl+C is a normal way to exit, not an error
 		return 0
 
 	except Exception:
-		# Errors are already logged by run_scanner()
 		return 1
 
 if __name__ == '__main__':

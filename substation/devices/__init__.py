@@ -9,8 +9,6 @@ The factory function create_device() simplifies device instantiation
 by accepting a device type string and returning the appropriate instance.
 """
 
-from __future__ import annotations
-
 import typing
 
 import substation.devices.base
@@ -21,6 +19,7 @@ _DEVICE_FAMILIES: dict[str, str] = {
 	'hackrf': 'hackrf', 'hackrf-one': 'hackrf', 'hackrfone': 'hackrf',
 	'airspy': 'airspy', 'airspy-r2': 'airspy', 'airspyr2': 'airspy',
 	'airspyhf': 'airspyhf', 'airspy-hf': 'airspyhf', 'airspyhf+': 'airspyhf',
+	'file': 'file',
 }
 
 
@@ -42,7 +41,7 @@ def normalize_device_family (device_type: str) -> str:
 	return key
 
 
-def create_device (device_type: str, device_index: int = 0) -> substation.devices.base.BaseDevice:
+def create_device (device_type: str, device_index: int = 0, **kwargs: typing.Any) -> 'substation.devices.base.BaseDevice':
 	"""
 	Factory function to create SDR device instances.
 
@@ -101,5 +100,14 @@ def create_device (device_type: str, device_index: int = 0) -> substation.device
 	if family in ('airspy', 'airspyhf') or device_type.lower().startswith('soapy:'):
 		import substation.devices.soapysdr
 		return substation.devices.soapysdr.SoapySdrDevice(family, device_index)
+
+	# IQ file playback
+	if family == 'file':
+		import substation.devices.file
+		file_path = kwargs.get('file_path')
+		center_freq = kwargs.get('center_freq')
+		if not file_path or center_freq is None:
+			raise ValueError("FileDevice requires file_path and center_freq kwargs")
+		return substation.devices.file.FileDevice(file_path, center_freq)
 
 	raise ValueError(f"Unsupported device_type: {device_type}")

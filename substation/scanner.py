@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import logging
 import os
 import pathlib
@@ -20,6 +21,38 @@ import substation.recording
 
 logger = logging.getLogger(__name__)
 
+
+class VirtualClock:
+
+	"""Virtual clock for IQ file playback.
+
+	Advances based on the number of IQ samples processed rather than
+	wall-clock time.  Provides time() (float epoch) and now() (datetime)
+	that the scanner and recorder use for timestamps, hold timers, and
+	output directory/file naming.
+	"""
+
+	def __init__ (self, start_datetime: datetime.datetime, sample_rate: float) -> None:
+		self.start_datetime = start_datetime
+		self.start_epoch = start_datetime.timestamp()
+		self.sample_rate = sample_rate
+		self.samples_delivered: int = 0
+
+	def advance (self, n_samples: int) -> None:
+		"""Advance the clock by n_samples worth of time."""
+		self.samples_delivered += n_samples
+
+	def time (self) -> float:
+		"""Current virtual time as a float epoch (like time.time())."""
+		return self.start_epoch + self.samples_delivered / self.sample_rate
+
+	def now (self) -> datetime.datetime:
+		"""Current virtual time as a datetime."""
+		return self.start_datetime + datetime.timedelta(
+			seconds=self.samples_delivered / self.sample_rate
+		)
+
+
 class RadioScanner:
 
 	"""
@@ -34,7 +67,7 @@ class RadioScanner:
 	to prevent rapid state toggling when signals hover near the threshold.
 	"""
 
-	def __init__ (self, config_path: pathlib.Path | None = None, band_name: str = 'pmr', device_type: str = 'rtlsdr', device_index: int = 0, config: typing.Any | None = None) -> None:
+	def __init__ (self, config_path: pathlib.Path | None = None, band_name: str = 'pmr', device_type: str = 'rtlsdr', device_index: int = 0, config: typing.Any | None = None, clock: VirtualClock | None = None, device_kwargs: dict | None = None) -> None:
 
 		"""
 		Initialize the scanner with configuration
@@ -54,6 +87,8 @@ class RadioScanner:
 		self.band_name = band_name
 		self.device_type = device_type
 		self.device_index = device_index
+		self.clock = clock
+		self.device_kwargs = device_kwargs or {}
 
 		if band_name not in self.config.bands:
 
@@ -194,7 +229,8 @@ class RadioScanner:
 		# Callbacks for completed recordings (Finalized)
 		self.recording_callbacks: list[typing.Callable] = []
 
-		# SDR device
+		# SDR device (typed as Any because scanner accesses device-specific
+		# attributes like read_samples and freq_correction beyond BaseDevice)
 		self.sdr: typing.Any | None = None
 
 		# Pre-computed values (populated by _precompute_fft_params before any
@@ -282,6 +318,11 @@ class RadioScanner:
 		else:
 			status = "DISABLED"
 		logger.info(f"Recording: {status}")
+
+
+	def _now (self) -> float:
+		"""Current time as a float epoch — uses virtual clock if set."""
+		return self.clock.time() if self.clock else time.time()
 
 
 	def _calculate_channels (self) -> list[float]:
@@ -454,7 +495,6 @@ class RadioScanner:
 
 		# Pre-compute angular frequencies for frequency shifting.
 		self.channel_omega = {}
-		self.channel_phase_array = None # Shared if all channels have same slice size
 
 		for channel_freq in self.channels:
 			freq_offset = channel_freq - self.center_freq
@@ -695,7 +735,7 @@ class RadioScanner:
 
 		logger.info("Setting up SDR device...")
 
-		self.sdr = substation.devices.create_device(self.device_type, self.device_index)
+		self.sdr = substation.devices.create_device(self.device_type, self.device_index, **self.device_kwargs)
 		self.sdr.sample_rate = self.sample_rate
 
 		# Use the actual rate the device applied (may differ from requested
@@ -712,6 +752,17 @@ class RadioScanner:
 			self.sample_rate = device_rate
 
 		self.sdr.center_freq = self.center_freq
+
+		# For file playback, the device has a fixed center frequency that
+		# may differ from the band midpoint.  Use the device's actual value
+		# so channel extraction math is correct.
+		device_center = self.sdr.center_freq
+		if device_center is not None and device_center != self.center_freq:
+			logger.info(
+				f"Using device center frequency: {device_center/1e6:.6f} MHz "
+				f"(band midpoint: {self.center_freq/1e6:.6f} MHz)"
+			)
+			self.center_freq = device_center
 
 		# Per-element gain takes priority over overall gain for devices with
 		# multiple gain stages (e.g., AirSpy R2: LNA, Mixer, VGA).
@@ -783,18 +834,29 @@ class RadioScanner:
 	def _sdr_callback (self, samples: numpy.typing.NDArray[numpy.complex64], _context: typing.Any) -> None:
 
 		"""
-		Callback for async SDR streaming (runs in librtlsdr background thread)
+		Callback for async SDR streaming (runs in device background thread)
 
 		Args:
-			samples: IQ samples from SDR
+			samples: IQ samples from SDR or file
 			_context: Context object (unused)
 		"""
 
 		if self.loop and self.sample_queue:
-			# Thread-safe: schedule queue put on the event loop.
-			# The copy avoids buffer reuse in librtlsdr but costs memory bandwidth.
-			# ascontiguousarray ensures optimal cache-line alignment for faster processing
-			self.loop.call_soon_threadsafe(self._safe_queue_put, numpy.ascontiguousarray(samples))
+			samples = numpy.ascontiguousarray(samples)
+
+			if self.clock:
+				# File playback: use blocking put with backpressure.
+				# The file reader runs faster than processing, so we must
+				# wait for the queue to have space rather than dropping.
+				future = asyncio.run_coroutine_threadsafe(
+					self.sample_queue.put(samples), self.loop
+				)
+				future.result()  # block until the put completes
+			else:
+				# Live SDR: non-blocking, drop if queue full.
+				# Real-time streams can't wait — dropping is better than
+				# stalling the device driver and causing USB overflows.
+				self.loop.call_soon_threadsafe(self._safe_queue_put, samples)
 
 	async def _sample_band_async (self) -> typing.AsyncGenerator[numpy.typing.NDArray[numpy.complex64], None]:
 		"""
@@ -954,8 +1016,8 @@ class RadioScanner:
 				sample_offset = transition_idx
 
 				# Record channel activity start for stuck detection.
-				self.channel_start_times[channel_freq] = time.time()
-				self.channel_audio_last_active[channel_freq] = time.time()
+				self.channel_start_times[channel_freq] = self._now()
+				self.channel_audio_last_active[channel_freq] = self._now()
 
 				if channel_freq in self.channel_last_warning_times:
 					del self.channel_last_warning_times[channel_freq]
@@ -1216,6 +1278,7 @@ class RadioScanner:
 			fade_out_ms=self.recording_config.fade_out_ms,
 			dynamics_curve_enabled=self.recording_config.dynamics_curve_enabled,
 			dynamics_curve_config=self.recording_config.dynamics_curve,
+			start_time=self.clock.now() if self.clock else None,
 		)
 
 		# Pass the band-wide noise floor if we have it
@@ -1309,6 +1372,20 @@ class RadioScanner:
 		triggers Gate 3 (post-recording min-duration and flatness checks)
 		in _stop_channel_recording.
 		"""
+
+		# Advance the virtual clock by the number of samples in this slice.
+		# This keeps timestamps accurate for file playback mode.
+		if self.clock:
+			self.clock.advance(len(samples))
+
+			# Log progress every 10 minutes of file time.
+			prev_samples = self.clock.samples_delivered - len(samples)
+			prev_minutes = int(prev_samples / self.clock.sample_rate / 600)
+			curr_minutes = int(self.clock.samples_delivered / self.clock.sample_rate / 600)
+			if curr_minutes > prev_minutes:
+				elapsed = self.clock.samples_delivered / self.clock.sample_rate
+				vt = self.clock.now().strftime("%Y-%m-%d %H:%M:%S")
+				logger.info(f"File playback: {vt} ({elapsed / 3600:.1f}h processed)")
 
 		start_time = time.perf_counter()
 		try:
@@ -1405,7 +1482,7 @@ class RadioScanner:
 			segment_noise_floors: list[float] | None = None
 
 			# Phase 6: handle transitions, demodulation, and recording.
-			now = time.time()
+			now = self._now()
 			for i, channel_freq in enumerate(self.channels):
 				idx = self.channel_original_indices.get(channel_freq, -1)
 				snr_db = channel_powers[i] - noise_floor_db
@@ -1618,22 +1695,32 @@ class RadioScanner:
 			# Start async SDR streaming in background thread (non-blocking)
 			# This must run in an executor because read_samples_async blocks
 			async def start_streaming () -> None:
-				await loop.run_in_executor(
-					None,
-					sdr.read_samples_async,
-					self._sdr_callback,
-					self.samples_per_slice
-				)
+				try:
+					await loop.run_in_executor(
+						None,
+						sdr.read_samples_async,
+						self._sdr_callback,
+						self.samples_per_slice
+					)
+				except Exception as exc:
+					logger.error(f"SDR streaming failed: {exc}", exc_info=exc)
+				finally:
+					# Send sentinel to unblock the async generator.
+					# Only for file playback (blocking read_samples_async)
+					# where normal completion means EOF.  Live SDR devices
+					# return immediately from read_samples_async (they start
+					# a background thread), so the finally would fire before
+					# any samples are processed.
+					if self.clock and self.sample_queue is not None:
+						self.sample_queue.put_nowait(None)
 
 			# Start streaming task in background.
-			# Store the reference so errors don't vanish silently.
 			streaming_task = asyncio.create_task(start_streaming())
 
 			def _on_streaming_done (task: asyncio.Task) -> None:
 				exc = task.exception() if not task.cancelled() else None
 				if exc:
 					logger.error(f"SDR streaming task failed: {exc}", exc_info=exc)
-					# Signal the sample queue to unblock the processing loop
 					if self.sample_queue:
 						self.sample_queue.put_nowait(None)
 

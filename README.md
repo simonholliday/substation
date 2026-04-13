@@ -404,6 +404,22 @@ Options:
 - `--device-type`, `-t`: `rtlsdr`, `hackrf`, `airspy`, `airspyhf`, or `soapy:<driver>` (default `rtlsdr`).
 - `--device-index`, `-i`: device index (default `0`).
 - `--list-bands`: list available bands and exit.
+- `--iq-file`: path to a 2-channel IQ WAV file for offline playback (replaces live SDR).
+- `--center-freq`: center frequency of the IQ recording in Hz (required with `--iq-file`).
+- `--start-time`: start time of the recording as `"YYYY-MM-DD HH:MM:SS"` (default: `2000-01-01 00:00:00`).
+
+### IQ File Playback
+
+You can process a previously captured IQ file through the scanner pipeline instead of a live SDR device. The file is streamed at full speed (not real-time) with a virtual clock providing accurate timestamps for output recordings.
+
+```bash
+substation --band pmr \
+  --iq-file "baseband_446059313Hz_16-13-20_16-03-2025.wav" \
+  --center-freq 446059313 \
+  --start-time "2025-03-16 16:13:20"
+```
+
+The IQ file must be a WAV with 2 channels (I and Q) at any sample rate. The center frequency is the frequency the SDR was tuned to when recording. The file's sample rate is read from the WAV header. The band span must fit within the file's bandwidth — the center frequency doesn't need to match the band midpoint exactly.
 
 ## Configuration
 

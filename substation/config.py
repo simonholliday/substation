@@ -13,8 +13,6 @@ when configuration is invalid, which is much better than runtime errors or silen
 failures.
 """
 
-from __future__ import annotations
-
 import fractions
 import logging
 import pathlib

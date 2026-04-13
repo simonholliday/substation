@@ -248,16 +248,18 @@ def decimate_audio (
 
 	"""
 	Decimate signal to audio rate (float32).
-	Wrapper around _decimate_common.
+
+	If the input is complex, the output is the magnitude (numpy.abs).
+	Use decimate_iq() instead if you need to preserve phase.
 	"""
-	
+
 	# Use default 'decimate_' prefix for backward compatibility with existing state
 	out, state = _decimate_common(signal, sample_rate, audio_sample_rate, state, state_prefix='decimate_')
-	
+
 	# Ensure float output (magnitude if complex, but usually audio is real)
 	if numpy.iscomplexobj(out):
 		out = numpy.abs(out)
-		
+
 	return out.astype(numpy.float32), state
 
 
