@@ -1,12 +1,12 @@
 # Substation
 
 ## Overview
-Substation is a high-performance tool for monitoring and recording radio activity using Software Defined Radio (SDR) hardware. It is designed to be used in two ways:
+Substation is a production-quality SDR band scanner that detects, demodulates, and records radio transmissions automatically. It delivers a complete signal processing chain — from raw IQ samples through to broadcast-standard audio files — built on the same DSP techniques used by established SDR applications, implemented in Python for accessibility and extensibility.
 
 1.  **As a Command-Line Tool**: Quickly scan and record bands using simple terminal commands.
 2.  **As a Python Module**: Integrate radio scanning, detection, and callbacks directly into your own Python applications.
 
-By connecting a supported USB receiver (like an RTL-SDR or HackRF), you can scan wide ranges of the radio spectrum - such as Airband or Maritime frequencies - and automatically record transmissions as they occur. The software handles the technical signal processing and hardware management in the background, allowing for efficient 24/7 monitoring even on modest hardware like a Raspberry Pi.
+By connecting a supported USB receiver (like an RTL-SDR or HackRF), you can scan wide ranges of the radio spectrum — such as Airband, PMR, or Maritime frequencies — and automatically record transmissions as they occur. Every stage of the pipeline is designed for audio quality and reliability: three independent noise rejection layers eliminate empty recordings, carrier transient trimming removes key-on/off clicks, spectral subtraction reduces background noise, and a voice bandpass filter produces clean, broadcast-ready output. The scanner runs efficiently on modest hardware like a Raspberry Pi for 24/7 unattended monitoring.
 
 ## Contents
 
@@ -264,22 +264,25 @@ The same `sdr_gain_db`, `sdr_gain_elements`, and `sdr_device_settings` config ke
 **Reference:** [SoapySDR project](https://github.com/pothosware/SoapySDR)
 
 ## Key Features & Optimizations
-- **Advanced Signal Detection**: Uses Welch's Power Spectral Density (PSD) estimation for stable, low-variance activity detection. The noise floor is EMA-smoothed across slices to eliminate jitter, with a warmup period that absorbs SDR hardware startup transients before detection begins.
+- **Robust Signal Detection**: Welch PSD estimation with EMA-smoothed noise floor provides stable, low-variance channel detection. A hardware warmup period absorbs SDR startup transients before detection begins. Automatic DC offset avoidance shifts the center frequency to prevent the LO spike from masking any channel.
 - **Three-Layer Noise Rejection**: Eliminates the "empty hiss" recordings that plague high-sensitivity receivers. Layer 1: RF power variance rejects stationary noise at the PSD level. Layer 2: spectral flatness of speculatively demodulated audio rejects noise that passes the variance check. Layer 3: post-recording flatness check discards files where signal content was brief relative to hold-timer padding. All three are modulation-agnostic. See [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings) below.
-- **Parallel Multi-Channel Recording**: Simultaneously detects and records all active channels in a band - unlike traditional handheld scanners which only play one channel at a time.
-- **High-Fidelity Demodulation**: Implements stateful AM and NFM demodulation with continuous phase tracking and DC-blocking, eliminating pops and discontinuities between audio blocks.
-- **Precise Transition Trimming**: After coarse PSD-based detection, demodulated audio is scanned at sample level to find exact signal boundaries. Padding is added around the boundary and faded with a half-cosine S-curve, preserving signal content (including attack transients) while eliminating clicks.
+- **Parallel Multi-Channel Recording**: Simultaneously detects and records all active channels in a band — unlike traditional handheld scanners which only monitor one channel at a time.
+- **Professional NFM Pipeline**: Polar discriminator → Hampel impulse blanker (suppresses USB sample-drop glitches) → 300µs de-emphasis → DC blocking → voice bandpass (300-3400 Hz) → CTCSS/DCS subaudible tone detection. The full chain runs with cross-block state continuity for seamless, glitch-free audio across arbitrarily long recordings.
+- **CTCSS & DCS Detection**: Automatically identifies the 51 standard CTCSS tones (67-254 Hz) via Goertzel algorithm, and DCS codes via Golay(23,12) decoding. Detected codes are logged at channel activation and embedded in the recording's metadata for post-processing and talkgroup identification.
+- **High-Fidelity Demodulation**: Stateful AM, NFM, USB, and LSB demodulators with continuous phase tracking and DC-blocking, eliminating pops and discontinuities between audio blocks. SSB uses the Weaver method for clean sideband separation.
+- **Precise Transition Trimming**: After coarse PSD-based detection, demodulated audio is scanned at sample level to find exact signal boundaries. Padding is added around the boundary and faded with a half-cosine S-curve, preserving signal content (including attack transients) while eliminating clicks. Optional carrier transient trimming removes the key-on/off clicks produced by AM transmitters.
 - **Hardware Efficiency**:
-    - **Vectorized Math**: Heavy processing is delegated to NumPy and SciPy for maximum throughput.
+    - **Vectorized DSP**: All signal processing is delegated to NumPy and SciPy, achieving throughput comparable to native C implementations while remaining accessible and extensible.
     - **Zero-Copy Architecture**: Uses memory stride tricks for overlapping FFT segments, avoiding expensive data copying.
     - **Lazy Evaluation**: Computationally expensive segment analysis is performed only when transitions are detected, drastically reducing idle CPU load.
     - **Pre-Allocated Ring Buffer**: Per-channel audio buffering uses a fixed NumPy array with modulo wrap-around, eliminating per-flush concatenation and GC pressure.
-- **State-of-the-Art Processing**:
-    - **Vectorized AGC**: High-quality, smooth automatic gain control for AM with independent attack and release timings.
+- **Production-Quality Audio Processing**:
+    - **Vectorized AGC**: Smooth automatic gain control for AM and SSB with independent attack and release timings.
     - **Noise-Floor-Guided Spectral Subtraction**: The band-wide PSD noise floor is passed to the spectral subtraction stage for more reliable noise frame classification, reducing musical noise artifacts compared to percentile-only heuristics.
+    - **Soft Limiter**: Tanh waveshaper with 0.98 ceiling prevents inter-sample true-peak overshoot above 0 dBTP.
     - **Float64 Filter State**: IIR filter states (channel extraction, decimation) use double precision to prevent rounding drift in long-running sessions.
-- **Parallel Scanning**: Supports multiple SDR devices (RTL-SDR and HackRF) simultaneously with asynchronous I/O.
-- **Archive Ready**: Automatic recording to WAV (with Broadcast WAV/BEXT metadata) or FLAC (lossless compressed, ~39% smaller) with embedded metadata (frequency, timestamps, modulation).
+- **Parallel Scanning**: Supports multiple SDR devices simultaneously with asynchronous I/O.
+- **Archive Ready**: Automatic recording to WAV (with Broadcast WAV/BEXT metadata for timeline placement in audio editors) or FLAC (lossless compressed, ~39% smaller). Embedded metadata includes frequency, timestamps, modulation, and detected CTCSS/DCS codes.
 
 ## Quick Start
 1) Install dependencies (see `installation.txt` for SDR drivers).
