@@ -176,3 +176,31 @@ TRIM_AMPLITUDE_THRESHOLD = 0.02
 # At 16 kHz audio: 240 samples ≈ 15ms, 800 samples ≈ 50ms.
 TRIM_PRE_SAMPLES = 240
 TRIM_POST_SAMPLES = 800
+
+# ==============================================================================
+# CTCSS / DCS Subaudible Tone Constants
+# ==============================================================================
+
+# The 51 standard CTCSS (Continuous Tone-Coded Squelch System) frequencies
+# in Hz, from EIA/TIA-603.  These subaudible tones (67-254 Hz) are
+# transmitted alongside voice on NFM channels to identify talk groups.
+CTCSS_TONES = (
+	67.0, 69.3, 71.9, 74.4, 77.0, 79.7, 82.5, 85.4, 88.5, 91.5,
+	94.8, 97.4, 100.0, 103.5, 107.2, 110.9, 114.8, 118.8, 123.0, 127.3,
+	131.8, 136.5, 141.3, 146.2, 150.0, 151.4, 156.7, 159.8, 162.2, 165.5,
+	167.9, 171.3, 173.8, 177.3, 179.9, 183.5, 186.2, 189.9, 192.8, 196.6,
+	199.5, 203.5, 206.5, 210.7, 218.1, 225.7, 229.1, 233.6, 241.8, 250.3,
+	254.1,
+)
+
+# DCS (Digital-Coded Squelch) bitrate in bps.  DCS transmits a continuous
+# 134.3 bps FSK signal below 300 Hz, encoding a 23-bit Golay(23,12) code
+# word containing a 9-bit talk group code (octal 000-777).
+DCS_BITRATE = 134.3
+
+# NFM voice bandpass filter limits (Hz).  Applied after CTCSS/DCS detection
+# to remove subaudible tones from the recording while preserving voice.
+# 300 Hz removes CTCSS (67-254 Hz) and DCS (<300 Hz).
+# 3400 Hz is the standard voice telephony upper limit.
+NFM_VOICE_HIGHPASS_HZ = 300.0
+NFM_VOICE_LOWPASS_HZ = 3400.0

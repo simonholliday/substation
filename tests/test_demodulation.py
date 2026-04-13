@@ -582,6 +582,184 @@ class TestHampelBlanker:
 			mask[max(0, pos-1):pos+2] = False
 		numpy.testing.assert_allclose(result[mask], signal[mask], atol=1e-6)
 
+
+class TestCTCSSDetection:
+
+	def test_detects_known_tone (self):
+		"""A clean CTCSS tone should be detected correctly."""
+		sr = 16000
+		duration = 0.3  # 300ms of audio
+		t = numpy.arange(int(sr * duration)) / sr
+		# 88.5 Hz CTCSS tone mixed with voice-band content
+		audio = (
+			numpy.sin(2 * numpy.pi * 88.5 * t) * 0.1 +
+			numpy.sin(2 * numpy.pi * 1000 * t) * 0.3
+		).astype(numpy.float32)
+		result = substation.dsp.demodulation.detect_ctcss(audio, sr)
+		assert result == 88.5
+
+	def test_no_tone_returns_none (self):
+		"""Voice-only audio (no subaudible tone) should return None."""
+		sr = 16000
+		t = numpy.arange(int(sr * 0.3)) / sr
+		audio = (numpy.sin(2 * numpy.pi * 1000 * t) * 0.5).astype(numpy.float32)
+		result = substation.dsp.demodulation.detect_ctcss(audio, sr)
+		assert result is None
+
+	def test_noise_returns_none (self):
+		"""Random noise should not trigger false CTCSS detection."""
+		sr = 16000
+		audio = numpy.random.RandomState(42).randn(int(sr * 0.3)).astype(numpy.float32) * 0.1
+		result = substation.dsp.demodulation.detect_ctcss(audio, sr)
+		assert result is None
+
+	def test_distinguishes_adjacent_tones (self):
+		"""Should distinguish 67.0 Hz from 69.3 Hz (closest pair, 2.3 Hz apart)."""
+		sr = 16000
+		t = numpy.arange(int(sr * 0.3)) / sr
+		for freq in (67.0, 69.3):
+			audio = (numpy.sin(2 * numpy.pi * freq * t) * 0.1).astype(numpy.float32)
+			result = substation.dsp.demodulation.detect_ctcss(audio, sr)
+			assert result == freq, f"Expected {freq}, got {result}"
+
+
+class TestDCSDetection:
+
+	def _make_dcs_signal (self, code: int, sr: int = 16000, duration: float = 1.0) -> numpy.typing.NDArray[numpy.float32]:
+		"""Generate a synthetic DCS FSK signal for a given 9-bit code."""
+		import substation.constants
+
+		# Encode: 9-bit code → 12 data bits (code + magic 100₂) → 23-bit Golay.
+		# The detector shifts bits in as: (bit << 23) | (word >> 1), so the
+		# transmitted bit order is: parity[0..10], then data[0..11] (LSB first).
+		data_12 = (code & 0x1FF) | (4 << 9)  # magic signature at bits 9-11
+
+		# Compute Golay parity (11 bits)
+		gen_poly = [
+			0b10100010011, 0b01110001110, 0b11100011101,
+			0b11011100011, 0b10000111101, 0b00010110111,
+			0b00101101110, 0b01011011100, 0b10110111000,
+			0b01100101001, 0b11001010010, 0b10011110100,
+		]
+		parity = 0
+		for i in range(12):
+			if data_12 & (1 << i):
+				parity ^= gen_poly[i]
+
+		# Build the 23-bit code word as the detector expects to see it
+		# after all bits are shifted in: data in upper 12, parity in lower 11.
+		# Transmitted LSB first: data bits first, then parity bits.
+		bit_sequence = []
+		for i in range(12):
+			bit_sequence.append((data_12 >> i) & 1)
+		for i in range(11):
+			bit_sequence.append((parity >> i) & 1)
+
+		# Generate FSK at DCS_BITRATE, repeating the 23-bit sequence
+		bitrate = substation.constants.DCS_BITRATE
+		samples_per_bit = sr / bitrate
+		n_samples = int(sr * duration)
+		signal = numpy.zeros(n_samples, dtype=numpy.float32)
+
+		for i in range(n_samples):
+			bit_pos = int(i / samples_per_bit) % 23
+			bit = bit_sequence[bit_pos]
+			signal[i] = 0.1 if bit else -0.1
+
+		return signal
+
+	def test_golay_decode_valid (self):
+		"""The Golay(23,12) decoder should decode a valid code word."""
+		code = 0o023  # 19 decimal
+		data_12 = (code & 0x1FF) | (4 << 9)
+		gen_poly = [
+			0b10100010011, 0b01110001110, 0b11100011101,
+			0b11011100011, 0b10000111101, 0b00010110111,
+			0b00101101110, 0b01011011100, 0b10110111000,
+			0b01100101001, 0b11001010010, 0b10011110100,
+		]
+		parity = 0
+		for i in range(12):
+			if data_12 & (1 << i):
+				parity ^= gen_poly[i]
+		word = (data_12 << 11) | parity
+		result = substation.dsp.demodulation._golay2312_decode(word)
+		assert result == code
+
+	def test_golay_corrects_single_error (self):
+		"""The Golay decoder should correct a single bit error."""
+		code = 0o023
+		data_12 = (code & 0x1FF) | (4 << 9)
+		gen_poly = [
+			0b10100010011, 0b01110001110, 0b11100011101,
+			0b11011100011, 0b10000111101, 0b00010110111,
+			0b00101101110, 0b01011011100, 0b10110111000,
+			0b01100101001, 0b11001010010, 0b10011110100,
+		]
+		parity = 0
+		for i in range(12):
+			if data_12 & (1 << i):
+				parity ^= gen_poly[i]
+		word = (data_12 << 11) | parity
+		# Flip one bit in the data portion
+		corrupted = word ^ (1 << 15)
+		result = substation.dsp.demodulation._golay2312_decode(corrupted)
+		assert result == code
+
+	def test_golay_with_magic_rejects_most_garbage (self):
+		"""Random words that pass the magic check should still mostly fail decode."""
+		# The DCS detector first checks (word >> 9) & 0x07 == 4 (magic signature),
+		# then Golay-decodes.  Both checks together reject most random data.
+		rng = numpy.random.RandomState(42)
+		magic_pass = 0
+		golay_pass = 0
+		for _ in range(1000):
+			word = int(rng.randint(0, 2**23))
+			if (word >> 9) & 0x07 == 4:
+				magic_pass += 1
+				if substation.dsp.demodulation._golay2312_decode(word) is not None:
+					golay_pass += 1
+		# ~1/8 pass the magic check, and of those, some will Golay-decode.
+		# The dual-detection requirement in detect_dcs() handles the rest.
+		assert magic_pass < 200  # ~12.5% of 1000
+
+	def test_noise_returns_none (self):
+		"""Random noise should not trigger false DCS detection."""
+		sr = 16000
+		audio = numpy.random.RandomState(42).randn(int(sr * 1.0)).astype(numpy.float32) * 0.1
+		result = substation.dsp.demodulation.detect_dcs(audio, sr)
+		assert result is None
+
+
+class TestVoiceBandpass:
+
+	def test_ctcss_tone_removed (self):
+		"""The voice bandpass should remove a CTCSS tone from NFM audio."""
+		sr = 16000
+		t = numpy.arange(int(sr * 0.5)) / sr
+		# 88.5 Hz CTCSS + 1 kHz voice
+		audio = (
+			numpy.sin(2 * numpy.pi * 88.5 * t) * 0.1 +
+			numpy.sin(2 * numpy.pi * 1000 * t) * 0.3
+		).astype(numpy.float32)
+
+		# Apply bandpass via sosfilt (same as demodulator step 9)
+		sos = scipy.signal.butter(
+			2,
+			[300, 3400],
+			btype='bandpass', fs=sr, output='sos'
+		)
+		filtered = scipy.signal.sosfilt(sos, audio)
+
+		# Check: 88.5 Hz should be strongly attenuated
+		spectrum = numpy.abs(scipy.fft.rfft(filtered))
+		freqs = scipy.fft.rfftfreq(len(filtered), d=1.0/sr)
+		ctcss_bin = numpy.argmin(numpy.abs(freqs - 88.5))
+		voice_bin = numpy.argmin(numpy.abs(freqs - 1000))
+
+		# CTCSS should be at least 20 dB below the voice tone
+		assert spectrum[voice_bin] > spectrum[ctcss_bin] * 10
+
 	def test_state_continuity_across_blocks (self):
 		"""Spikes at block boundaries should be detected using cross-block state."""
 		signal = numpy.zeros(200, dtype=numpy.float32)

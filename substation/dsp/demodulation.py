@@ -226,6 +226,194 @@ def _blanker_hampel (
 	return result[offset:]
 
 
+def detect_ctcss (audio: numpy.typing.NDArray[numpy.float32], sample_rate: int) -> float | None:
+
+	"""Detect CTCSS subaudible tone using the Goertzel algorithm.
+
+	Computes power at each of the 51 standard CTCSS frequencies
+	(67-254 Hz) using the Goertzel algorithm — an efficient single-bin
+	DFT that avoids a full FFT.  Returns the detected tone frequency
+	if one clearly dominates, or None if no tone is present.
+
+	The audio should be raw demodulated NFM (before any voice bandpass
+	filter removes the subaudible content).
+	"""
+
+	tones = substation.constants.CTCSS_TONES
+	n_tones = len(tones)
+
+	# Block size: use ~200ms of audio for good frequency resolution.
+	# At 16 kHz, N=3200 gives ~5 Hz resolution (sr/N), sufficient to
+	# distinguish adjacent CTCSS tones (minimum spacing ~2.3 Hz).
+	n_samples = min(len(audio), int(sample_rate * 0.2))
+
+	if n_samples < sample_rate * 0.05:
+		return None
+
+	block = audio[:n_samples]
+
+	# Goertzel algorithm: vectorised across all 51 tones.
+	# Pre-compute coefficients (independent of block data).
+	freqs = numpy.array(tones, dtype=numpy.float64)
+	coef = 2.0 * numpy.cos(2.0 * numpy.pi * freqs / sample_rate)
+
+	# Feedback: accumulate N samples through 51 parallel IIR filters.
+	u0 = numpy.zeros(n_tones, dtype=numpy.float64)
+	u1 = numpy.zeros(n_tones, dtype=numpy.float64)
+
+	for sample in block:
+		u_new = sample + coef * u0 - u1
+		u1 = u0
+		u0 = u_new
+
+	# Feed-forward: compute power at each tone frequency.
+	power = u0 * u0 + u1 * u1 - coef * u0 * u1
+
+	# Detection: strongest tone must clearly exceed the average.
+	# A CTCSS tone produces a sharp peak; noise distributes evenly.
+	max_idx = int(numpy.argmax(power))
+	max_power = power[max_idx]
+	mean_power = numpy.mean(power)
+
+	if mean_power < 1e-12:
+		return None
+
+	# Require the peak to be at least 8x the mean power across all bins.
+	# This is more robust than sdrangel's additive threshold because it
+	# adapts to the signal level.
+	if max_power > mean_power * 8.0:
+		return tones[max_idx]
+
+	return None
+
+
+def detect_dcs (audio: numpy.typing.NDArray[numpy.float32], sample_rate: int) -> int | None:
+
+	"""Detect DCS (Digital-Coded Squelch) code from demodulated NFM audio.
+
+	DCS transmits a continuous 134.3 bps FSK bitstream below 300 Hz,
+	encoding a 23-bit Golay(23,12) code word.  The 12 data bits contain
+	a 9-bit code (octal 000-777) plus a 3-bit magic signature (100₂).
+
+	Returns the 9-bit DCS code as an integer, or None if not detected.
+	The audio should be raw demodulated NFM (before voice bandpass).
+	"""
+
+	# Isolate the DCS signal below 300 Hz.
+	sos = scipy.signal.butter(2, 300.0, btype='lowpass', fs=sample_rate, output='sos')
+	sub = scipy.signal.sosfilt(sos, audio).astype(numpy.float32)
+
+	# Need at least 2 full code words (23 bits × 2 / 134.3 bps ≈ 340ms).
+	min_samples = int(sample_rate * 0.4)
+
+	if len(sub) < min_samples:
+		return None
+
+	# Use up to 1.5 seconds of audio for reliable detection.
+	sub = sub[:min(len(sub), int(sample_rate * 1.5))]
+
+	# Adaptive threshold: running min/max over a code-word window.
+	eq_window = int(23 * sample_rate / substation.constants.DCS_BITRATE)
+	if eq_window < 2 or eq_window > len(sub):
+		return None
+
+	# Simple mid-point threshold from the signal envelope.
+	sig_max = scipy.ndimage.maximum_filter1d(sub, size=eq_window, mode='nearest')
+	sig_min = scipy.ndimage.minimum_filter1d(sub, size=eq_window, mode='nearest')
+	mid = (sig_max + sig_min) / 2.0
+
+	# Sample bits at mid-point of each bit period, synchronised by
+	# zero-crossings.  Track bit timing as a fractional accumulator.
+	# Require the same code to appear at least twice to reject random
+	# noise that accidentally forms valid Golay code words.
+	bits_per_sample = substation.constants.DCS_BITRATE / sample_rate
+	bit_index = 0.0
+	prev_sample = sub[0]
+	dcs_word = 0
+	code_counts: dict[int, int] = {}
+
+	for i in range(1, len(sub)):
+		s = sub[i]
+
+		# Edge detection: reset bit timing on zero-crossings.
+		if (prev_sample < mid[i] and s >= mid[i]) or (prev_sample > mid[i] and s <= mid[i]):
+			bit_index = 0.0
+
+		prev = bit_index
+		bit_index += bits_per_sample
+
+		# Mid-point of bit period: sample the bit value.
+		if prev < 0.5 and bit_index >= 0.5:
+			bit = 1 if s > mid[i] else 0
+			dcs_word = (bit << 23) | (dcs_word >> 1)
+
+			# Check for the 3-bit magic signature (100₂) at bits 9-11.
+			if (dcs_word >> 9) & 0x07 == 4:
+				code = _golay2312_decode(dcs_word)
+				if code is not None:
+					code_counts[code] = code_counts.get(code, 0) + 1
+					if code_counts[code] >= 2:
+						return code
+
+		if bit_index >= 1.0:
+			bit_index -= 1.0
+
+		prev_sample = s
+
+	return None
+
+
+def _golay2312_decode (word: int) -> int | None:
+
+	"""Decode a 23-bit Golay(23,12) code word (parity bits first).
+
+	Returns the 9-bit DCS code (lower 9 of the 12 data bits) if the
+	word is valid or correctable (up to 3 bit errors), or None if
+	the word is too corrupted.
+
+	Uses syndrome-based decoding with the standard Golay generator
+	polynomial.
+	"""
+
+	# Golay(23,12) generator matrix rows (systematic form, 11 parity bits).
+	# Each row is a 23-bit pattern: [12 data bits | 11 parity bits].
+	gen_poly = numpy.array([
+		0b10100010011, 0b01110001110, 0b11100011101,
+		0b11011100011, 0b10000111101, 0b00010110111,
+		0b00101101110, 0b01011011100, 0b10110111000,
+		0b01100101001, 0b11001010010, 0b10011110100,
+	], dtype=numpy.uint32)
+
+	# Compute syndrome: multiply received word's parity portion by H^T.
+	data_bits = (word >> 11) & 0xFFF
+	parity_bits = word & 0x7FF
+
+	# Recompute expected parity from data.
+	expected_parity = 0
+	for i in range(12):
+		if data_bits & (1 << i):
+			expected_parity ^= int(gen_poly[i])
+
+	syndrome = expected_parity ^ parity_bits
+
+	# Weight of syndrome (number of 1-bits).
+	weight = bin(syndrome).count('1')
+
+	if weight <= 3:
+		# Syndrome IS the error pattern in the parity bits.
+		# Data bits are correct.
+		return data_bits & 0x1FF
+
+	# Try single-bit error corrections in the data portion.
+	for i in range(12):
+		test_syndrome = syndrome ^ int(gen_poly[i])
+		if bin(test_syndrome).count('1') <= 2:
+			corrected_data = data_bits ^ (1 << i)
+			return corrected_data & 0x1FF
+
+	return None
+
+
 def demodulate_nfm (
 	iq_samples: numpy.typing.NDArray[numpy.complex64],
 	sample_rate: float,
@@ -321,12 +509,45 @@ def demodulate_nfm (
 	demod_normalized = numpy.clip(demod_normalized, -1.0, 1.0)
 
 	# 7. Decimate to final audio rate.
-	return substation.dsp.filters.decimate_audio(
+	audio, state = substation.dsp.filters.decimate_audio(
 		demod_normalized,
 		if_rate,
 		audio_sample_rate,
 		state
 	)
+
+	if len(audio) == 0:
+		return audio, state
+
+	# 8. CTCSS/DCS detection (first block only, before bandpass removes them).
+	# Results are stored in state and retrieved by the scanner for logging
+	# and metadata.  Only runs on the first demodulated block (when the
+	# bandpass filter hasn't been initialised yet).
+	if 'nfm_voice_bp_sos' not in state and len(audio) >= audio_sample_rate * 0.05:
+		ctcss = detect_ctcss(audio, audio_sample_rate)
+		dcs = detect_dcs(audio, audio_sample_rate) if ctcss is None else None
+		if ctcss is not None:
+			state['detected_ctcss'] = ctcss
+		elif dcs is not None:
+			state['detected_dcs'] = dcs
+
+	# 9. Voice bandpass filter (300-3400 Hz).
+	# Removes CTCSS/DCS subaudible tones below 300 Hz and high-frequency
+	# noise above 3400 Hz.  This also subsumes the DC-blocking highpass
+	# (step 5 runs at IF rate; this runs at audio rate for the final cut).
+	if 'nfm_voice_bp_sos' not in state:
+		state['nfm_voice_bp_sos'] = scipy.signal.butter(
+			2,
+			[substation.constants.NFM_VOICE_HIGHPASS_HZ, substation.constants.NFM_VOICE_LOWPASS_HZ],
+			btype='bandpass', fs=audio_sample_rate, output='sos'
+		)
+		state['nfm_voice_bp_zi'] = scipy.signal.sosfilt_zi(state['nfm_voice_bp_sos']) * 0.0
+
+	audio, state['nfm_voice_bp_zi'] = scipy.signal.sosfilt(
+		state['nfm_voice_bp_sos'], audio, zi=state['nfm_voice_bp_zi']
+	)
+
+	return audio.astype(numpy.float32), state
 
 
 def demodulate_am (
