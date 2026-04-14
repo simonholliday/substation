@@ -614,7 +614,7 @@ def demodulate_am (
 	if len(audio) == 0:
 		return audio.astype(numpy.float32, copy=False), state
 
-	# 3. DC removal at audio rate.
+	# 4. DC removal at audio rate.
 	cutoff_hz = 30.0
 	if state.get('am_dc_fs') != audio_sample_rate:
 		state['am_dc_sos'] = scipy.signal.butter(1, cutoff_hz, btype='highpass', fs=audio_sample_rate, output='sos')

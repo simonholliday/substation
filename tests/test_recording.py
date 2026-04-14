@@ -286,6 +286,34 @@ class TestFlacOutput:
 		assert b'bext' not in raw
 
 
+class TestSetToneCode:
+
+	def test_ctcss_in_bext_description (self, tmp_path):
+		"""set_tone_code updates the BEXT JSON description with CTCSS."""
+		rec = _make_recorder(tmp_path, max_seconds=1.0)
+		rec.set_tone_code(ctcss=88.5)
+		import json
+		desc = json.loads(rec.bext_metadata['description'])
+		assert desc['ctcss'] == 88.5
+		assert 'CTCSS=88.5Hz' in rec.bext_metadata['coding_history']
+
+	def test_dcs_in_bext_description (self, tmp_path):
+		"""set_tone_code updates the BEXT JSON description with DCS."""
+		rec = _make_recorder(tmp_path, max_seconds=1.0)
+		rec.set_tone_code(dcs=0o023)
+		import json
+		desc = json.loads(rec.bext_metadata['description'])
+		assert desc['dcs'] == '023'
+		assert 'DCS=023' in rec.bext_metadata['coding_history']
+
+	def test_no_tone_no_change (self, tmp_path):
+		"""set_tone_code with neither ctcss nor dcs is a no-op."""
+		rec = _make_recorder(tmp_path, max_seconds=1.0)
+		original = rec.bext_metadata['description']
+		rec.set_tone_code()
+		assert rec.bext_metadata['description'] == original
+
+
 class TestCheckEmpty:
 
 	def test_white_noise_is_empty (self, tmp_path):

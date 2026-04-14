@@ -1,15 +1,16 @@
 # Substation
 
 ## Overview
-Substation is a production-quality SDR band scanner that detects, demodulates, and records radio transmissions automatically. It delivers a complete signal processing chain — from raw IQ samples through to broadcast-standard audio files — built on the same DSP techniques used by established SDR applications, implemented in Python for accessibility and extensibility.
 
-1.  **As a Command-Line Tool**: Quickly scan and record bands using simple terminal commands.
-2.  **As a Python Module**: Integrate radio scanning, detection, and callbacks directly into your own Python applications.
+Substation is an SDR band scanner that detects, demodulates, and records radio transmissions automatically. Connect a USB SDR receiver, point it at a frequency band - Airband, PMR, Maritime, Amateur, or any conventional analogue band - and Substation will monitor every channel simultaneously, recording each transmission to its own audio file with full metadata.
 
-By connecting a supported USB receiver (like an RTL-SDR or HackRF), you can scan wide ranges of the radio spectrum — such as Airband, PMR, or Maritime frequencies — and automatically record transmissions as they occur. Every stage of the pipeline is designed for audio quality and reliability: three independent noise rejection layers eliminate empty recordings, carrier transient trimming removes key-on/off clicks, spectral subtraction reduces background noise, and a voice bandpass filter produces clean, broadcast-ready output. The scanner runs efficiently on modest hardware like a Raspberry Pi for 24/7 unattended monitoring.
+The scanner is designed for unattended, long-running operation. It handles the entire signal processing chain from raw IQ samples through to clean, archive-ready audio files: signal detection, demodulation (NFM, AM, USB, LSB), noise reduction, carrier transient removal, soft limiting, and automatic file management. Three independent noise rejection stages ensure you get real transmissions, not hiss. Recordings include embedded metadata - frequency, timestamp, modulation, and detected CTCSS/DCS tone codes - so every file is self-documenting.
+
+Substation runs comfortably on a Raspberry Pi for 24/7 monitoring, and works equally well as a command-line tool or as a Python module integrated into your own applications.
 
 ## Contents
 
+- [Signal Processing](#signal-processing)
 - [Supported Devices](#supported-devices)
     - [Quick Reference](#quick-reference)
     - [RTL-SDR Blog V4 / V3](#rtl-sdr-blog-v4-v3)
@@ -17,7 +18,6 @@ By connecting a supported USB receiver (like an RTL-SDR or HackRF), you can scan
     - [AirSpy R2](#airspy-r2)
     - [AirSpy HF+ Discovery](#airspy-hf-discovery)
     - [Other SoapySDR Devices](#other-soapysdr-devices)
-- [Key Features & Optimizations](#key-features-optimizations)
 - [Quick Start](#quick-start)
 - [Utility scripts](#utility-scripts)
 - [Command Line](#command-line)
@@ -35,9 +35,54 @@ By connecting a supported USB receiver (like an RTL-SDR or HackRF), you can scan
 - [Author](#author)
 - [License](#license)
 
+## Signal Processing
+
+Substation's signal processing chain implements industry-standard DSP techniques - the same algorithms used in professional SDR receivers - in Python with NumPy and SciPy for accessibility without sacrificing quality.
+
+### Detection
+
+The scanner divides the SDR's bandwidth into channels and analyses each one five times per second using Welch's Power Spectral Density method. Welch averaging across multiple overlapping FFT segments reduces noise variance, producing stable SNR measurements that don't jitter between slices. The noise floor tracks slowly via an exponential moving average, so brief transmissions stand out clearly against a stable background. A warmup period at startup absorbs the transient spikes that SDR hardware produces while its PLL and AGC settle.
+
+The center frequency is automatically shifted by half a channel spacing whenever a channel would fall on the DC spike - a common SDR artifact caused by LO leakage - so no channel is ever masked.
+
+### Noise rejection
+
+High-sensitivity receivers often trigger on noise that crosses the SNR threshold. Substation applies three independent rejection stages to eliminate these false recordings:
+
+1. **RF power variance** - real signals (voice, data) fluctuate in power across the detection window; stationary noise does not. Channels with low variance are rejected before any demodulation occurs.
+2. **Spectral flatness** - when a channel first activates, the audio is speculatively demodulated and its spectral flatness (Wiener entropy) is measured. Noise has a flat spectrum; any real signal has a peaked one. Flat-spectrum activations are rejected before a recording starts.
+3. **Post-recording check** - after a recording finishes, the complete file is analysed for spectral flatness. Recordings that are predominantly noise (e.g. a brief signal followed by hold-timer padding) are discarded.
+
+### Demodulation
+
+Each modulation type has a dedicated, stateful demodulator that maintains phase and filter continuity across processing blocks, eliminating the pops and glitches that occur at block boundaries in stateless designs.
+
+**NFM** - the most common mode for PMR, amateur, and public safety - runs through a complete processing chain: IF decimation, polar discriminator, Hampel impulse blanker (suppresses USB sample-drop glitches from devices like the AirSpy R2), 300µs de-emphasis, DC blocking, voice bandpass filter (300-3400 Hz), and CTCSS/DCS subaudible tone detection. The voice bandpass removes subaudible signalling tones from the recording while the Goertzel-based detector identifies them and embeds the detected tone code in the file's metadata.
+
+**AM** - used for civil and military airband - uses envelope detection with a smooth vectorised AGC (independent attack and release timings) that adapts to varying signal strength without pumping artifacts.
+
+**SSB** (USB and LSB) - used for HF amateur and maritime - implements the Weaver method for clean sideband separation with real-valued Butterworth filters on I and Q, followed by voice AGC.
+
+### Recording quality
+
+Recordings are not just raw demodulated audio dumped to disk. Each file passes through several stages designed to produce clean, ready-to-use output:
+
+- **Spectral subtraction** noise reduction, guided by the band-wide noise floor estimate, reduces background hiss while preserving voice clarity. A 2D gain-mask smoothing kernel minimises musical noise artifacts.
+- **Carrier transient trimming** (optional) detects and removes the sharp clicks that AM transmitters produce at key-on and key-off, using shape-based detection that distinguishes carrier transients from voice plosives.
+- **Half-cosine fades** at recording boundaries prevent clicks from sudden onset or cutoff.
+- **Soft limiting** via a tanh waveshaper with a 0.98 ceiling (-0.18 dBTP) prevents inter-sample true-peak overshoot, ensuring recordings never exceed 0 dBTP.
+- **Broadcast WAV metadata** (BEXT, EBU Tech 3285) embeds sample-accurate timestamps, frequency, modulation, and detected CTCSS/DCS codes directly in each file. Audio editors like Audacity, Reaper, and iZotope RX can place recordings on a timeline at their real capture time.
+- **FLAC output** (optional) provides lossless compression with ~39% storage saving, with metadata stored as Vorbis comments.
+
+### Efficiency
+
+The scanner is designed for 24/7 operation on low-power hardware. All DSP runs through NumPy and SciPy's compiled backends. FFT segments use zero-copy memory stride tricks. Expensive per-channel analysis (segment PSD, demodulation) is performed lazily - only when a state transition is detected. Per-channel audio buffering uses a pre-allocated ring buffer with modulo wrap-around, avoiding per-flush memory allocation. IIR filter states use float64 precision to prevent rounding drift in long-running sessions.
+
+---
+
 ## Supported Devices
 
-To use this software, a compatible Software Defined Radio (SDR) USB device is required. Each supported device below has a self-contained card with its specifications, recommended starting configuration, common gotchas, and a copy-pasteable example band so you can get a working scan in a few minutes. Different SDR devices have very different capabilities — settings that work well on one device may need adjusting on another, and the cards capture the differences that actually matter in practice.
+To use this software, a compatible Software Defined Radio (SDR) USB device is required. Each supported device below has a self-contained card with its specifications, recommended starting configuration, common gotchas, and a copy-pasteable example band so you can get a working scan in a few minutes. Different SDR devices have very different capabilities - settings that work well on one device may need adjusting on another, and the cards capture the differences that actually matter in practice.
 
 ### Quick Reference
 
@@ -48,11 +93,11 @@ To use this software, a compatible Software Defined Radio (SDR) USB device is re
 | AirSpy R2               | 24 MHz - 1.8 GHz               | 10 MHz   | 12-bit | High-quality VHF/UHF      |
 | AirSpy HF+ Discovery    | 0.5 kHz - 31 MHz, 60 - 260 MHz | 768 kHz  | 18-bit | HF / VHF precision        |
 
-Any other device with a SoapySDR driver module installed can be used too — see [Other SoapySDR Devices](#other-soapysdr-devices) below.
+Any other device with a SoapySDR driver module installed can be used too - see [Other SoapySDR Devices](#other-soapysdr-devices) below.
 
 ### RTL-SDR Blog V4 / V3
 
-A high-quality, low-cost general-purpose receiver. The natural starting point for new users — well-supported, easy to drive, and good enough for most VHF/UHF scanning. Limited dynamic range from its 8-bit ADC.
+A high-quality, low-cost general-purpose receiver. The natural starting point for new users - well-supported, easy to drive, and good enough for most VHF/UHF scanning. Limited dynamic range from its 8-bit ADC.
 
 | Spec               | Value                                                  |
 | :----------------- | :----------------------------------------------------- |
@@ -62,21 +107,21 @@ A high-quality, low-cost general-purpose receiver. The natural starting point fo
 | ADC resolution     | 8-bit                                                  |
 | Gain architecture  | Single stage                                           |
 | AGC                | Hardware AGC                                           |
-| Driver             | `pyrtlsdr` (>=0.3.0,<0.4.0) — Python binding           |
+| Driver             | `pyrtlsdr` (>=0.3.0,<0.4.0) - Python binding           |
 | `--device-type`    | `rtl`, `rtlsdr`, `rtl-sdr`                             |
 | Best for           | General VHF/UHF scanning, low cost, easy setup         |
 
-**Setup** — see [INSTALL.md §1](INSTALL.md) for the librtlsdr fork build and the DVB-T driver blacklist step.
+**Setup** - see [INSTALL.md](INSTALL.md#1-rtl-sdr-blog-v4-driver) for the librtlsdr fork build and the DVB-T driver blacklist step.
 
 **Recommended starting config**
 - `snr_threshold_db: 4.5`
 - `sdr_gain_db: auto` (engages hardware AGC, which is well-tuned for most bands)
-- `activation_variance_db: 3.0` (default — leave alone unless you see false triggers)
+- `activation_variance_db: 3.0` (default - leave alone unless you see false triggers)
 - `sample_rate: 2.048e6` for most bands
 
 **Gotchas**
 - The Blog V4 needs the [rtl-sdr-blog fork](https://github.com/rtlsdrblog/rtl-sdr-blog) of librtlsdr. The standard distro `librtlsdr` is missing the `rtlsdr_set_dithering` symbol that newer pyrtlsdr versions need; this is why the project pins `pyrtlsdr<0.4.0`.
-- The default Linux DVB-T driver claims the device on insertion as a TV tuner — it must be blacklisted (INSTALL.md covers this).
+- The default Linux DVB-T driver claims the device on insertion as a TV tuner - it must be blacklisted (INSTALL.md covers this).
 - The 8-bit ADC limits dynamic range. A strong adjacent station can desensitise weak ones in the same capture.
 - Manual gain values are typically 20-40 dB if you don't want AGC.
 
@@ -97,7 +142,7 @@ air_civil_bristol:
 
 ### HackRF One
 
-A wideband transceiver covering 1 MHz to 6 GHz with up to 20 MHz of instantaneous bandwidth — by far the widest single-tune capture of any device here. The trade-off is no hardware AGC and the same 8-bit ADC dynamic-range limit as the RTL-SDR.
+A wideband transceiver covering 1 MHz to 6 GHz with up to 20 MHz of instantaneous bandwidth - by far the widest single-tune capture of any device here. The trade-off is no hardware AGC and the same 8-bit ADC dynamic-range limit as the RTL-SDR.
 
 | Spec               | Value                                                              |
 | :----------------- | :----------------------------------------------------------------- |
@@ -106,12 +151,12 @@ A wideband transceiver covering 1 MHz to 6 GHz with up to 20 MHz of instantaneou
 | Sample rates       | Continuous, 2 - 20 MHz                                             |
 | ADC resolution     | 8-bit                                                              |
 | Gain architecture  | LNA (0-40 dB, 8 dB steps) + VGA (0-62 dB, 2 dB steps)              |
-| AGC                | None — `auto` falls back to a sensible default and warns           |
+| AGC                | None - `auto` falls back to a sensible default and warns           |
 | Driver             | `python_hackrf` (with fallback to `hackrf` / `pyhackrf`)           |
 | `--device-type`    | `hackrf`, `hackrf-one`, `hackrfone`                                |
 | Best for           | Wideband monitoring, multi-band capture in a single tune           |
 
-**Setup** — see [INSTALL.md §2](INSTALL.md) for the USB buffer tuning (`usbcore.usbfs_memory_mb=1000`) and [INSTALL.md §3](INSTALL.md) for the `libhackrf-dev` system package.
+**Setup** - see [INSTALL.md](INSTALL.md#2-system-optimisation-usb-buffering) for the USB buffer tuning (`usbcore.usbfs_memory_mb=1000`) and [INSTALL.md](INSTALL.md#3-os-dependencies) for the `libhackrf-dev` system package.
 
 **Recommended starting config**
 - `snr_threshold_db: 6`
@@ -120,10 +165,10 @@ A wideband transceiver covering 1 MHz to 6 GHz with up to 20 MHz of instantaneou
 - `sample_rate: 16e6` for the widest single capture; lower (2-4 MHz) for narrow bands
 
 **Gotchas**
-- **No hardware AGC.** Setting `sdr_gain_db: auto` does not enable AGC — there isn't one. The wrapper logs a warning and sets sensible defaults (LNA=32, VGA=30) so the device still works.
+- **No hardware AGC.** Setting `sdr_gain_db: auto` does not enable AGC - there isn't one. The wrapper logs a warning and sets sensible defaults (LNA=32, VGA=30) so the device still works.
 - A numeric `sdr_gain_db` is silently clamped and stepped to the LNA's 8 dB grid and the VGA's 2 dB grid. Asking for 35 dB gets you 32. Check the startup log if the actual values matter.
-- High sample rates (~16-20 MHz) require raising the kernel USB buffer limit; otherwise samples will be dropped. See [INSTALL.md §2](INSTALL.md).
-- The 8-bit ADC has the same dynamic-range caveats as the RTL-SDR — wide captures including a strong station can desensitise weak ones.
+- High sample rates (~16-20 MHz) require raising the kernel USB buffer limit; otherwise samples will be dropped. See [INSTALL.md](INSTALL.md#2-system-optimisation-usb-buffering).
+- The 8-bit ADC has the same dynamic-range caveats as the RTL-SDR - wide captures including a strong station can desensitise weak ones.
 - Multiple Python bindings exist (`python_hackrf`, `hackrf`, `pyhackrf`) with different APIs; the wrapper auto-detects whichever is installed.
 
 **Working example band**
@@ -151,26 +196,26 @@ A high-dynamic-range VHF/UHF receiver with a 12-bit ADC (≈16-bit effective fro
 | Sample rates       | Discrete: 2.5 MHz or 10 MHz                                                   |
 | ADC resolution     | 12-bit (≈16-bit effective from oversampling)                                  |
 | Gain architecture  | LNA + Mixer + VGA (per-element control via `sdr_gain_elements`)               |
-| AGC                | None — `sdr_gain_db: auto` is mapped to a fixed manual default (see below)    |
+| AGC                | None - `sdr_gain_db: auto` is mapped to a fixed manual default (see below)    |
 | Driver             | SoapySDR + `soapysdr-module-airspy` (system package)                          |
 | `--device-type`    | `airspy`, `airspy-r2`, `airspyr2`                                             |
 | Best for           | High-quality VHF/UHF, wide single-band capture, weak-signal work              |
 
-**Setup** — see [INSTALL.md §4](INSTALL.md) for the SoapySDR core and the AirSpy module. The Python venv **must** be created with `--system-site-packages` so it can access the system-installed SoapySDR Python bindings.
+**Setup** - see [INSTALL.md](INSTALL.md#4-soapysdr--airspy-support) for the SoapySDR core and the AirSpy module. The Python venv **must** be created with `--system-site-packages` so it can access the system-installed SoapySDR Python bindings.
 
 **Recommended starting config**
 - `snr_threshold_db: 6` (the higher sensitivity makes the RTL default 4.5 dB too noisy)
-- `sdr_gain_db: auto` is fine to start with — see the AGC gotcha below for what it actually does
+- `sdr_gain_db: auto` is fine to start with - see the AGC gotcha below for what it actually does
 - `activation_variance_db: 3.0`
 - `sample_rate: 2.5e6` for narrow bands, `10e6` for wide ones
 
 **Gotchas**
 - **Sample rates are discrete.** Asking for anything other than 2.5 MHz or 10 MHz silently snaps to the nearest supported rate and logs a warning. Always check the startup log to confirm the rate the device actually accepted.
-- **`sdr_gain_db: auto` is not real AGC.** SoapyAirspy reports `hasGainMode == True` but the underlying R2 hardware does not provide a working closed-loop AGC. Substation detects this and falls back to a fixed manual gain of `LNA=10, MIX=5, VGA=12` (27 dB total) — the same LNA-first values you would set by hand. This works well for typical PMR / VHF / UHF reception. If you want different values, set `sdr_gain_db` (numeric) or `sdr_gain_elements` (per-stage dict) explicitly in your band config.
+- **`sdr_gain_db: auto` is not real AGC.** SoapyAirspy reports `hasGainMode == True` but the underlying R2 hardware does not provide a working closed-loop AGC. Substation detects this and falls back to a fixed manual gain of `LNA=10, MIX=5, VGA=12` (27 dB total) - the same LNA-first values you would set by hand. This works well for typical PMR / VHF / UHF reception. If you want different values, set `sdr_gain_db` (numeric) or `sdr_gain_elements` (per-stage dict) explicitly in your band config.
 - For per-element tuning, **maximise LNA first**, set Mixer moderate, fine-tune with VGA (this is the LNA-first principle described in [Gain Tuning](#gain-tuning) below). The element names and ranges are logged at INFO level when the device starts up.
 - Requires a venv built with `--system-site-packages`.
 
-**Working example band** — PMR446 with per-element gain control:
+**Working example band** - PMR446 with per-element gain control:
 
 ```yaml
 pmr_airspy:
@@ -197,7 +242,7 @@ substation --band pmr_airspy --device-type airspy --device-index 0
 
 ### AirSpy HF+ Discovery
 
-A precision HF and lower-VHF receiver. Exceptional sensitivity and dynamic range in its bands; not a wideband scanner — its maximum bandwidth is 768 kHz. Best in class for HF listening, weak-signal work, and narrow-band airband / amateur scanning.
+A precision HF and lower-VHF receiver. Exceptional sensitivity and dynamic range in its bands; not a wideband scanner - its maximum bandwidth is 768 kHz. Best in class for HF listening, weak-signal work, and narrow-band airband / amateur scanning.
 
 | Spec               | Value                                                                              |
 | :----------------- | :--------------------------------------------------------------------------------- |
@@ -211,23 +256,23 @@ A precision HF and lower-VHF receiver. Exceptional sensitivity and dynamic range
 | `--device-type`    | `airspyhf`, `airspy-hf`, `airspyhf+`                                               |
 | Best for           | HF and lower-VHF precision work, weak-signal listening, narrow-band scanning       |
 
-**Setup** — see [INSTALL.md §4](INSTALL.md). On Raspberry Pi OS the `soapysdr-module-airspyhf` package may not be available in the distro repos; the install guide covers building it from source. As with the AirSpy R2, the venv **must** be created with `--system-site-packages`.
+**Setup** - see [INSTALL.md](INSTALL.md#4-soapysdr--airspy-support). On Raspberry Pi OS the `soapysdr-module-airspyhf` package may not be available in the distro repos; the install guide covers building it from source. As with the AirSpy R2, the venv **must** be created with `--system-site-packages`.
 
 **Recommended starting config**
-- `snr_threshold_db: 6` (essential — the device is sensitive enough that the RTL default 4.5 dB triggers on near-noise)
+- `snr_threshold_db: 6` (essential - the device is sensitive enough that the RTL default 4.5 dB triggers on near-noise)
 - `sdr_gain_db: auto` (engages the well-tuned hardware multi-loop AGC)
-- `activation_variance_db: 3.0` (**also essential** — without it the high sensitivity surfaces stationary noise as false channel activations; see [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings))
+- `activation_variance_db: 3.0` (**also essential** - without it the high sensitivity surfaces stationary noise as false channel activations; see [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings))
 - `sample_rate: 0.912e6` for the widest capture
 
 **Gotchas**
-- **Sample rates are discrete.** The exact list depends on firmware — check the startup log for the rates your device actually reports. Asking for an unsupported rate silently snaps to the nearest and logs a warning.
+- **Sample rates are discrete.** The exact list depends on firmware - check the startup log for the rates your device actually reports. Asking for an unsupported rate silently snaps to the nearest and logs a warning.
 - **The RF gain element is an *attenuator*, not an amplifier.** Negative dB. `RF: 0` means *no* attenuation (maximum signal); `RF: -24` means 24 dB of attenuation. This is the opposite of every other device here.
-- The LNA is binary (0 or 6 dB) — there is no smooth manual control of the front end.
+- The LNA is binary (0 or 6 dB) - there is no smooth manual control of the front end.
 - **CF32 samples are delivered well below the [-1, 1] range** that the demodulator expects. The wrapper auto-calibrates this on startup by measuring the median RMS of warmup blocks and applying a normalisation scale; you'll see an `IQ calibration: ...` line in the startup log. No user action required.
 - Front-end overload looks like duplicate signals on adjacent channels. If you see them, increase RF attenuation (`RF: -24` or lower).
 - Requires a venv built with `--system-site-packages`.
 
-**Working example band** — Bristol airband:
+**Working example band** - Bristol airband:
 
 ```yaml
 air_civil_bristol_airspyhf:
@@ -259,30 +304,9 @@ Any device with a SoapySDR driver module installed can be used via `--device-typ
 SoapySDRUtil --find
 ```
 
-The same `sdr_gain_db`, `sdr_gain_elements`, and `sdr_device_settings` config keys apply, and the wrapper's startup log will show the available gain elements, sample rates, antennas, and device-specific settings reported by the driver — use these to guide your configuration in the same way as the AirSpy cards above.
+The same `sdr_gain_db`, `sdr_gain_elements`, and `sdr_device_settings` config keys apply, and the wrapper's startup log will show the available gain elements, sample rates, antennas, and device-specific settings reported by the driver - use these to guide your configuration in the same way as the AirSpy cards above.
 
 **Reference:** [SoapySDR project](https://github.com/pothosware/SoapySDR)
-
-## Key Features & Optimizations
-- **Robust Signal Detection**: Welch PSD estimation with EMA-smoothed noise floor provides stable, low-variance channel detection. A hardware warmup period absorbs SDR startup transients before detection begins. Automatic DC offset avoidance shifts the center frequency to prevent the LO spike from masking any channel.
-- **Three-Layer Noise Rejection**: Eliminates the "empty hiss" recordings that plague high-sensitivity receivers. Layer 1: RF power variance rejects stationary noise at the PSD level. Layer 2: spectral flatness of speculatively demodulated audio rejects noise that passes the variance check. Layer 3: post-recording flatness check discards files where signal content was brief relative to hold-timer padding. All three are modulation-agnostic. See [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings) below.
-- **Parallel Multi-Channel Recording**: Simultaneously detects and records all active channels in a band — unlike traditional handheld scanners which only monitor one channel at a time.
-- **Professional NFM Pipeline**: Polar discriminator → Hampel impulse blanker (suppresses USB sample-drop glitches) → 300µs de-emphasis → DC blocking → voice bandpass (300-3400 Hz) → CTCSS/DCS subaudible tone detection. The full chain runs with cross-block state continuity for seamless, glitch-free audio across arbitrarily long recordings.
-- **CTCSS & DCS Detection**: Automatically identifies the 51 standard CTCSS tones (67-254 Hz) via Goertzel algorithm, and DCS codes via Golay(23,12) decoding. Detected codes are logged at channel activation and embedded in the recording's metadata for post-processing and talkgroup identification.
-- **High-Fidelity Demodulation**: Stateful AM, NFM, USB, and LSB demodulators with continuous phase tracking and DC-blocking, eliminating pops and discontinuities between audio blocks. SSB uses the Weaver method for clean sideband separation.
-- **Precise Transition Trimming**: After coarse PSD-based detection, demodulated audio is scanned at sample level to find exact signal boundaries. Padding is added around the boundary and faded with a half-cosine S-curve, preserving signal content (including attack transients) while eliminating clicks. Optional carrier transient trimming removes the key-on/off clicks produced by AM transmitters.
-- **Hardware Efficiency**:
-    - **Vectorized DSP**: All signal processing is delegated to NumPy and SciPy, achieving throughput comparable to native C implementations while remaining accessible and extensible.
-    - **Zero-Copy Architecture**: Uses memory stride tricks for overlapping FFT segments, avoiding expensive data copying.
-    - **Lazy Evaluation**: Computationally expensive segment analysis is performed only when transitions are detected, drastically reducing idle CPU load.
-    - **Pre-Allocated Ring Buffer**: Per-channel audio buffering uses a fixed NumPy array with modulo wrap-around, eliminating per-flush concatenation and GC pressure.
-- **Production-Quality Audio Processing**:
-    - **Vectorized AGC**: Smooth automatic gain control for AM and SSB with independent attack and release timings.
-    - **Noise-Floor-Guided Spectral Subtraction**: The band-wide PSD noise floor is passed to the spectral subtraction stage for more reliable noise frame classification, reducing musical noise artifacts compared to percentile-only heuristics.
-    - **Soft Limiter**: Tanh waveshaper with 0.98 ceiling prevents inter-sample true-peak overshoot above 0 dBTP.
-    - **Float64 Filter State**: IIR filter states (channel extraction, decimation) use double precision to prevent rounding drift in long-running sessions.
-- **Parallel Scanning**: Supports multiple SDR devices simultaneously with asynchronous I/O.
-- **Archive Ready**: Automatic recording to WAV (with Broadcast WAV/BEXT metadata for timeline placement in audio editors) or FLAC (lossless compressed, ~39% smaller). Embedded metadata includes frequency, timestamps, modulation, and detected CTCSS/DCS codes.
 
 ## Quick Start
 1) Install dependencies (see [INSTALL.md](INSTALL.md) for SDR drivers and platform-specific setup).
@@ -304,7 +328,7 @@ Audio files are written to:
 
 ## Utility scripts
 
-Substation ships with a small `scripts/` directory of one-shot user utilities. These are not part of the main scanner — they're tools that read the config or work with frequencies, and are run with `python -m scripts.<name>`.
+Substation ships with a small `scripts/` directory of one-shot user utilities. These are not part of the main scanner - they're tools that read the config or work with frequencies, and are run with `python -m scripts.<name>`.
 
 ### Antenna length calculator
 
@@ -372,7 +396,7 @@ See [examples/scan_demo.py](examples/scan_demo.py) for a more detailed implement
 
 ### OSC event forwarding
 
-Substation can forward channel state changes and saved recordings as OSC (Open Sound Control) messages, so downstream tools — MIDI sequencers, sample players, VJ software, lighting rigs — can react to radio activity in real time. Install the optional dependency:
+Substation can forward channel state changes and saved recordings as OSC (Open Sound Control) messages, so downstream tools - MIDI sequencers, sample players, VJ software, lighting rigs - can react to radio activity in real time. Install the optional dependency:
 
 ```bash
 pip install -e ".[osc]"
@@ -422,14 +446,14 @@ substation --band pmr \
   --start-time "2025-03-16 16:13:20"
 ```
 
-The IQ file must be a WAV with 2 channels (I and Q) at any sample rate. The center frequency is the frequency the SDR was tuned to when recording. The file's sample rate is read from the WAV header. The band span must fit within the file's bandwidth — the center frequency doesn't need to match the band midpoint exactly.
+The IQ file must be a WAV with 2 channels (I and Q) at any sample rate. The center frequency is the frequency the SDR was tuned to when recording. The file's sample rate is read from the WAV header. The band span must fit within the file's bandwidth - the center frequency doesn't need to match the band midpoint exactly.
 
 ## Configuration
 
 Substation uses a two-layer configuration system:
 
 - **`config.yaml.default`** ships with the package and contains all known bands and sensible defaults. This file is always loaded first.
-- **`config.yaml`** (optional) is your user override file. Create it in the working directory and specify only the settings you want to change — everything else inherits from the defaults.
+- **`config.yaml`** (optional) is your user override file. Create it in the working directory and specify only the settings you want to change - everything else inherits from the defaults.
 
 For example, to override just the audio output directory:
 ```yaml
@@ -486,7 +510,7 @@ recording:
 - `discard_empty_enabled`: automatically discard noise-only recordings using spectral flatness analysis (default: true). Applies at two points: before activation (rejects noise triggers without starting a recording) and after recording close (catches recordings that became mostly noise). See [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings).
 - `min_recording_seconds`: discard recordings shorter than this duration (default: 0.5). Catches brief transients (radar pulses, ignition noise) that pass the spectral checks but produce useless sub-second files. Set to `0` to disable.
 - `audio_silence_timeout_ms`: stop recording when demodulated audio has been silent for this duration (default: 3000). Catches AM carriers that persist after voice stops, where RF SNR stays above threshold but there is no useful content. Set to `0` to disable and rely on RF-only detection.
-- `trim_carrier_transients`: remove the sharp key-on/key-off click transients that AM transmitters produce (default: false). Only trims transients bordered by silence — voice transients (consonants) are never affected. Recommended for AM airband listening.
+- `trim_carrier_transients`: remove the sharp key-on/key-off click transients that AM transmitters produce (default: false). Only trims transients bordered by silence - voice transients (consonants) are never affected. Recommended for AM airband listening.
 
 Band Defaults
 ```
@@ -515,7 +539,7 @@ Per-band keys:
 - `sample_rate`: Hz. Must cover the band plus margins; higher rates increase CPU.
 - `channel_width`: optional; defaults to `channel_spacing * 0.84`.
 - `type`: used to inherit defaults from `band_defaults`.
-- `modulation`: `AM`, `NFM`, `USB`, or `LSB`. USB/LSB use a Weaver-method SSB demodulator and are the right choice for HF voice — amateur convention is LSB below 10 MHz, USB above 10 MHz; HFGCS, VOLMET, and marine HF are all USB.
+- `modulation`: `AM`, `NFM`, `USB`, or `LSB`. USB/LSB use a Weaver-method SSB demodulator and are the right choice for HF voice - amateur convention is LSB below 10 MHz, USB above 10 MHz; HFGCS, VOLMET, and marine HF are all USB.
 - `recording_enabled`: enable recording for this band. Optional, defaults to `false` (can also be set in `band_defaults`).
 - `snr_threshold_db`: detection threshold (dB above noise floor).
 - `hysteresis_db`: margin between ON and OFF thresholds (default 3.0). Channel turns OFF when SNR drops below `snr_threshold_db - hysteresis_db`. Lower values (e.g. 1.5) suit weak-signal scanning.
@@ -524,7 +548,7 @@ Per-band keys:
 - `sdr_gain_elements`: optional dict mapping gain element names to dB values for per-stage control (e.g., `{LNA: 10, MIX: 5, VGA: 12}`). Available elements are logged at startup. Takes priority over `sdr_gain_db`.
 - `sdr_device_settings`: optional dict of device-specific settings passed via SoapySDR (e.g., `{biastee: "true"}`). Available settings are logged at DEBUG level on startup.
 - `exclude_channel_indices`: 1-based channel numbers to skip (no analysis, no recording). These match the channel numbers shown in log output and filenames.
-- `device_overrides`: per-device tuning — see [Device-Specific Overrides](#device-specific-overrides) below.
+- `device_overrides`: per-device tuning - see [Device-Specific Overrides](#device-specific-overrides) below.
 
 ### Device-Specific Overrides
 
@@ -564,10 +588,10 @@ With this configuration:
 
 **Supported override fields:** `sample_rate`, `sdr_gain_db`, `sdr_gain_elements`, `sdr_device_settings`, `snr_threshold_db`, `activation_variance_db`.
 
-The default config ships with some device overrides already set — for example, `air_civil_bristol` has an `airspyhf` override with tuning appropriate for the AirSpy HF+ Discovery. You can add your own overrides in `config.yaml` using the standard inheritance mechanism:
+The default config ships with some device overrides already set - for example, `air_civil_bristol` has an `airspyhf` override with tuning appropriate for the AirSpy HF+ Discovery. You can add your own overrides in `config.yaml` using the standard inheritance mechanism:
 
 ```yaml
-# config.yaml — user overrides only
+# config.yaml - user overrides only
 bands:
   pmr:
     device_overrides:
@@ -624,11 +648,11 @@ If you open a recording in a professional audio tool or a BWF viewer, you will s
 
 ## Gain Tuning
 
-Each device card above carries the gain settings that work as a starting point for that specific device. This section explains the *why* behind those settings — the principles that apply to any SDR with multiple gain stages, so you can reason about adjustments when the defaults aren't quite right.
+Each device card above carries the gain settings that work as a starting point for that specific device. This section explains the *why* behind those settings - the principles that apply to any SDR with multiple gain stages, so you can reason about adjustments when the defaults aren't quite right.
 
 SDR gain controls how much the received signal is amplified before digitisation. Too little gain and weak signals are lost in the noise floor; too much and strong signals overdrive the ADC, causing distortion and spurious detections.
 
-**Simple approach (recommended starting point)**: set `sdr_gain_db` to a numeric value or `auto`. When set to a single number, the driver distributes the gain across the device's internal stages automatically — this produces good results for most setups without any per-element knowledge. Start here and only move to per-element tuning if you want to squeeze out the last bit of performance.
+**Simple approach (recommended starting point)**: set `sdr_gain_db` to a numeric value or `auto`. When set to a single number, the driver distributes the gain across the device's internal stages automatically - this produces good results for most setups without any per-element knowledge. Start here and only move to per-element tuning if you want to squeeze out the last bit of performance.
 
 **Per-element tuning (advanced)**: devices with multiple gain stages (like the AirSpy R2) allow individual control via `sdr_gain_elements`. This can improve reception quality because the *order* of gain stages matters for noise performance:
 
@@ -644,50 +668,50 @@ The general principle is: **maximise gain early in the chain** (LNA) and **minim
 
 The `snr_threshold_db` setting controls how far above the noise floor a signal must be before it's detected. Each device card above lists a sensible starting value for that hardware. To adjust:
 
-- If you're getting recordings that are mostly noise, raise the threshold by 1-2 dB at a time, *and* enable [`activation_variance_db`](#rejecting-emptynoise-recordings) if you haven't already — variance rejection catches the noise triggers that the SNR check can't distinguish.
+- If you're getting recordings that are mostly noise, raise the threshold by 1-2 dB at a time, *and* enable [`activation_variance_db`](#rejecting-emptynoise-recordings) if you haven't already - variance rejection catches the noise triggers that the SNR check can't distinguish.
 - If you're missing transmissions you can hear on a handheld scanner, lower the threshold.
 - The OFF threshold is `snr_threshold_db - hysteresis_db` (default 3 dB below ON) to prevent rapid toggling. Set `hysteresis_db` lower for weak-signal scanning.
 
 **General tips**:
 - Available gain element names and their valid ranges are logged at INFO level on startup. Check these before setting values.
-- Optimal values depend on your antenna, band, and local RF environment — a rooftop antenna in a city needs different gain from a small whip in a rural area.
+- Optimal values depend on your antenna, band, and local RF environment - a rooftop antenna in a city needs different gain from a small whip in a rural area.
 - Airband (AM, 118-137 MHz) typically needs less gain than PMR (NFM, 446 MHz) because aircraft transmitters are more powerful (5-25W) than PMR handhelds (0.5W).
 
 ## Rejecting empty/noise recordings
 
 ### The problem
 
-SNR thresholds detect any signal that's louder than the noise floor — but they can't distinguish a *real* signal from a *noisy* one. With sensitive receivers like the AirSpy HF+ Discovery, you'll often see channels register 6-10 dB SNR yet contain only hissing static when played back. Raising `snr_threshold_db` doesn't help: the SNR is genuinely high, because the noise in that channel really is louder than the band-wide noise floor.
+SNR thresholds detect any signal that's louder than the noise floor - but they can't distinguish a *real* signal from a *noisy* one. With sensitive receivers like the AirSpy HF+ Discovery, you'll often see channels register 6-10 dB SNR yet contain only hissing static when played back. Raising `snr_threshold_db` doesn't help: the SNR is genuinely high, because the noise in that channel really is louder than the band-wide noise floor.
 
-What's needed is a way to tell **noise** apart from **real signals** — and a single check isn't enough, because noise comes in different flavours that fool different detectors.
+What's needed is a way to tell **noise** apart from **real signals** - and a single check isn't enough, because noise comes in different flavours that fool different detectors.
 
 ### The solution: three-layer noise rejection
 
-The scanner applies three independent gates, each catching a different kind of false positive. All three are modulation-agnostic — they work for voice, data, tones, beacons, and any future modulation type.
+The scanner applies three independent gates, each catching a different kind of false positive. All three are modulation-agnostic - they work for voice, data, tones, beacons, and any future modulation type.
 
-#### Gate 1 — RF power variance (`activation_variance_db`)
+#### Gate 1 - RF power variance (`activation_variance_db`)
 
 Real signals fluctuate over time: syllables, frame structure, burst patterns all produce 5-15 dB power swings within a 200 ms detection window. Stationary noise produces near-constant power (standard deviation ~1-2 dB).
 
-At the moment a channel turns ON, the scanner measures the standard deviation of the channel's power across the 8 Welch PSD segments. If the standard deviation falls below `activation_variance_db` (default 3.0 dB), the activation is suppressed — no ON event fires, no recording starts.
+At the moment a channel turns ON, the scanner measures the standard deviation of the channel's power across the 8 Welch PSD segments. If the standard deviation falls below `activation_variance_db` (default 3.0 dB), the activation is suppressed - no ON event fires, no recording starts.
 
 This is the cheapest check (~0.1 ms, reuses already-computed PSD data). It catches broadband stationary noise that happens to sit a few dB above the noise floor.
 
-#### Gate 2 — Audio spectral flatness (`discard_empty_enabled`)
+#### Gate 2 - Audio spectral flatness (`discard_empty_enabled`)
 
-Some noise passes Gate 1 — for example, narrowband interference with enough temporal variance to look "active" in the RF domain, but no actual signal content when demodulated. Gate 2 catches this by speculatively demodulating the first IQ block and computing the **spectral flatness** (Wiener entropy) of the resulting audio.
+Some noise passes Gate 1 - for example, narrowband interference with enough temporal variance to look "active" in the RF domain, but no actual signal content when demodulated. Gate 2 catches this by speculatively demodulating the first IQ block and computing the **spectral flatness** (Wiener entropy) of the resulting audio.
 
-Noise has a flat power spectrum (flatness 0.3-0.5). Any real signal — voice, data, tones — has a peaked spectrum (flatness < 0.04). The threshold of 0.15 sits in the large gap between the two groups, providing robust separation without per-modulation tuning.
+Noise has a flat power spectrum (flatness 0.3-0.5). Any real signal - voice, data, tones - has a peaked spectrum (flatness < 0.04). The threshold of 0.15 sits in the large gap between the two groups, providing robust separation without per-modulation tuning.
 
-If the flatness exceeds 0.15, the activation is suppressed — same as Gate 1. The speculative demodulation result is discarded; the main demodulation path runs fresh with proper trim boundaries if the check passes.
+If the flatness exceeds 0.15, the activation is suppressed - same as Gate 1. The speculative demodulation result is discarded; the main demodulation path runs fresh with proper trim boundaries if the check passes.
 
 This check is more expensive (~10-20 ms, requires demodulation + FFT) so it only runs after Gate 1 passes. Controlled by `discard_empty_enabled` (default: true).
 
-#### Gate 3 — Post-recording spectral flatness (`discard_empty_enabled`)
+#### Gate 3 - Post-recording spectral flatness (`discard_empty_enabled`)
 
 Gates 1 and 2 both operate at turn-ON time. Gate 3 operates at turn-OFF time, on the finished recording.
 
-A signal can legitimately pass Gates 1 and 2 (the first block has real content) but produce a mostly-empty recording — for example, a brief 200 ms transmission followed by several seconds of hold-timer noise. The overall recording's spectral flatness will be high even though the first block was clean.
+A signal can legitimately pass Gates 1 and 2 (the first block has real content) but produce a mostly-empty recording - for example, a brief 200 ms transmission followed by several seconds of hold-timer noise. The overall recording's spectral flatness will be high even though the first block was clean.
 
 After the WAV file is closed, the scanner reads it back and computes spectral flatness on the full audio. If the flatness exceeds 0.15, the file is deleted before any recording-finished callbacks fire.
 
@@ -739,13 +763,13 @@ bands:
 | Hysteresis (`hysteresis_db`, default 3.0) | Unchanged. Once a recording starts, it continues until SNR drops below `snr_threshold_db - hysteresis_db`. |
 | Hold time (`recording_hold_time_ms`) | Unchanged. Brief drops in SNR during active recording are tolerated. Gate 3b may discard if the hold timer extends the recording far beyond the actual signal. |
 
-All three gates suppress silently — no ON callback fires, no recording file is kept. Downstream consumers (OSC bridge, user scripts) only see activations and recordings that passed all applicable gates.
+All three gates suppress silently - no ON callback fires, no recording file is kept. Downstream consumers (OSC bridge, user scripts) only see activations and recordings that passed all applicable gates.
 
 ### Tuning guidance
 
 | Symptom | Action |
 | :--- | :--- |
-| Defaults work | Leave them — `activation_variance_db: 3.0` and `discard_empty_enabled: true` handle most cases |
+| Defaults work | Leave them - `activation_variance_db: 3.0` and `discard_empty_enabled: true` handle most cases |
 | Real signals (voice, data) being rejected by Gate 1 | Lower `activation_variance_db`: try `2.0` or `2.5` |
 | Noise still triggers recordings (passes Gate 1) | Gate 2 should catch it automatically; if not, raise `activation_variance_db` to `4.0` or `5.0` |
 | Want to disable Gate 1 | Set `activation_variance_db: 0` |
@@ -772,16 +796,16 @@ Discarded empty recording: 2026-04-11_15-09-28_air_civil_bristol_airspyhf_59_6.0
 
 All three gates are modulation-agnostic:
 
-- Gate 1 operates on raw channel power from FFT bins — works for any signal type
-- Gates 2 and 3 operate on spectral flatness of demodulated audio — any non-noise signal (voice, data, tones, beacons) produces a peaked spectrum that passes the check
+- Gate 1 operates on raw channel power from FFT bins - works for any signal type
+- Gates 2 and 3 operate on spectral flatness of demodulated audio - any non-noise signal (voice, data, tones, beacons) produces a peaked spectrum that passes the check
 - No demodulator-specific tuning is needed
 
 ## Dynamics Curve (Experimental)
 
 An optional per-sample noise-reduction stage that runs during recording, after spectral subtraction and before the soft limiter. It applies a smooth nonlinear transfer curve in dBFS:
 
-- **Below the threshold** (the "cut" region), quiet samples are progressively reduced — a downward expander that suppresses background noise. The curve is a smoothstep S-curve with zero slope at both endpoints, so there is no audible kink at the threshold or the floor. Samples below the floor are hard-zeroed.
-- **Above the threshold** (the "boost" region), loud samples are gently boosted — an upward expander that gives voice presence. The curve is a sin² hump with zero boost at both endpoints (so 0 dBFS samples pass through unchanged).
+- **Below the threshold** (the "cut" region), quiet samples are progressively reduced - a downward expander that suppresses background noise. The curve is a smoothstep S-curve with zero slope at both endpoints, so there is no audible kink at the threshold or the floor. Samples below the floor are hard-zeroed.
+- **Above the threshold** (the "boost" region), loud samples are gently boosted - an upward expander that gives voice presence. The curve is a sin² hump with zero boost at both endpoints (so 0 dBFS samples pass through unchanged).
 
 Together the two regions widen the overall dynamic range. It works for any modulation type, has no envelope follower, and adds negligible CPU.
 
@@ -799,7 +823,7 @@ recording:
         boost_curve: 0.5        # 0..1; same skew control for the boost hump
 ```
 
-The function operates per-sample (no envelope follower, no attack/release), so very aggressive parameter values can introduce mild harmonic distortion on signals near the threshold. The defaults are conservative enough that this is benign on voice; if you hear an "edge" on the loudest syllables, lower `cut_db` and `boost_db`. If a recording sounds completely silent, you have probably set `floor_dbfs` too high — try `-60` or lower.
+The function operates per-sample (no envelope follower, no attack/release), so very aggressive parameter values can introduce mild harmonic distortion on signals near the threshold. The defaults are conservative enough that this is benign on voice; if you hear an "edge" on the loudest syllables, lower `cut_db` and `boost_db`. If a recording sounds completely silent, you have probably set `floor_dbfs` too high - try `-60` or lower.
 
 The function clamps its output to the ±1.0 range as belt-and-braces speaker protection. If your configuration would otherwise drive the boost region above 0 dBFS, a warning is logged at startup so you can dial it back before listening.
 

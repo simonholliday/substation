@@ -237,7 +237,8 @@ class HackRfDevice (substation.devices.base.BaseDevice):
 		but it works for most applications.
 		"""
 		if value == 'auto' or value is None:
-			# HackRF has no hardware AGC.  Use sensible defaults and warn.
+			# HackRF has no hardware AGC.  Convert 'auto'/None to a fixed
+			# numeric gain — the getter will return float, never 'auto'.
 			logger.warning(
 				"HackRF does not support automatic gain. "
 				"Defaulting to LNA=32 dB, VGA=30 dB. "

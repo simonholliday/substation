@@ -1265,7 +1265,7 @@ class RadioScanner:
 		filename_suffix = f"{snr_db:.1f}" + "dB_" + self.device_type + "_" + str(self.device_index)
 
 		# Find the initial noise floor to provide a stable reference for noise reduction
-		# This is better than let the recorder guess from short audio chunks.
+		# This is better than letting the recorder guess from short audio chunks.
 		initial_noise_floor = getattr(self, '_last_noise_floor_db', None)
 
 		channel_recorder = substation.recording.ChannelRecorder(
