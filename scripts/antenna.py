@@ -202,6 +202,51 @@ def format_antenna_report (
 	lines.append(f"  5/8-wave vertical        {_format_length(lengths['five_eighths_vertical'])}")
 	lines.append(f"  Full-wave loop           {_format_length(lengths['full_wave_loop'])}  (perimeter)")
 
+	# Practical guidance based on frequency range and antenna size.
+	# For receive-only SDR use, resonance and SWR are far less critical
+	# than for transmit — a "wrong" antenna still picks up signal.
+	lines.append("")
+
+	qw = lengths['quarter_wave_vertical']
+	if qw > 2.0:
+		# HF / CB — full-size antennas are impractically large for most users
+		lines.append("Practical notes (receive only):")
+		lines.append("")
+		lines.append(f"  A full-size antenna at this frequency is large ({_format_length(qw)} quarter-wave).")
+		lines.append("  For receive-only SDR scanning, you do NOT need a resonant antenna.")
+		lines.append("  Good alternatives:")
+		lines.append("")
+		lines.append("    - Random wire: any length of wire, ideally outdoors and as")
+		lines.append(f"      long as you can manage (>{_format_length(qw)} helps).  Feed via a 9:1 balun.")
+		lines.append("    - Active magnetic loop: compact (< 1m diameter), good for")
+		lines.append("      indoor use, rejects local noise.  Needs a preamp (built in")
+		lines.append("      on commercial units like the MLA-30+).")
+		lines.append("    - Shortened loaded vertical: mobile CB/HF whips (1-2m) with")
+		lines.append("      loading coils.  Less efficient but very practical.")
+		lines.append("    - Telescopic whip: basic but works for strong local signals.")
+	elif qw > 0.3:
+		# VHF — moderate size, full-size antennas are practical
+		lines.append("Practical notes (receive only):")
+		lines.append("")
+		lines.append(f"  Full-size antennas at this frequency are practical ({_format_length(qw)} quarter-wave).")
+		lines.append("  Good options:")
+		lines.append("")
+		lines.append("    - Quarter-wave ground plane: simple to build from wire or a")
+		lines.append("      telescopic whip cut to length, with 3-4 radials.")
+		lines.append("    - Discone: wideband, covers multiple VHF/UHF bands at once.")
+		lines.append("    - Collinear vertical: higher gain if you want to focus on")
+		lines.append("      one band (e.g. airband, marine, 2m amateur).")
+	else:
+		# UHF — antennas are small, anything works
+		lines.append("Practical notes (receive only):")
+		lines.append("")
+		lines.append(f"  Antennas at this frequency are small ({_format_length(qw)} quarter-wave).")
+		lines.append("  Almost any antenna works well:")
+		lines.append("")
+		lines.append("    - The whip antenna included with most SDR dongles is adequate.")
+		lines.append("    - A quarter-wave ground plane takes minutes to build from wire.")
+		lines.append("    - Discone: covers the full UHF range and beyond.")
+
 	# Band-spread warning footer (only for band reports with span > threshold)
 	if band_name is not None and freq_start_hz is not None and freq_end_hz is not None:
 		span_fraction = (freq_end_hz - freq_start_hz) / frequency_hz
