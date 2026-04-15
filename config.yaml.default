@@ -152,6 +152,14 @@ band_defaults:
         snr_threshold_db: 6
         sdr_gain_db: auto
 
+    # Citizens Band 27 MHz — NFM voice, 10 kHz spacing.
+    CB:
+        channel_spacing: 10.0e+3
+        modulation: NFM
+        recording_enabled: true
+        snr_threshold_db: 4.5
+        sdr_gain_db: 36
+
     # Digital data bands (ACARS, VDL Mode 2, etc.).  Detection only —
     # there is no demodulator for these protocols, so recording is
     # disabled by default.
@@ -604,3 +612,22 @@ bands:
         freq_start: 14.150e+6
         freq_end: 14.350e+6
         sample_rate: 0.228e6
+
+    # UK CB 27/81 — primary UK allocation, 40 channels FM only.
+    # Channel 9 (27.68125 MHz) is the emergency channel.
+    # Channel 14 (27.73125 MHz) is the calling channel.
+    cb_uk:
+        type: CB
+        freq_start: 27.60125e+6
+        freq_end: 27.99125e+6
+        sample_rate: 0.768e6
+
+    # CEPT/EU CB — extended European allocation, 40 channels.
+    # AM, FM, and SSB permitted.  Modulation set to NFM as the
+    # most common voice mode; AM activity also occurs.
+    cb_cept:
+        type: CB
+        freq_start: 26.965e+6
+        freq_end: 27.405e+6
+        sample_rate: 0.768e6
+

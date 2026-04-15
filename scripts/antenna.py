@@ -39,6 +39,7 @@ decide whether to cut for the centre, an edge, or use a tuner.
 """
 
 import argparse
+import pathlib
 import sys
 
 import substation.config
@@ -262,7 +263,8 @@ def main () -> int:
 
 	parser.add_argument(
 		'--config',
-		default='config.yaml',
+		type=pathlib.Path,
+		default=pathlib.Path('config.yaml'),
 		help='Path to config.yaml (default: ./config.yaml)',
 	)
 
