@@ -358,14 +358,19 @@ class RadioScanner:
 		"""Subscribe to a scanner event.
 
 		Events:
-			channel_state    — (band, index, freq, is_active, snr_db)
-			recording_started — (band, index, freq)
-			recording_saved  — (band, index, freq, file_path)
-			noise_floor      — (noise_floor_db, warmup_complete)
-			channel_snr      — (channels: list[dict])
+			channel_state       — (band, index, freq, is_active, snr_db)
+			recording_started   — (band, index, freq)
+			recording_saved     — (band, index, freq, file_path)
+			recording_discarded — (band, index, freq)
+			noise_floor         — (noise_floor_db, warmup_complete)
+			channel_snr         — (channels: list[dict])
 
-		Handlers may be sync or async. They are called on the event
-		loop thread via emit().
+		Handlers may be sync or async. How they dispatch depends on the
+		emit() call — events fired with `loop=` are marshalled onto the
+		event loop via call_soon_threadsafe / run_coroutine_threadsafe;
+		events fired without `loop=` are called directly on the caller's
+		thread (which may be an executor thread for the per-slice events
+		`noise_floor` and `channel_snr`).  See emit() for details.
 		"""
 
 		self._event_handlers.setdefault(event, []).append(handler)
@@ -385,10 +390,22 @@ class RadioScanner:
 
 		"""Fire all handlers registered for an event.
 
-		Sync handlers are called via loop.call_soon_threadsafe.
-		Async handlers are scheduled via run_coroutine_threadsafe.
-		If no loop is provided, handlers are called directly (for
-		use from the event loop thread itself).
+		Dispatch rules, by handler type and whether `loop` is supplied:
+
+		- async handler + loop given → scheduled via
+		  asyncio.run_coroutine_threadsafe(handler(**kwargs), loop).
+		- sync handler + loop given → dispatched via
+		  loop.call_soon_threadsafe(functools.partial(handler, **kwargs)).
+		- sync handler, no loop → called directly on the caller's
+		  thread (used when emit() is itself called from the event loop,
+		  e.g. inside an async coroutine).
+		- async handler, no loop → silently skipped.  There is no running
+		  event loop to schedule the coroutine on, and emit() is sync so it
+		  cannot await.  Callers that want to support async consumers for
+		  an event must supply `loop=`.
+
+		Handler exceptions are caught and logged at DEBUG — a misbehaving
+		handler never stops other handlers firing.
 		"""
 
 		handlers = self._event_handlers.get(event)
@@ -1021,43 +1038,41 @@ class RadioScanner:
 		return len(samples)
 
 	@staticmethod
-	def _refine_trim_on_audio (audio: numpy.typing.NDArray[numpy.float32], turning_on: bool) -> tuple[numpy.typing.NDArray[numpy.float32], int]:
+	def _refine_trim_on_audio (audio: numpy.typing.NDArray[numpy.float32], turning_on: bool) -> numpy.typing.NDArray[numpy.float32]:
 
 		"""
 		Refine a coarse PSD-based trim to sample-level precision on demodulated audio.
 
 		Scans the audio for the first (turn-ON) or last (turn-OFF) sample that
-		exceeds an amplitude threshold, then adds padding samples around that
-		point.  The fade is later applied only to the padding region so that
-		actual signal content (including attack transients) is never attenuated.
-
-		Returns:
-			(trimmed_audio, pad_samples) — the refined audio slice and the number
-			of padding samples at the fade end (start for turn-ON, end for turn-OFF).
+		exceeds an amplitude threshold, then keeps a small amount of padding
+		on the fade side so the downstream fade in the recording pipeline
+		doesn't attenuate signal content.  Fades themselves are applied later
+		in _write_samples_to_wav.
 		"""
 
 		threshold = substation.constants.TRIM_AMPLITUDE_THRESHOLD
 		n = len(audio)
 		if n == 0:
-			return audio, 0
+			return audio
 
 		above = numpy.where(numpy.abs(audio) >= threshold)[0]
 
 		if len(above) == 0:
-			# No sample exceeds threshold — return as-is with no padding info
-			return audio, 0
+			return audio
 
 		if turning_on:
 			first = int(above[0])
+
 			pad = min(first, substation.constants.TRIM_PRE_SAMPLES)
 			start = first - pad
-			return audio[start:], pad
-		else:
-			last = int(above[-1])
-			remaining = n - 1 - last
-			pad = min(remaining, substation.constants.TRIM_POST_SAMPLES)
-			end = last + 1 + pad
-			return audio[:end], pad
+			return audio[start:]
+
+		last = int(above[-1])
+
+		remaining = n - 1 - last
+		pad = min(remaining, substation.constants.TRIM_POST_SAMPLES)
+		end = last + 1 + pad
+		return audio[:end]
 
 	def _prepare_channel_transition (self, samples: numpy.typing.NDArray[numpy.complex64], channel_freq: float, channel_index: int, snr_db: float, is_active: bool, current_state: bool, segment_psd: list[numpy.typing.NDArray[numpy.float64]] | None, segment_noise_floors: list[float] | None, loop: asyncio.AbstractEventLoop) -> tuple[int, int, int, bool, bool]:
 
@@ -1699,9 +1714,9 @@ class RadioScanner:
 						# later in the recording pipeline (_write_samples_to_wav)
 						# so they survive carrier transient trimming.
 						if turning_on:
-							audio, _pad = self._refine_trim_on_audio(audio, turning_on=True)
+							audio = self._refine_trim_on_audio(audio, turning_on=True)
 						elif turning_off:
-							audio, _pad = self._refine_trim_on_audio(audio, turning_on=False)
+							audio = self._refine_trim_on_audio(audio, turning_on=False)
 
 						if turning_on and new_state:
 							# Log CTCSS/DCS detection from the first demod block

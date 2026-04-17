@@ -1,5 +1,7 @@
 """Tests for the RadioScanner event emitter (on/off/emit)."""
 
+import asyncio
+
 
 class TestEventEmitter:
 
@@ -66,3 +68,61 @@ class TestEventEmitter:
 			band='pmr', index=3, freq=446e6, file_path='/tmp/test.wav')
 		assert len(received) == 1
 		assert received[0] == ('pmr', 3, '/tmp/test.wav')
+
+	def test_sync_handler_dispatched_via_loop (self, scanner_instance):
+		"""When emit() is given a loop, sync handlers are marshalled to it via call_soon_threadsafe."""
+
+		received = []
+		scanner_instance.on('channel_state', lambda **kw: received.append(kw))
+
+		async def runner ():
+			loop = asyncio.get_running_loop()
+			scanner_instance.emit('channel_state', loop=loop,
+				band='pmr', index=1, freq=446e6, is_active=True, snr_db=10.0)
+			# call_soon_threadsafe schedules for the next loop tick — yield so it runs.
+			await asyncio.sleep(0)
+
+		asyncio.run(runner())
+
+		assert len(received) == 1
+		assert received[0]['band'] == 'pmr'
+
+	def test_async_handler_dispatched_via_loop (self, scanner_instance):
+		"""When emit() is given a loop and the handler is async, the coroutine is scheduled."""
+
+		received = []
+
+		async def handler (**kw):
+			received.append(kw)
+
+		scanner_instance.on('noise_floor', handler)
+
+		async def runner ():
+			loop = asyncio.get_running_loop()
+			scanner_instance.emit('noise_floor', loop=loop, noise_floor_db=-80.0, warmup_complete=True)
+			# run_coroutine_threadsafe needs one yield to let the scheduled task run.
+			await asyncio.sleep(0.01)
+
+		asyncio.run(runner())
+
+		assert len(received) == 1
+		assert received[0]['noise_floor_db'] == -80.0
+
+	def test_async_handler_without_loop_is_silent_noop (self, scanner_instance):
+		"""Async handlers registered on events emitted without `loop=` are silently skipped.
+
+		This is the documented behaviour — emit() is sync, so with no loop it
+		cannot schedule the coroutine.  Test lives here so any future change
+		(e.g. raising instead of skipping) is a visible breakage.
+		"""
+
+		received = []
+
+		async def handler (**kw):
+			received.append(kw)
+
+		scanner_instance.on('channel_snr', handler)
+		# No loop= → handler silently not invoked.
+		scanner_instance.emit('channel_snr', channels=[])
+
+		assert received == []

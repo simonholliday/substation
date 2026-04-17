@@ -205,6 +205,30 @@ source venv/bin/activate
 pip install -e .
 ```
 
+### Optional extras
+
+Two extras add integrations that aren't required for basic scanning:
+
+```bash
+# OSC event forwarding (for MIDI sequencer, sampler, etc.)
+pip install -e ".[osc]"
+
+# Supervisor dashboard (real-time WebSocket state broadcast)
+pip install -e ".[supervisor]"
+```
+
+The `[supervisor]` extra pulls the `supervisor` package from GitHub. While the repository is private, the pip install uses SSH and requires a GitHub SSH key on the machine — see [GitHub's SSH setup guide](https://docs.github.com/en/authentication/connecting-to-github-with-ssh). When the repo is made public the URL will switch to HTTPS and no key is needed.
+
+After installing, enable the dashboard in `config.yaml`:
+
+```yaml
+supervisor:
+    enabled: true
+    port: 9004   # default
+```
+
+The scanner logs `Supervisor dashboard server started on ws://0.0.0.0:9004` when it starts. If the extra is not installed, a warning is logged and the scan proceeds without the dashboard.
+
 ---
 
 ## 6. Verification

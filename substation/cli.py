@@ -95,7 +95,6 @@ async def run_scanner (config_path: pathlib.Path | None, band_name: str, device_
 			sys.exit(1)
 
 		scan = substation.scanner.RadioScanner(
-			config_path=config_path,
 			config=config_data,
 			band_name=band_name,
 			device_type=device_type,

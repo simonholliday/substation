@@ -577,8 +577,11 @@ class SupervisorConfig (pydantic.BaseModel):
 	Supervisor dashboard integration.
 
 	When enabled, broadcasts scanner events over WebSocket for real-time
-	display in the Supervisor dashboard.  Requires the supervisor package
-	and websockets library: pip install -e ".[supervisor]"
+	display in the Supervisor dashboard.  Requires the supervisor package:
+	`pip install -e ".[supervisor]"`.  The extra pulls the supervisor
+	package from the simonholliday/supervisor GitHub repo — while that
+	repo is private the install uses SSH and requires a GitHub SSH key
+	on the machine; see INSTALL.md for details.
 	"""
 
 	model_config = pydantic.ConfigDict(extra='forbid')

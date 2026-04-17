@@ -11,20 +11,29 @@ Supported hardware:
 
 Features:
 - Automatic channel detection using SNR (Signal-to-Noise Ratio) with
-  hysteresis and three-layer noise rejection (RF variance, audio spectral
-  flatness, post-recording flatness check) to eliminate false recordings
+  per-band configurable hysteresis and three-layer noise rejection
+  (RF variance, audio spectral flatness, post-recording flatness
+  check) to eliminate false recordings
 - Audio silence timeout to stop recording when an AM carrier persists
   after voice ends
 - Demodulation of NFM, AM, and SSB (USB/LSB via Weaver's method) with
   streaming polyphase FIR resampler for artifact-free block processing
-- Automatic per-channel recording with spectral-subtraction noise
-  reduction and optional experimental dynamics-curve expander
+- CTCSS (51 standard tones) and DCS (23-bit Golay-coded) subaudible tone
+  detection on NFM, embedded in recording metadata
+- Automatic per-channel recording in WAV (Broadcast WAV with embedded
+  frequency / timestamp / modulation / tone metadata) or FLAC (lossless,
+  Vorbis comments) with spectral-subtraction noise reduction and optional
+  experimental dynamics-curve expander
 - PPM frequency calibration against a known reference signal
-- Broadcast WAV (BWF) output with embedded frequency / timestamp /
-  modulation metadata
+- Unified event emitter (on / off / emit) — six events covering channel
+  state, recording lifecycle, noise floor, and per-slice SNR snapshots;
+  used by the OSC bridge and the Supervisor dashboard integration
 - Optional OSC event forwarding to downstream tools (MIDI sequencer,
   sampler, VJ software, ...) via substation.osc_sender — install with
   pip install -e ".[osc]"
+- Optional real-time Supervisor dashboard — broadcasts scanner state
+  over WebSocket for a web UI — install with
+  pip install -e ".[supervisor]"
 
 Typical usage:
     substation --band pmr
