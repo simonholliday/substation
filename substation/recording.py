@@ -479,8 +479,13 @@ class ChannelRecorder:
 
 		# Open audio file for writing using soundfile library.
 		# PCM_16 = 16-bit signed integer audio, used for both WAV and FLAC.
-		# FLAC compression level 8 gives best compression (~39% saving)
-		# with no measurable speed penalty on short radio recordings.
+		# For FLAC we set compression_level=0.75 (= FLAC level 6).  This
+		# was chosen after benchmarking every level on real PMR NFM
+		# recordings on a Raspberry Pi: level 6 gives essentially the
+		# same compression as level 8 (within 0.1%) but encodes in ~40%
+		# less CPU time.  Passing None here would fall back to
+		# libsndfile's default (~level 5), which encodes slightly faster
+		# still but gives noticeably worse compression.
 
 		sf_format = 'FLAC' if audio_format == 'flac' else 'WAV'
 		self.audio_file = soundfile.SoundFile(
@@ -490,6 +495,7 @@ class ChannelRecorder:
 			channels=1,  # Mono (single channel)
 			subtype='PCM_16',  # 16-bit PCM encoding
 			format=sf_format,
+			compression_level=0.75 if sf_format == 'FLAC' else None,
 		)
 
 		# Prepare recording metadata (used for BEXT in WAV, Vorbis comments in FLAC).

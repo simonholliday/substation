@@ -72,7 +72,7 @@ Recordings are not just raw demodulated audio dumped to disk. Each file passes t
 - **Half-cosine fades** at recording boundaries prevent clicks from sudden onset or cutoff.
 - **Soft limiting** via a tanh waveshaper with a 0.98 ceiling (-0.18 dBTP) prevents inter-sample true-peak overshoot, ensuring recordings never exceed 0 dBTP.
 - **Broadcast WAV metadata** (BEXT, EBU Tech 3285) embeds sample-accurate timestamps, frequency, modulation, and detected CTCSS/DCS codes directly in each file. Audio editors like Audacity, Reaper, and iZotope RX can place recordings on a timeline at their real capture time.
-- **FLAC output** (optional) provides lossless compression with ~39% storage saving, with metadata stored as Vorbis comments.
+- **FLAC output** (optional) provides lossless compression — roughly 55–60% smaller than WAV for typical narrowband voice recordings — with metadata stored as Vorbis comments. Compression level 6 was chosen after benchmarking every level on real PMR recordings on a Raspberry Pi: it produces essentially the same output size as level 8 but encodes in ~40% less CPU time.
 
 ### Efficiency
 
@@ -502,7 +502,7 @@ recording:
 - `buffer_size_seconds`: max in-memory audio per channel before drops.
 - `disk_flush_interval_seconds`: how often to flush to disk.
 - `audio_sample_rate`: output rate (Hz).
-- `audio_format`: `wav` (default) or `flac`. WAV embeds Broadcast WAV (BEXT) metadata with sample-accurate timestamps for timeline placement in audio editors. FLAC is lossless compressed (~39% smaller) with text-based metadata tags (no timeline positioning support).
+- `audio_format`: `wav` (default) or `flac`. WAV embeds Broadcast WAV (BEXT) metadata with sample-accurate timestamps for timeline placement in audio editors. FLAC is lossless compressed (roughly 55–60% smaller than WAV for typical narrowband voice) with text-based metadata tags (no timeline positioning support).
 - `fade_in_ms`/`fade_out_ms`: half-cosine fades applied to the padding region at channel start/stop (signal content is never attenuated).
 - `soft_limit_drive`: post-processing soft limiter drive. Typical range 1.5-3.0 (higher = stronger limiting).
 - `noise_reduction_enabled`: toggle spectral subtraction noise reduction (default: true).
@@ -632,7 +632,7 @@ Each recording embeds metadata directly in the audio file.
 
 **WAV format** (default): Industry-standard Broadcast WAV (BWF/BEXT, EBU Tech 3285) with sample-accurate timestamps. Audio editors like Audacity, Reaper, and iZotope RX can place recordings on a timeline at their real capture time. These are standard `.wav` files that play in any audio player.
 
-**FLAC format**: Vorbis comment tags store the same fields (band, frequency, date, time, modulation) as text. FLAC files are ~39% smaller than WAV but cannot carry the sample-accurate `time_reference` used for timeline placement in audio editors.
+**FLAC format**: Vorbis comment tags store the same fields (band, frequency, date, time, modulation) as text. FLAC files are roughly 55–60% smaller than WAV for typical narrowband voice recordings but cannot carry the sample-accurate `time_reference` used for timeline placement in audio editors.
 
 ### Metadata Example
 If you open a recording in a professional audio tool or a BWF viewer, you will see fields like these:

@@ -251,8 +251,9 @@ class RecordingConfig(pydantic.BaseModel):
 			WAV (default) is uncompressed and embeds broadcast metadata (BEXT)
 			with sample-accurate timestamps, allowing audio editors to place
 			recordings on a timeline at their real capture time.
-			FLAC is lossless compressed (~39% smaller) but cannot carry BEXT
-			timeline metadata — date and time are stored as text tags only.
+			FLAC is lossless compressed (roughly 55-60% smaller than WAV for
+			typical narrowband voice) but cannot carry BEXT timeline
+			metadata — date and time are stored as text tags only.
 
 		audio_output_dir: Directory where audio files are saved.
 			Files are organized as: output_dir/YYYY-MM-DD/band_name/filename.{wav,flac}
