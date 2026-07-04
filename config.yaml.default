@@ -44,9 +44,10 @@ recording:
     #   wav  — uncompressed, with Broadcast WAV (BEXT) metadata embedding
     #          sample-accurate timestamps for timeline placement in audio
     #          editors (Audacity, Reaper, iZotope RX).
-    #   flac — lossless compressed (~39% smaller), with Vorbis comment
-    #          metadata (date, time, frequency as text tags).  Does not
-    #          support BEXT timeline metadata.
+    #   flac — lossless compressed (typically 20-45% smaller, depending on
+    #          band and signal content), with Vorbis comment metadata
+    #          (date, time, frequency as text tags).  Does not support
+    #          BEXT timeline metadata.
     audio_format: wav
 
     # Output directory for recordings
@@ -177,7 +178,8 @@ bands:
     # Per-element gain control (SoapySDR devices):
     # Some devices expose multiple gain stages that can be tuned individually
     # for optimal noise figure. Available element names and their ranges are
-    # logged at INFO level on startup. Example for AirSpy R2:
+    # logged at DEBUG level on startup (run with debug logging when
+    # configuring a new device). Example for AirSpy R2:
     #   sdr_gain_elements:
     #     LNA: 10
     #     MIX: 5

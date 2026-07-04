@@ -622,7 +622,17 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 					logger.error(f"SoapySDR readStream error: {sr.ret}")
 					break
 
-			# Signal the processing loop that streaming has ended
+			# Tell the scanner the stream has ended so its processing loop
+			# can shut down instead of waiting for samples forever — the
+			# callback(None, None) sentinel is the BaseDevice end-of-stream
+			# contract.  Deliberate cancellation is excluded: there the
+			# scanner initiated the teardown and is already past the queue.
+			if not self._stop_event.is_set():
+				try:
+					callback(None, None)
+				except Exception:
+					logger.debug("End-of-stream callback failed", exc_info=True)
+
 			logger.debug("SoapySDR reader thread exiting")
 
 		self._reader_thread = threading.Thread(target=_reader_loop, daemon=True, name='soapy-reader')

@@ -54,10 +54,10 @@ async def run_scanner_with_osc () -> None:
 	Initialise the scanner, attach an OSC event sender, and start scanning.
 	"""
 
-	config_path = './config.yaml'
-
 	try:
-		config_data = substation.config.load_config(config_path)
+		# The bundled config.yaml.default is always loaded; a config.yaml in
+		# the current directory (if present) is merged on top.
+		config_data = substation.config.load_config()
 
 		scanner = substation.scanner.RadioScanner(
 			config=config_data,
@@ -88,8 +88,8 @@ async def run_scanner_with_osc () -> None:
 	except KeyboardInterrupt:
 		print("\nStopping scanner...")
 
-	except FileNotFoundError:
-		print(f"Error: Configuration file not found at {config_path}")
+	except FileNotFoundError as exc:
+		print(f"Error: configuration file not found: {exc}")
 		sys.exit(1)
 
 	except Exception as exc:

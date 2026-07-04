@@ -41,7 +41,7 @@ Typical usage:
     substation --band pmr
     substation --list-bands
     substation --band air_civil_1 --device-type hackrf
-    substation --band air_civil_bristol_airspyhf --device-type airspyhf
+    substation --band air_civil_bristol --device-type airspyhf
 """
 
 __version__ = "0.1.0"

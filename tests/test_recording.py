@@ -155,6 +155,36 @@ class TestRingBuffer:
 		# The ring data should be the last `cap` values from the big array
 		numpy.testing.assert_array_equal(rec._ring[:cap], big[-cap:])
 
+	def test_huge_chunk_after_unflushed_data_flushes_tail (self, tmp_path):
+		"""An oversized append on top of unflushed data must flush exactly the chunk's tail.
+
+		Regression: this branch used to write the tail at ring position 0
+		without advancing the flushed pointer, breaking the frame↔position
+		invariant — the next flush then reported more unflushed frames than
+		the ring holds and wrote duplicated samples.
+		"""
+		rec = _make_recorder(tmp_path, max_seconds=0.01, sample_rate=16000)
+		cap = rec.max_buffer_samples
+
+		# Leave some unflushed data in the ring, then swamp it.
+		rec.append_audio(numpy.full(100, 7.0, dtype=numpy.float32))
+		big = numpy.arange(cap * 2, dtype=numpy.float32)
+		rec.append_audio(big)
+
+		# Only the last `cap` frames of the big chunk may remain unflushed.
+		assert rec._ring_frames_written - rec._ring_frames_flushed == cap
+
+		# Capture what actually gets written to disk.
+		written: list[numpy.ndarray] = []
+		rec._write_samples_to_wav = lambda samples: written.append(samples)
+
+		loop = asyncio.new_event_loop()
+		loop.run_until_complete(rec._flush_buffer_to_disk())
+		loop.close()
+
+		assert len(written) == 1
+		numpy.testing.assert_array_equal(written[0], big[-cap:])
+
 
 # ---------------------------------------------------------------------------
 # WAV output
@@ -187,6 +217,54 @@ class TestWavOutput:
 		data, _ = soundfile.read(rec.filepath)
 		# Soft limiter should keep output within [-1, 1]
 		assert numpy.max(numpy.abs(data)) <= 1.0
+
+
+class TestCloseFlushRace:
+
+	def test_close_waits_for_inflight_write (self, tmp_path):
+		"""close() must not finalise the file while a cancelled flush's write is still running.
+
+		Regression: cancelling the periodic flush task abandons its await
+		but not the executor write itself.  close() previously proceeded to
+		the final flush and file close concurrently with that in-flight
+		write, which could apply the fade-out mid-file, interleave blocks,
+		or write to a closed file.  It now awaits the pending write first.
+		"""
+
+		rec = _make_recorder(tmp_path, max_seconds=1.0)
+		rec.append_audio(numpy.ones(1600, dtype=numpy.float32) * 0.3)
+
+		write_started = threading.Event()
+		release_write = threading.Event()
+		original_write = rec._write_samples_to_wav
+
+		def slow_write (samples):
+			write_started.set()
+			release_write.wait(timeout=5)
+			original_write(samples)
+
+		rec._write_samples_to_wav = slow_write
+
+		async def scenario ():
+			flush = asyncio.ensure_future(rec._flush_buffer_to_disk())
+
+			# Wait for the executor write to actually be running.
+			while not write_started.is_set():
+				await asyncio.sleep(0.005)
+
+			# Cancel the flush coroutine mid-write (exactly what close()
+			# does to the periodic flush task), then close immediately.
+			# The write is released a moment later — close() must wait
+			# for it rather than racing past it.
+			flush.cancel()
+			asyncio.get_running_loop().call_later(0.2, release_write.set)
+
+			await rec.close()
+
+		asyncio.run(scenario())
+
+		data, _ = soundfile.read(rec.filepath)
+		assert len(data) == 1600
 
 
 class TestBextMetadata:

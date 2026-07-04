@@ -66,10 +66,11 @@ async def run_custom_scanner () -> None:
 	"""
 	
 	try:
-		# 1. Load configuration from a YAML file
-		# This contains your hardware settings and band definitions
-		config_path = './config.yaml'
-		config_data = substation.config.load_config(config_path)
+		# 1. Load configuration
+		# The bundled config.yaml.default is always loaded; a config.yaml in
+		# the current directory (if present) is merged on top.  To use a
+		# specific override file instead, pass its path to load_config().
+		config_data = substation.config.load_config()
 
 		# 2. Instantiate the RadioScanner
 		# You can specify the band, device type, and device index here
@@ -94,8 +95,8 @@ async def run_custom_scanner () -> None:
 
 	except KeyboardInterrupt:
 		print("\nStopping scanner...")
-	except FileNotFoundError:
-		print(f"Error: Configuration file not found at {config_path}")
+	except FileNotFoundError as exc:
+		print(f"Error: configuration file not found: {exc}")
 		sys.exit(1)
 	except Exception as e:
 		logger.error(f"Unexpected error: {e}", exc_info=True)

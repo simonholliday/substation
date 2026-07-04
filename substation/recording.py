@@ -4,8 +4,10 @@ Channel recording management with WAV and FLAC output support.
 Handles buffered audio recording to WAV or FLAC files. WAV files include
 industry-standard Broadcast WAV (BWF/BEXT) metadata with sample-accurate
 timestamps for timeline placement in audio editors. FLAC files are lossless
-compressed (~39% smaller) with Vorbis comment metadata (date and frequency
-as text tags, but no timeline positioning support).
+compressed — typically 20-45% smaller than WAV depending on band and signal
+content (measured on real PMR and airband archives) — with Vorbis comment
+metadata (date and frequency as text tags, but no timeline positioning
+support).
 
 The recorder uses a memory buffer to avoid blocking the main processing
 thread, and flushes to disk periodically in the background.
@@ -549,6 +551,11 @@ class ChannelRecorder:
 		# Async flush task (will be set by caller) - can be Task or Future depending on how it's created
 		self.flush_task: typing.Any = None
 
+		# Most recent executor write scheduled by _flush_buffer_to_disk.
+		# close() awaits it so a cancelled flush coroutine can't leave a
+		# write running past the file handle (or racing the final flush).
+		self._pending_write: typing.Any = None
+
 		# Flag to indicate if recorder is closing
 		self._closing = threading.Event()
 		self.noise_mag: numpy.ndarray | None = None
@@ -618,15 +625,29 @@ class ChannelRecorder:
 				return
 
 			if n >= cap:
-				# Incoming chunk is larger than the whole buffer: keep only the tail.
+				# Incoming chunk fills the whole buffer: keep only its tail.
+				# The ring invariant is that logical frame i lives at
+				# ring[i % cap], so the kept tail must be written at the
+				# positions its frame numbers dictate — not at position 0 —
+				# and everything older must be marked flushed (dropped).
 				overflow = self._ring_frames_written - self._ring_frames_flushed + n - cap
 				if overflow > 0:
 					logger.warning(f"Channel {self.channel_index}: Buffer overflow, dropping {overflow} oldest samples")
-				samples = samples[-cap:]
-				n = cap
-				self._ring[:n] = samples
-				self._ring_write_head = n % cap
+
+				kept = samples[-cap:]
+				first_kept = self._ring_frames_written + n - cap
+				start = first_kept % cap
+
+				space_to_end = cap - start
+				if space_to_end >= cap:
+					self._ring[:] = kept
+				else:
+					self._ring[start:] = kept[:space_to_end]
+					self._ring[:cap - space_to_end] = kept[space_to_end:]
+
 				self._ring_frames_written += n
+				self._ring_frames_flushed = first_kept
+				self._ring_write_head = self._ring_frames_written % cap
 				return
 
 			unflushed = self._ring_frames_written - self._ring_frames_flushed
@@ -660,7 +681,14 @@ class ChannelRecorder:
 			while not self._closing.is_set():
 
 				await asyncio.sleep(self.disk_flush_interval)
-				await self._flush_buffer_to_disk()
+
+				try:
+					await self._flush_buffer_to_disk()
+				except (OSError, RuntimeError, ValueError) as exc:
+					# Keep the loop alive: a transient write failure (disk
+					# momentarily full, network share hiccup) shouldn't
+					# silently end flushing for the rest of the recording.
+					logger.error(f"Periodic flush failed for {self.filepath}: {exc}")
 
 		except asyncio.CancelledError:
 			# Let close() handle final flush and file shutdown.
@@ -701,7 +729,14 @@ class ChannelRecorder:
 
 			self._ring_frames_flushed = self._ring_frames_written
 
-		await asyncio.get_running_loop().run_in_executor(None, self._write_samples_to_wav, samples_to_write)
+		write_future = asyncio.get_running_loop().run_in_executor(None, self._write_samples_to_wav, samples_to_write)
+		self._pending_write = write_future
+
+		# Shield the executor write from cancellation: the samples were
+		# already claimed from the ring above, so if cancelling the flush
+		# task could abort a not-yet-started write they would be silently
+		# lost.  close() awaits _pending_write to pick up the stragglers.
+		await asyncio.shield(write_future)
 
 	def _write_samples_to_wav (self, samples: numpy.typing.NDArray[numpy.float32]) -> None:
 
@@ -791,9 +826,11 @@ class ChannelRecorder:
 		comments for FLAC).
 		"""
 
-		self._closing.set()
-
-		# Cancel flush task if running
+		# Stop the periodic flush loop first.  Cancelling it while it is
+		# awaiting an executor write abandons the await but NOT the write
+		# itself — started executor jobs cannot be cancelled — so any
+		# pending write is also awaited below before the recorder flips
+		# into closing mode.
 		# Note: flush_task is a concurrent.futures.Future, not an asyncio.Task
 		if self.flush_task and not self.flush_task.done():
 
@@ -808,8 +845,32 @@ class ChannelRecorder:
 			except Exception:
 				pass
 
-		# Final flush of any remaining samples
-		await self._flush_buffer_to_disk()
+		# Wait for any in-flight executor write so it finishes with
+		# mid-recording semantics (no end trim or fade-out) and cannot
+		# interleave with the final flush or outlive the file handle.
+		pending = self._pending_write
+		if pending is not None and not pending.done():
+
+			try:
+				await pending
+			except asyncio.CancelledError:
+				pass
+			except Exception as exc:
+				logger.warning(f"In-flight flush failed during close for {self.filepath}: {exc}")
+
+		# Only now flip into closing mode: append_audio stops accepting
+		# samples, and the final flush below applies the end-of-recording
+		# treatment (key-off transient trim, fade-out) to the true final
+		# block rather than to whichever block happened to be in flight.
+		self._closing.set()
+
+		# Final flush of any remaining samples.  A failure (e.g. disk full)
+		# must not prevent the file being closed and metadata written for
+		# whatever audio did make it to disk.
+		try:
+			await self._flush_buffer_to_disk()
+		except (OSError, RuntimeError, ValueError) as exc:
+			logger.error(f"Final flush failed for {self.filepath}: {exc}")
 
 		# Close audio file (this writes headers)
 		self.audio_file.close()

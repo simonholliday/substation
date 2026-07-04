@@ -68,13 +68,13 @@ class RadioScanner:
 	to prevent rapid state toggling when signals hover near the threshold.
 	"""
 
-	def __init__ (self, config_path: pathlib.Path | None = None, band_name: str = 'pmr', device_type: str = 'rtlsdr', device_index: int = 0, config: typing.Any | None = None, clock: VirtualClock | None = None, device_kwargs: dict | None = None) -> None:
+	def __init__ (self, config_path: str | pathlib.Path | None = None, band_name: str = 'pmr', device_type: str = 'rtlsdr', device_index: int = 0, config: typing.Any | None = None, clock: VirtualClock | None = None, device_kwargs: dict | None = None) -> None:
 
 		"""
 		Initialize the scanner with configuration
 
 		Args:
-			config_path: Optional path to user config override file
+			config_path: Optional path to user config override file (str or pathlib.Path)
 			band_name: Name of the band to scan (default: 'pmr')
 			device_type: SDR type ('rtlsdr' or 'hackrf')
 			device_index: Device index for the selected SDR type
@@ -585,8 +585,13 @@ class RadioScanner:
 			if numpy.any(noise_mask):
 				self.noise_mask = noise_mask
 
-		# Pre-compute channel extraction filter for recording demodulation.
-		if self.can_demod and self.recording_enabled:
+		# Pre-compute the channel extraction filter whenever a demodulator
+		# exists — not only when recording is enabled.  Detection-only bands
+		# with a modulation set (e.g. the shipped DMR and ACARS bands) still
+		# demodulate speculatively for the Gate 2 spectral-flatness check,
+		# and building this lazily there would crash the scan on the first
+		# real signal.
+		if self.can_demod:
 			cutoff_freq = self.channel_width / 2
 			normalized_cutoff = cutoff_freq / (self.sample_rate / 2)
 			self.channel_filter_sos = scipy.signal.butter(5, normalized_cutoff, btype='low', output='sos')
@@ -901,7 +906,11 @@ class RadioScanner:
 
 		# Close all active recordings first
 		for channel_freq in list(self.channel_recorders.keys()):
-			await self._stop_channel_recording(channel_freq)
+
+			recorder = self.channel_recorders.pop(channel_freq)
+			tone = self.channel_tones.pop(channel_freq, {'ctcss_hz': None, 'dcs_code': None})
+
+			await self._stop_channel_recording(channel_freq, recorder, tone)
 
 		# Close SDR device
 		if self.sdr:
@@ -929,15 +938,55 @@ class RadioScanner:
 			# Drop samples if consumer is behind
 			logger.warning("Sample queue full; dropping samples")
 
-	def _sdr_callback (self, samples: numpy.typing.NDArray[numpy.complex64], _context: typing.Any) -> None:
+	def _signal_stream_end (self) -> None:
+
+		"""
+		Queue the None sentinel that tells the processing loop streaming has
+		ended.  Runs on the event loop thread.
+
+		Unlike ordinary sample blocks, the sentinel must not be dropped when
+		the queue is full — a lost sentinel means scan() waits on the queue
+		forever.  If needed, one pending sample block is discarded to make
+		room (the stream is over, so those samples were never going to have
+		successors anyway).
+		"""
+
+		if self.sample_queue is None:
+			return
+
+		try:
+			self.sample_queue.put_nowait(None)
+		except asyncio.QueueFull:
+
+			try:
+				self.sample_queue.get_nowait()
+			except asyncio.QueueEmpty:
+				pass
+
+			try:
+				self.sample_queue.put_nowait(None)
+			except asyncio.QueueFull:
+				logger.error("Could not queue stream-end sentinel; processing loop may hang")
+
+	def _sdr_callback (self, samples: numpy.typing.NDArray[numpy.complex64] | None, _context: typing.Any) -> None:
 
 		"""
 		Callback for async SDR streaming (runs in device background thread)
 
 		Args:
-			samples: IQ samples from SDR or file
+			samples: IQ samples from SDR or file.  None signals that the
+				device's stream has ended (fatal error or cancellation) —
+				see BaseDevice.read_samples_async for the contract.
 			_context: Context object (unused)
 		"""
+
+		if samples is None:
+			# Device signalled end-of-stream; wake the processing loop so
+			# scan() can shut down instead of waiting on the queue forever.
+			if self.loop:
+				self.loop.call_soon_threadsafe(self._signal_stream_end)
+
+			return
 
 		if self.loop and self.sample_queue:
 			samples = numpy.ascontiguousarray(samples)
@@ -1263,9 +1312,6 @@ class RadioScanner:
 		for any channel that overlaps the DC spike.
 		"""
 
-		if self.channel_bin_starts is None or self.channel_bin_ends is None:
-			return numpy.array([self._get_channel_power(psd_db, ch) for ch in self.channels], dtype=numpy.float64)
-
 		counts = self.channel_bin_ends - self.channel_bin_starts
 		powers = numpy.full(self.num_channels, -numpy.inf, dtype=numpy.float64)
 		valid = counts > 0
@@ -1377,11 +1423,14 @@ class RadioScanner:
 		if initial_noise_floor is not None:
 			channel_recorder.initial_noise_floor_db = initial_noise_floor
 
-		# Start the async flush task using the provided event loop
+		# Start the async flush task using the provided event loop.  The
+		# done-callback surfaces flush failures (e.g. a full disk) that
+		# would otherwise disappear into an unobserved future.
 		channel_recorder.flush_task = asyncio.run_coroutine_threadsafe(
 			channel_recorder._flush_to_disk_periodically(),
 			loop
 		)
+		channel_recorder.flush_task.add_done_callback(self._log_future_error)
 
 		# Store recorder
 		self.channel_recorders[channel_freq] = channel_recorder
@@ -1389,22 +1438,48 @@ class RadioScanner:
 		self.emit('recording_started', loop=loop,
 			band=self.band_name, index=channel_index, freq=channel_freq)
 
-	async def _stop_channel_recording (self, channel_freq: float) -> None:
-		
+	@staticmethod
+	def _log_future_error (future: typing.Any) -> None:
+
 		"""
-		Stop recording a channel and close the file
+		Done-callback for fire-and-forget futures (recording stop, periodic
+		flush).  Logs the exception so failures like a full disk show up in
+		the log instead of vanishing into an unobserved future.
+		"""
+
+		if future.cancelled():
+			return
+
+		exc = future.exception()
+
+		if exc:
+			logger.error(f"Background recording task failed: {exc}", exc_info=exc)
+
+	async def _stop_channel_recording (self, channel_freq: float, channel_recorder: substation.recording.ChannelRecorder, tone: dict) -> None:
+
+		"""
+		Close a finished recorder and either save or discard its file.
+
+		The caller removes the recorder (and its detected tone) from the
+		tracking dicts *before* scheduling this coroutine, synchronously on
+		the processing thread.  That hand-off means a channel that turns
+		back ON while this close is still in flight gets a fresh recorder —
+		nothing here touches shared per-channel state, so there is no race.
 
 		Args:
 			channel_freq: Channel center frequency in Hz
+			channel_recorder: The recorder to close (already unlinked)
+			tone: Detected tone info ({'ctcss_hz': ..., 'dcs_code': ...})
 		"""
-		
-		if channel_freq not in self.channel_recorders:
-			return
 
-		channel_recorder = self.channel_recorders[channel_freq]
-
-		# Close recorder (flushes buffer and closes WAV file)
-		await channel_recorder.close()
+		# Close recorder (flushes buffer and closes the audio file).  A
+		# failed close — most plausibly a full disk — is logged but doesn't
+		# abort the save/discard decision: whatever audio reached disk is
+		# still assessed below.  (soundfile raises RuntimeError subclasses.)
+		try:
+			await channel_recorder.close()
+		except (OSError, RuntimeError) as exc:
+			logger.error(f"Failed to finalise recording {channel_recorder.filepath}: {exc}")
 
 		ch_idx = channel_recorder.channel_index
 		filepath = channel_recorder.filepath
@@ -1423,8 +1498,6 @@ class RadioScanner:
 			logger.info(f"Discarded short recording ({duration:.2f}s < {min_dur:.1f}s): {os.path.basename(filepath)}")
 			self.emit('recording_discarded',
 				band=self.band_name, index=ch_idx, freq=channel_freq)
-			self.channel_tones.pop(channel_freq, None)
-			del self.channel_recorders[channel_freq]
 			return
 
 		# Gate 3b (post-recording spectral flatness): discard if the
@@ -1441,20 +1514,13 @@ class RadioScanner:
 					logger.info(f"Discarded empty recording: {os.path.basename(filepath)}")
 					self.emit('recording_discarded',
 						band=self.band_name, index=ch_idx, freq=channel_freq)
-					self.channel_tones.pop(channel_freq, None)
-					del self.channel_recorders[channel_freq]
 					return
 			except (OSError, ValueError) as exc:
 				logger.debug(f"Empty-check failed for {filepath}: {exc}")
 
-		tone = self.channel_tones.pop(channel_freq, {'ctcss_hz': None, 'dcs_code': None})
-
 		self.emit('recording_saved',
 			band=self.band_name, index=ch_idx, freq=channel_freq, file_path=filepath,
 			ctcss_hz=tone['ctcss_hz'], dcs_code=tone['dcs_code'])
-
-		# Remove from dictionary
-		del self.channel_recorders[channel_freq]
 
 	def _process_samples (self, samples: numpy.typing.NDArray[numpy.complex64], loop: asyncio.AbstractEventLoop) -> None:
 
@@ -1631,6 +1697,14 @@ class RadioScanner:
 				# audio silence timeout, force it OFF.  This catches AM
 				# carriers that persist after voice stops, where RF SNR
 				# stays above threshold but there is no useful content.
+				#
+				# Deliberate behaviour: after the forced OFF, the carrier is
+				# still above the SNR threshold, so the channel may turn ON
+				# again on a later slice (if it also passes the noise gates)
+				# and time out again.  A persistently keyed-but-silent
+				# carrier therefore cycles rather than being latched off —
+				# the intended remedy for a channel that does this all day
+				# is to add it to the band's exclude_channel_indices.
 				if is_active and current_state and self.audio_silence_timeout > 0:
 					if channel_freq in self.channel_recorders:
 						audio_last = self.channel_audio_last_active.get(channel_freq, 0)
@@ -1699,6 +1773,15 @@ class RadioScanner:
 					preview_iq = self._extract_channel_iq(samples, channel_freq)
 					preview_func = substation.dsp.demodulation.DEMODULATORS[self.modulation]
 					preview_audio, _ = preview_func(preview_iq, self.sample_rate, self.audio_sample_rate)
+
+					# The preview dirtied the per-channel extraction filter
+					# state.  Discard it immediately so neither a later
+					# preview nor the real recording demod (which expects a
+					# fresh filter on turn-on) starts from stale state.
+					# _prepare_channel_transition pops again on recording
+					# turn-on, which is harmless.
+					self.channel_filter_zi.pop(channel_freq, None)
+
 					if len(preview_audio) >= 512:
 						preview_psd = scipy.signal.welch(preview_audio, self.audio_sample_rate, nperseg=512)[1] + 1e-12
 						flatness = float(numpy.exp(
@@ -1714,7 +1797,6 @@ class RadioScanner:
 								self.channel_last_active_time.pop(channel_freq, None)
 							else:
 								self.channel_last_active_time[channel_freq] = prior_last_active_time
-							self.channel_filter_zi.pop(channel_freq, None)
 							continue
 
 				trim_start, trim_end, offset, turning_on, turning_off = self._prepare_channel_transition(
@@ -1780,8 +1862,19 @@ class RadioScanner:
 					self.channel_filter_zi.pop(channel_freq, None)
 					self.channel_demod_state.pop(channel_freq, None)
 					self.channel_audio_last_active.pop(channel_freq, None)
-					if channel_freq in self.channel_recorders:
-						asyncio.run_coroutine_threadsafe(self._stop_channel_recording(channel_freq), loop)
+
+					# Hand the recorder (and its detected tone) to the stop
+					# coroutine by removing them from the tracking dicts NOW,
+					# on this thread.  If the channel re-activates on the
+					# very next slice it gets a fresh recorder instead of
+					# racing the close of the old one.
+					recorder = self.channel_recorders.pop(channel_freq, None)
+					if recorder is not None:
+						tone = self.channel_tones.pop(channel_freq, {'ctcss_hz': None, 'dcs_code': None})
+						stop_future = asyncio.run_coroutine_threadsafe(
+							self._stop_channel_recording(channel_freq, recorder, tone), loop
+						)
+						stop_future.add_done_callback(self._log_future_error)
 
 				# Emit channel_state transition event here — after demod
 				# has run (on ON) — so detected CTCSS/DCS can ride along
@@ -1866,26 +1959,38 @@ class RadioScanner:
 						self.samples_per_slice
 					)
 				except Exception as exc:
+					# A blocking backend (RTL-SDR, file playback) died —
+					# e.g. the USB device was unplugged mid-scan.  Queue the
+					# sentinel so the processing loop shuts down cleanly
+					# instead of waiting for samples that will never come.
 					logger.error(f"SDR streaming failed: {exc}", exc_info=exc)
-				finally:
-					# Send sentinel to unblock the async generator.
-					# Only for file playback (blocking read_samples_async)
-					# where normal completion means EOF.  Live SDR devices
-					# return immediately from read_samples_async (they start
-					# a background thread), so the finally would fire before
-					# any samples are processed.
-					if self.clock and self.sample_queue is not None:
-						self.sample_queue.put_nowait(None)
+					self._signal_stream_end()
+				else:
+					# Normal return.  Backends fall into two shapes:
+					# - Blocking (RTL-SDR blocks in the driver's read loop,
+					#   FileDevice blocks until EOF): returning means the
+					#   stream is over, so end the scan for file playback.
+					# - Non-blocking (HackRF, SoapySDR start a background
+					#   thread and return immediately): returning here
+					#   happens at startup, and end-of-stream is signalled
+					#   later by the device calling callback(None, None).
+					# Only file playback can be ended from here; a live
+					# RTL-SDR's clean return happens on cancellation, when
+					# scan() is already shutting down.
+					if self.clock:
+						self._signal_stream_end()
 
 			# Start streaming task in background.
 			streaming_task = asyncio.create_task(start_streaming())
 
 			def _on_streaming_done (task: asyncio.Task) -> None:
+				# Belt-and-braces: start_streaming handles its own errors, so
+				# an exception here means something unexpected escaped.  Make
+				# sure the processing loop still gets woken up.
 				exc = task.exception() if not task.cancelled() else None
 				if exc:
 					logger.error(f"SDR streaming task failed: {exc}", exc_info=exc)
-					if self.sample_queue:
-						self.sample_queue.put_nowait(None)
+					self._signal_stream_end()
 
 			streaming_task.add_done_callback(_on_streaming_done)
 
@@ -1917,6 +2022,11 @@ class RadioScanner:
 				except Exception as e:
 					logger.warning(f"Error cancelling async read: {e}")
 
+			# The shield looks redundant on Ctrl+C but is load-bearing: the
+			# cleanup task is created *after* asyncio.run's cancel-all-tasks
+			# snapshot, and the gather waits on this (main) task, whose
+			# finally awaits the shielded cleanup — so recordings are
+			# flushed and finalised even during interpreter shutdown.
 			try:
 				await asyncio.shield(self._cleanup_sdr())
 			except asyncio.CancelledError:

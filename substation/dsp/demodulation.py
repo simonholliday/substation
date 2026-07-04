@@ -36,11 +36,13 @@ def _pick_if_decimation (sample_rate: float, audio_sample_rate: int, oversample:
 	1. **"Clean chain" divisors first.**  A divisor d such that *both*
 	   `sample_rate % d == 0` AND `(sample_rate // d) % audio_sample_rate == 0`
 	   means the downstream decimate_audio call will also take its integer
-	   (sosfilt-based) path.  That matters because the rational resample
-	   path in filters._decimate_common is not genuinely stateful — it
-	   emits a short tail transient at every block boundary, producing
-	   an audible ~5 Hz click in recordings at the slice rate.  Picking
-	   a clean-chain divisor avoids the rational path entirely.
+	   (sosfilt-based) path.  The rational path is nowadays a genuinely
+	   stateful streaming polyphase resampler (block output is identical
+	   to whole-signal processing — see filters._streaming_rational_resample),
+	   but it runs a per-output-sample Python loop, so the vectorised
+	   integer path is still far cheaper.  Historically this preference
+	   also fixed an audible block-boundary click in the pre-streaming
+	   resample_poly implementation.
 
 	2. **Any integer divisor of sample_rate.**  Falls back when no clean
 	   chain exists (e.g. AirSpy R2 at 2.5 MHz → 16 kHz: 2500000 = 2^5·5^7
@@ -324,8 +326,17 @@ def detect_dcs (audio: numpy.typing.NDArray[numpy.float32], sample_rate: int) ->
 
 	# Sample bits at mid-point of each bit period, synchronised by
 	# zero-crossings.  Track bit timing as a fractional accumulator.
-	# Require the same code to appear at least twice to reject random
-	# noise that accidentally forms valid Golay code words.
+	#
+	# The 23-bit window holds the last 23 received bits with the OLDEST at
+	# bit 0, matching the wire order: 9 code bits (LSB first), the 100₂
+	# filler at bits 9-11, then 11 Golay parity bits at 12-22.
+	#
+	# Because the stream repeats with no frame marker and Golay(23,12) is
+	# a cyclic code, misaligned windows also form valid code words (with
+	# the wrong data).  Alignment is enforced by two filters: the filler
+	# signature check below, and membership of the standard DCS code list
+	# (which contains one representative per rotation class).  Requiring
+	# the same code twice then rejects residual random-noise decodes.
 	bits_per_sample = substation.constants.DCS_BITRATE / sample_rate
 	bit_index = 0.0
 	prev_sample = sub[0]
@@ -345,12 +356,12 @@ def detect_dcs (audio: numpy.typing.NDArray[numpy.float32], sample_rate: int) ->
 		# Mid-point of bit period: sample the bit value.
 		if prev < 0.5 and bit_index >= 0.5:
 			bit = 1 if s > mid[i] else 0
-			dcs_word = (bit << 23) | (dcs_word >> 1)
+			dcs_word = (bit << 22) | (dcs_word >> 1)
 
-			# Check for the 3-bit magic signature (100₂) at bits 9-11.
+			# Check for the 3-bit filler signature (100₂) at bits 9-11.
 			if (dcs_word >> 9) & 0x07 == 4:
 				code = _golay2312_decode(dcs_word)
-				if code is not None:
+				if code is not None and code in substation.constants.DCS_STANDARD_CODES:
 					code_counts[code] = code_counts.get(code, 0) + 1
 					if code_counts[code] >= 2:
 						return code
@@ -365,7 +376,12 @@ def detect_dcs (audio: numpy.typing.NDArray[numpy.float32], sample_rate: int) ->
 
 def _golay2312_decode (word: int) -> int | None:
 
-	"""Decode a 23-bit Golay(23,12) code word (parity bits first).
+	"""Decode a 23-bit Golay(23,12) code word.
+
+	The word layout matches the receive window built by detect_dcs: the
+	12 data bits (9-bit code + 3-bit filler) occupy the LOW bits 0-11 and
+	the 11 parity bits occupy the HIGH bits 12-22 — i.e. data arrives on
+	the wire first, parity last.
 
 	Returns the 9-bit DCS code (lower 9 of the 12 data bits) if the
 	word is valid or correctable (up to 3 bit errors), or None if
@@ -375,8 +391,8 @@ def _golay2312_decode (word: int) -> int | None:
 	polynomial.
 	"""
 
-	# Golay(23,12) generator matrix rows (systematic form, 11 parity bits).
-	# Each row is a 23-bit pattern: [12 data bits | 11 parity bits].
+	# Golay(23,12) parity matrix rows: row i is the 11-bit parity pattern
+	# contributed by data bit i.
 	gen_poly = numpy.array([
 		0b10100010011, 0b01110001110, 0b11100011101,
 		0b11011100011, 0b10000111101, 0b00010110111,
@@ -384,9 +400,9 @@ def _golay2312_decode (word: int) -> int | None:
 		0b01100101001, 0b11001010010, 0b10011110100,
 	], dtype=numpy.uint32)
 
-	# Compute syndrome: multiply received word's parity portion by H^T.
-	data_bits = (word >> 11) & 0xFFF
-	parity_bits = word & 0x7FF
+	# Split the received word into its data and parity fields.
+	data_bits = word & 0xFFF
+	parity_bits = (word >> 12) & 0x7FF
 
 	# Recompute expected parity from data.
 	expected_parity = 0

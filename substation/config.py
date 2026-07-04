@@ -125,12 +125,15 @@ class ScannerConfig(pydantic.BaseModel):
 			slower detection.
 
 		sample_queue_maxsize: Maximum number of sample blocks to buffer.
-			If processing falls behind, oldest samples are dropped when queue fills.
+			If processing falls behind, newly arriving blocks are dropped
+			while the queue is full (buffered audio already queued is kept).
 			Larger queue = more tolerance for processing spikes, but more memory.
 
 		calibration_frequency_hz: Optional frequency of a known strong signal
 			for automatic PPM calibration (e.g., 93.7e6 for a local FM station).
-			If None, calibration is skipped. Only works with RTL-SDR and HackRF.
+			If None, calibration is skipped. Requires a device with both a
+			synchronous read and a PPM correction control — currently RTL-SDR
+			only; other devices skip calibration automatically.
 	"""
 
 	# Reject unknown fields (catch typos in config file)
@@ -251,9 +254,10 @@ class RecordingConfig(pydantic.BaseModel):
 			WAV (default) is uncompressed and embeds broadcast metadata (BEXT)
 			with sample-accurate timestamps, allowing audio editors to place
 			recordings on a timeline at their real capture time.
-			FLAC is lossless compressed (roughly 55-60% smaller than WAV for
-			typical narrowband voice) but cannot carry BEXT timeline
-			metadata — date and time are stored as text tags only.
+			FLAC is lossless compressed — typically 20-45% smaller than WAV
+			depending on band and signal content (measured on real PMR and
+			airband archives) — but cannot carry BEXT timeline metadata;
+			date and time are stored as text tags only.
 
 		audio_output_dir: Directory where audio files are saved.
 			Files are organized as: output_dir/YYYY-MM-DD/band_name/filename.{wav,flac}
@@ -436,9 +440,10 @@ class BandConfig(pydantic.BaseModel):
 		recording_enabled: Whether to record audio from active channels.
 			If False, only detection is performed (no audio files).
 
-		exclude_channel_indices: List of channel indices to skip (0-indexed).
+		exclude_channel_indices: List of channel numbers to skip (1-based,
+			matching the channel numbers shown in log output and filenames).
 			Useful for excluding known interference or out-of-band channels.
-			E.g., [0, 1] excludes the first two channels.
+			E.g., [1, 2] excludes the first two channels.
 
 		snr_threshold_db: Minimum SNR to detect a channel as active (in dB).
 			Default 12 dB is conservative. Lower values (e.g., 8-10 dB) detect
@@ -509,7 +514,8 @@ class BandConfig(pydantic.BaseModel):
 		"""
 		Validate and normalize channel exclusion list.
 
-		Converts None to empty list, validates that all values are non-negative integers.
+		Converts None to empty list, validates that all values are valid
+		1-based channel numbers (the numbers shown in logs and filenames).
 		"""
 		if value is None:
 			return []
@@ -521,8 +527,8 @@ class BandConfig(pydantic.BaseModel):
 		for item in value:
 			idx = int(item)
 
-			if idx < 0:
-				raise ValueError("exclude_channel_indices must be >= 0")
+			if idx < 1:
+				raise ValueError("exclude_channel_indices entries are 1-based channel numbers and must be >= 1")
 
 			indices.append(idx)
 
@@ -645,9 +651,11 @@ def _deep_merge (
 	"""Recursively merge *override* onto *base*, returning a new dict.
 
 	For each key in override: if both values are dicts, recurse; otherwise the
-	override value wins (including explicit None / YAML null).  Keys present in
-	base but absent from override are preserved unchanged.  Neither input is
-	mutated.
+	override value wins (including explicit None / YAML null).  One exception:
+	when the base value is a dict and the override is None — e.g. a user
+	config listing a section header with no keys under it — the base dict is
+	kept rather than wiped out.  Keys present in base but absent from override
+	are preserved unchanged.  Neither input is mutated.
 	"""
 
 	result = dict(base)
@@ -683,7 +691,7 @@ def _locate_default_config () -> pathlib.Path:
 
 
 def _resolve_user_config_path (
-	explicit: pathlib.Path | None,
+	explicit: str | pathlib.Path | None,
 ) -> pathlib.Path | None:
 
 	"""Return the user's config override path, or None if no user config exists.
@@ -693,6 +701,11 @@ def _resolve_user_config_path (
 	"""
 
 	if explicit is not None:
+
+		# Accept plain strings too — load_config is the public entry point
+		# for module users and a str path is the natural thing to pass.
+		explicit = pathlib.Path(explicit)
+
 		if explicit.exists():
 			return explicit
 
@@ -807,13 +820,14 @@ def _apply_band_defaults (data: dict) -> dict:
 	return merged
 
 
-def load_config (path: pathlib.Path | None = None) -> AppConfig:
+def load_config (path: str | pathlib.Path | None = None) -> AppConfig:
 
 	"""Load configuration, merging config.yaml.default with config.yaml.
 
 	Always loads config.yaml.default as the base.  If a user config.yaml exists
-	(or an explicit path is given), it is deep-merged on top so user settings
-	override defaults while unspecified keys inherit default values.
+	(or an explicit path is given, as a str or pathlib.Path), it is deep-merged
+	on top so user settings override defaults while unspecified keys inherit
+	default values.
 	"""
 
 	default_path = _locate_default_config()

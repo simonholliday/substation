@@ -43,10 +43,6 @@ AM_IF_OVERSAMPLE = 4.0
 # Automatic Gain Control (AGC) compensates for varying signal strengths
 # Too-fast AGC sounds "pumpy", too-slow AGC doesn't adapt quickly enough
 
-# Minimum signal level required to update AGC gain
-# Prevents AGC from ramping up during noise-only periods (would amplify noise)
-AM_AGC_MIN_UPDATE_LEVEL = 0.005  # 0.5% of full scale
-
 # Minimum AGC gain level (floor)
 # Prevents excessive amplification of noise when signal is very weak
 AM_AGC_FLOOR = 0.02  # 2% minimum gain
@@ -135,15 +131,14 @@ AUDIO_SILENCE_RMS_THRESHOLD = 0.01
 # speculative demod check) and Gate 3b (post-recording whole-file check).
 SPECTRAL_FLATNESS_THRESHOLD = 0.15
 
-# Carrier transient detection thresholds.  AM transmitters produce sharp
-# clicks when keying on/off.  A carrier transient has peak amplitude
-# exceeding CARRIER_TRANSIENT_RATIO × the local noise floor, AND the
-# region on its outer side (before key-ON, after key-OFF) has RMS below
-# CARRIER_TRANSIENT_SILENCE_RATIO × noise floor.  Voice transients
-# (plosive consonants) fail the silence criterion because they are
+# Carrier transient detection threshold.  AM transmitters produce sharp
+# clicks when keying on/off.  A carrier transient must exceed
+# CARRIER_TRANSIENT_RATIO × the local noise floor, and the surrounding
+# checks in recording.py additionally require the quiet region on the
+# spike's far side to stay below 25% of the spike peak.  Voice transients
+# (plosive consonants) fail that silence criterion because they are
 # surrounded by other voice content.
 CARRIER_TRANSIENT_RATIO = 8.0
-CARRIER_TRANSIENT_SILENCE_RATIO = 2.0
 
 # ==============================================================================
 # Noise Floor Estimation Constants
@@ -197,6 +192,30 @@ CTCSS_TONES = (
 # 134.3 bps FSK signal below 300 Hz, encoding a 23-bit Golay(23,12) code
 # word containing a 9-bit talk group code (octal 000-777).
 DCS_BITRATE = 134.3
+
+# The 104 standard DCS codes (octal) from the TIA-603 tables that radio
+# manufacturers actually use.  Because the DCS bitstream repeats with no
+# frame marker and Golay(23,12) is a cyclic code, rotated alignments of a
+# transmission also decode as valid-looking codes — the standard list
+# contains one representative per rotation class precisely so receivers
+# can pick the intended code.  detect_dcs() only accepts codes from this
+# list: transmissions of a standard code decode exactly, transmissions of
+# a non-standard "equivalent" code normalise onto their standard-table
+# representative (the same behaviour as commercial receivers), and random
+# noise decodes are rejected.
+DCS_STANDARD_CODES = frozenset((
+	0o023, 0o025, 0o026, 0o031, 0o032, 0o036, 0o043, 0o047, 0o051, 0o053,
+	0o054, 0o065, 0o071, 0o072, 0o073, 0o074, 0o114, 0o115, 0o116, 0o122,
+	0o125, 0o131, 0o132, 0o134, 0o143, 0o145, 0o152, 0o155, 0o156, 0o162,
+	0o165, 0o172, 0o174, 0o205, 0o212, 0o223, 0o225, 0o226, 0o243, 0o244,
+	0o245, 0o246, 0o251, 0o252, 0o255, 0o261, 0o263, 0o265, 0o266, 0o271,
+	0o274, 0o306, 0o311, 0o315, 0o325, 0o331, 0o332, 0o343, 0o346, 0o351,
+	0o356, 0o364, 0o365, 0o371, 0o411, 0o412, 0o413, 0o423, 0o431, 0o432,
+	0o445, 0o446, 0o452, 0o454, 0o455, 0o462, 0o464, 0o465, 0o466, 0o503,
+	0o506, 0o516, 0o523, 0o526, 0o532, 0o546, 0o565, 0o606, 0o612, 0o624,
+	0o627, 0o631, 0o632, 0o654, 0o662, 0o664, 0o703, 0o712, 0o723, 0o731,
+	0o732, 0o734, 0o743, 0o754,
+))
 
 # NFM voice bandpass filter limits (Hz).  Applied after CTCSS/DCS detection
 # to remove subaudible tones from the recording while preserving voice.

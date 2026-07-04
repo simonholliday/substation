@@ -309,13 +309,16 @@ def main () -> int:
 	parser.add_argument(
 		'--config',
 		type=pathlib.Path,
-		default=pathlib.Path('config.yaml'),
-		help='Path to config.yaml (default: ./config.yaml)',
+		default=None,
+		help='Path to a user config override file (default: config.yaml in CWD if it exists, otherwise the bundled defaults)',
 	)
 
 	args = parser.parse_args()
 
-	# --list mode
+	# --list mode.  load_config falls back to the bundled defaults when no
+	# user config.yaml exists — same behaviour as the main substation CLI —
+	# so the FileNotFoundError branch only fires for an explicit --config
+	# path that doesn't exist.
 	if args.list:
 
 		try:

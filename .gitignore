@@ -8,6 +8,6 @@ audio/
 examples/audio/
 .claude/
 .vs-code/
-CLAUDE.md
+CLAUDE.local.md
 AGENT-INSTRUCTIONS.md
 README-AGENTS.md

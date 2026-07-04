@@ -140,10 +140,19 @@ class BaseDevice (abc.ABC):
 	@abc.abstractmethod
 	def read_samples_async (self, callback: typing.Callable, num_samples: int) -> None:
 		"""
-		Start asynchronous sample reading
+		Start asynchronous sample reading.
+
+		Blocking backends (RTL-SDR, file playback) run their read loop in
+		the calling thread and only return at end-of-stream, cancellation,
+		or error.  Non-blocking backends (HackRF, SoapySDR) start a
+		background reader and return immediately; if their stream later
+		dies on its own (device fault), they signal end-of-stream by
+		invoking callback(None, None) so the scanner can shut down instead
+		of waiting for samples that will never arrive.
 
 		Args:
-			callback: Function to call with samples (signature: callback(samples, context))
+			callback: Function to call with samples (signature: callback(samples, context));
+				samples is None to signal end-of-stream
 			num_samples: Number of samples to read per callback
 		"""
 		pass

@@ -35,13 +35,16 @@ dependencies = [
 
 [project.optional-dependencies]
 # Development tools — install with `pip install -e ".[dev]"`.
-# pytest is used for the test suite; mypy for the type-check pass
-# described in AGENT-INSTRUCTIONS.md §4.  Pinned below 1.18 because
+# pytest is used for the test suite; mypy for the type-check pass.
+# mypy is pinned below 1.18 because
 # newer releases ship a C-accelerated backend (librt) that segfaults
 # on aarch64 (Raspberry Pi) at time of writing.
 dev = [
     "pytest>=7.0",
     "mypy>=1.0,<1.18",
+    # Type stubs for PyYAML — without these `mypy substation` fails on
+    # the yaml import in a fresh dev install.
+    "types-PyYAML",
 ]
 
 # OSC event forwarding — install with `pip install -e ".[osc]"`.
@@ -98,5 +101,9 @@ module = [
     "supervisor",
     "supervisor.app",
     "supervisor.app.substation",
+    # python-osc is an optional [osc] extra, so it may legitimately be
+    # absent when type-checking the base package.
+    "pythonosc",
+    "pythonosc.udp_client",
 ]
 ignore_missing_imports = true

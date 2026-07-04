@@ -1,4 +1,6 @@
-"""Tests for transition detection and sample-level trimming."""
+"""Tests for transition detection, sample-level trimming, and stream-end signalling."""
+
+import asyncio
 
 import numpy
 
@@ -80,3 +82,50 @@ class TestFindTransitionIndex:
 		iq = numpy.zeros(sc.samples_per_slice, dtype=numpy.complex64)
 		idx = sc._find_transition_index(iq, sc.channels[0], turning_on=False, segment_psd=None, segment_noise_floors=None)
 		assert idx == len(iq)
+
+
+class TestStreamEndSentinel:
+
+	"""
+	Regression tests for the end-of-stream sentinel (device-failure hang).
+
+	Before the fix, a live SDR dying mid-scan never queued the None
+	sentinel, so scan() waited on the sample queue forever instead of
+	shutting down.
+	"""
+
+	def test_sentinel_queued (self, scanner_instance):
+		"""_signal_stream_end puts the None sentinel on the queue."""
+
+		async def scenario ():
+			sc = scanner_instance
+			sc.sample_queue = asyncio.Queue(maxsize=4)
+			sc._signal_stream_end()
+			assert sc.sample_queue.get_nowait() is None
+
+		asyncio.run(scenario())
+
+	def test_sentinel_forces_room_when_queue_full (self, scanner_instance):
+		"""A full queue must not swallow the sentinel — one block is dropped to make room."""
+
+		async def scenario ():
+			sc = scanner_instance
+			sc.sample_queue = asyncio.Queue(maxsize=1)
+			sc.sample_queue.put_nowait(numpy.zeros(4, dtype=numpy.complex64))
+			sc._signal_stream_end()
+			assert sc.sample_queue.get_nowait() is None
+
+		asyncio.run(scenario())
+
+	def test_callback_none_signals_end (self, scanner_instance):
+		"""_sdr_callback(None, None) — the device end-of-stream contract — queues the sentinel."""
+
+		async def scenario ():
+			sc = scanner_instance
+			sc.loop = asyncio.get_running_loop()
+			sc.sample_queue = asyncio.Queue(maxsize=4)
+			sc._sdr_callback(None, None)
+			item = await asyncio.wait_for(sc.sample_queue.get(), timeout=1)
+			assert item is None
+
+		asyncio.run(scenario())

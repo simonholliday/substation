@@ -58,6 +58,19 @@ class TestYamlLoading:
 		# Other recording defaults should be preserved
 		assert config.recording.audio_sample_rate == 16000
 
+	def test_load_config_accepts_str_path (self, tmp_path):
+		"""load_config is the public module entry point and must accept a plain str path.
+
+		Regression: the examples passed './config.yaml' as a str and crashed
+		with AttributeError before str coercion was added.
+		"""
+		user_cfg = tmp_path / "config.yaml"
+		user_cfg.write_text(yaml.dump({
+			"recording": {"audio_output_dir": "/tmp/str_path_override"},
+		}))
+		config = substation.config.load_config(str(user_cfg))
+		assert config.recording.audio_output_dir == "/tmp/str_path_override"
+
 
 # ---------------------------------------------------------------------------
 # Deep merge
@@ -355,9 +368,15 @@ class TestDynamicsCurveConfig:
 class TestExcludeChannelIndices:
 
 	def test_valid_indices (self, minimal_config_dict):
-		minimal_config_dict["bands"]["test_nfm"]["exclude_channel_indices"] = [0, 2]
+		minimal_config_dict["bands"]["test_nfm"]["exclude_channel_indices"] = [1, 3]
 		config = substation.config.validate_config(minimal_config_dict)
-		assert config.bands["test_nfm"].exclude_channel_indices == [0, 2]
+		assert config.bands["test_nfm"].exclude_channel_indices == [1, 3]
+
+	def test_zero_index_raises (self, minimal_config_dict):
+		"""Channel numbers are 1-based (matching logs and filenames), so 0 is invalid."""
+		minimal_config_dict["bands"]["test_nfm"]["exclude_channel_indices"] = [0]
+		with pytest.raises(pydantic.ValidationError):
+			substation.config.validate_config(minimal_config_dict)
 
 	def test_negative_index_raises (self, minimal_config_dict):
 		minimal_config_dict["bands"]["test_nfm"]["exclude_channel_indices"] = [-1]

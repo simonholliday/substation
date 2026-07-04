@@ -19,11 +19,15 @@ extra is present — keep the import here at module level so the
 ImportError is immediate and obvious if a user forgets to install it.
 Run `pip install -e ".[osc]"` to enable OSC support.
 
-OSC address / argument reference (the two Substation outbound addresses):
+OSC address / argument reference (the Substation outbound addresses):
 
-    /radio/state      band_name:str  channel_index:int  is_active:int(0/1)  snr_db:float
-    /radio/recording  band_name:str  channel_index:int  file_path:str
+    /radio/state      band_name:str  channel_index:int  is_active:int(0/1)  snr_db:float  ctcss_hz:float  dcs_code:int
+    /radio/recording  band_name:str  channel_index:int  file_path:str  ctcss_hz:float  dcs_code:int
     /sample/import    file_path:str                  (only when sampler_host is set)
+
+ctcss_hz / dcs_code carry any subaudible tone detected on the activation.
+OSC has no native null, so 0.0 / 0 mean "no tone detected" (valid CTCSS
+tones start at 67 Hz and DCS codes are always nonzero).
 """
 
 import logging

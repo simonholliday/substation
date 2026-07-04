@@ -72,7 +72,7 @@ Recordings are not just raw demodulated audio dumped to disk. Each file passes t
 - **Half-cosine fades** at recording boundaries prevent clicks from sudden onset or cutoff.
 - **Soft limiting** via a tanh waveshaper with a 0.98 ceiling (-0.18 dBTP) prevents inter-sample true-peak overshoot, ensuring recordings never exceed 0 dBTP.
 - **Broadcast WAV metadata** (BEXT, EBU Tech 3285) embeds sample-accurate timestamps, frequency, modulation, and detected CTCSS/DCS codes directly in each file. Audio editors like Audacity, Reaper, and iZotope RX can place recordings on a timeline at their real capture time.
-- **FLAC output** (optional) provides lossless compression — roughly 55–60% smaller than WAV for typical narrowband voice recordings — with metadata stored as Vorbis comments. Compression level 6 was chosen after benchmarking every level on real PMR recordings on a Raspberry Pi: it produces essentially the same output size as level 8 but encodes in ~40% less CPU time.
+- **FLAC output** (optional) provides lossless compression — typically 20–45% smaller than WAV, depending on band and signal content (measured on real PMR and airband archives) — with metadata stored as Vorbis comments. Compression level 6 was chosen after benchmarking every level on real PMR recordings on a Raspberry Pi: it produces essentially the same output size as level 8 but encodes in ~40% less CPU time.
 
 ### Efficiency
 
@@ -212,7 +212,7 @@ A high-dynamic-range VHF/UHF receiver with a 12-bit ADC (≈16-bit effective fro
 **Gotchas**
 - **Sample rates are discrete.** Asking for anything other than 2.5 MHz or 10 MHz silently snaps to the nearest supported rate and logs a warning. Always check the startup log to confirm the rate the device actually accepted.
 - **`sdr_gain_db: auto` is not real AGC.** SoapyAirspy reports `hasGainMode == True` but the underlying R2 hardware does not provide a working closed-loop AGC. Substation detects this and falls back to a fixed manual gain of `LNA=10, MIX=5, VGA=12` (27 dB total) - the same LNA-first values you would set by hand. This works well for typical PMR / VHF / UHF reception. If you want different values, set `sdr_gain_db` (numeric) or `sdr_gain_elements` (per-stage dict) explicitly in your band config.
-- For per-element tuning, **maximise LNA first**, set Mixer moderate, fine-tune with VGA (this is the LNA-first principle described in [Gain Tuning](#gain-tuning) below). The element names and ranges are logged at INFO level when the device starts up.
+- For per-element tuning, **maximise LNA first**, set Mixer moderate, fine-tune with VGA (this is the LNA-first principle described in [Gain Tuning](#gain-tuning) below). The element names and ranges are logged at DEBUG level when the device starts up — enable debug logging when configuring a new device.
 - Requires a venv built with `--system-site-packages`.
 
 **Working example band** - PMR446 with per-element gain control:
@@ -272,23 +272,26 @@ A precision HF and lower-VHF receiver. Exceptional sensitivity and dynamic range
 - Front-end overload looks like duplicate signals on adjacent channels. If you see them, increase RF attenuation (`RF: -24` or lower).
 - Requires a venv built with `--system-site-packages`.
 
-**Working example band** - Bristol airband:
+**Working example band** - Bristol airband, as shipped in the default config. The HF+-specific tuning lives in a `device_overrides` section, so the same band works on an RTL-SDR (base values) and on the HF+ (override values) without duplicating the band:
 
 ```yaml
-air_civil_bristol_airspyhf:
+air_civil_bristol:
     type: AIR
     freq_start: 125.5e+6
     freq_end: 126.0e+6
-    sample_rate: 0.912e6
-    snr_threshold_db: 6
-    sdr_gain_db: auto
-    activation_variance_db: 3.0
+    sample_rate: 1.024e6           # base value, used by RTL-SDR
+    device_overrides:
+      airspyhf:                    # applied when --device-type is airspyhf
+        sample_rate: 0.912e6
+        snr_threshold_db: 6
+        sdr_gain_db: auto
+        activation_variance_db: 3.0
 ```
 
 Run with:
 
 ```bash
-substation --band air_civil_bristol_airspyhf --device-type airspyhf --device-index 0
+substation --band air_civil_bristol --device-type airspyhf --device-index 0
 ```
 
 **References**
@@ -304,7 +307,7 @@ Any device with a SoapySDR driver module installed can be used via `--device-typ
 SoapySDRUtil --find
 ```
 
-The same `sdr_gain_db`, `sdr_gain_elements`, and `sdr_device_settings` config keys apply, and the wrapper's startup log will show the available gain elements, sample rates, antennas, and device-specific settings reported by the driver - use these to guide your configuration in the same way as the AirSpy cards above.
+The same `sdr_gain_db`, `sdr_gain_elements`, and `sdr_device_settings` config keys apply. The wrapper logs the available gain elements, sample rates, antennas, and device-specific settings reported by the driver at DEBUG level on startup - enable debug logging when configuring a new device and use that capability dump to guide your configuration in the same way as the AirSpy cards above.
 
 **Reference:** [SoapySDR project](https://github.com/pothosware/SoapySDR)
 
@@ -323,7 +326,7 @@ substation --band air_civil_bristol --device-type rtlsdr --device-index 0
 
 Audio files are written to:
 ```
-./audio/YYYY-MM-DD/<band>/<timestamp>_<band>_<channel>_<snr>dB_<device>_<index>.wav
+./audio/YYYY-MM-DD/<band>/<date>_<time>_<band>_<channel>_<freq>_<snr>dB_<device>_<index>.wav
 ```
 
 ## Utility scripts
@@ -472,21 +475,21 @@ bands:
 
 Use `--config <path>` to specify a different user override file. Use `--list-bands` to see all available bands.
 
-The top-level keys are `scanner`, `recording`, `band_defaults`, and `bands`.
+The top-level keys are `scanner`, `recording`, `supervisor`, `band_defaults`, and `bands`.
 
 Scanner
 ```
 scanner:
   sdr_device_sample_size: 131072
   band_time_slice_ms: 200
-  sample_queue_maxsize: 30
+  sample_queue_maxsize: 200
   calibration_frequency_hz: 93.7e+6
   stuck_channel_threshold_seconds: 60
 ```
 - `sdr_device_sample_size`: number of IQ samples per SDR callback. Higher values reduce callback overhead but increase latency.
 - `band_time_slice_ms`: time slice used for PSD/SNR detection. Must be a multiple of `sdr_device_sample_size` (rounded up internally).
-- `sample_queue_maxsize`: async queue depth. 10-50 is typical; higher tolerates bursts but uses more RAM.
-- `calibration_frequency_hz`: optional known signal for PPM correction; set to `null` to disable.
+- `sample_queue_maxsize`: async queue depth. 100-200 is typical (each block can be several MB); higher tolerates bursts but uses more RAM, so use 50-100 on memory-constrained systems.
+- `calibration_frequency_hz`: optional known signal for PPM correction; set to `null` to disable. Requires a device with a PPM correction control — currently RTL-SDR only; other devices skip calibration automatically.
 - `stuck_channel_threshold_seconds`: optional duration in seconds after which a constant signal will trigger a "Stuck Channel" warning. Useful for identifying interference or stuck transmitters. Set to `null` to disable.
 
 Recording
@@ -504,14 +507,14 @@ recording:
 - `buffer_size_seconds`: max in-memory audio per channel before drops.
 - `disk_flush_interval_seconds`: how often to flush to disk.
 - `audio_sample_rate`: output rate (Hz).
-- `audio_format`: `wav` (default) or `flac`. WAV embeds Broadcast WAV (BEXT) metadata with sample-accurate timestamps for timeline placement in audio editors. FLAC is lossless compressed (roughly 55–60% smaller than WAV for typical narrowband voice) with text-based metadata tags (no timeline positioning support).
+- `audio_format`: `wav` (default) or `flac`. WAV embeds Broadcast WAV (BEXT) metadata with sample-accurate timestamps for timeline placement in audio editors. FLAC is lossless compressed (typically 20–45% smaller than WAV, depending on band and signal content) with text-based metadata tags (no timeline positioning support).
 - `fade_in_ms`/`fade_out_ms`: half-cosine fades applied to the padding region at channel start/stop (signal content is never attenuated).
 - `soft_limit_drive`: post-processing soft limiter drive. Typical range 1.5-3.0 (higher = stronger limiting).
 - `noise_reduction_enabled`: toggle spectral subtraction noise reduction (default: true).
 - `recording_hold_time_ms`: duration in ms to continue recording after signal drops below threshold (default: 500).
 - `discard_empty_enabled`: automatically discard noise-only recordings using spectral flatness analysis (default: true). Applies at two points: before activation (rejects noise triggers without starting a recording) and after recording close (catches recordings that became mostly noise). See [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings).
 - `min_recording_seconds`: discard recordings shorter than this duration (default: 0.5). Catches brief transients (radar pulses, ignition noise) that pass the spectral checks but produce useless sub-second files. Set to `0` to disable.
-- `audio_silence_timeout_ms`: stop recording when demodulated audio has been silent for this duration (default: 3000). Catches AM carriers that persist after voice stops, where RF SNR stays above threshold but there is no useful content. Set to `0` to disable and rely on RF-only detection.
+- `audio_silence_timeout_ms`: stop recording when demodulated audio has been silent for this duration (default: 3000). Catches AM carriers that persist after voice stops, where RF SNR stays above threshold but there is no useful content. Set to `0` to disable and rely on RF-only detection. Note: a carrier that stays keyed but silent can re-trigger and time out repeatedly (each cycle still has to pass the noise gates); if one channel does this persistently, add it to the band's `exclude_channel_indices`.
 - `trim_carrier_transients`: remove the sharp key-on/key-off click transients that AM transmitters produce (default: false). Only trims transients bordered by silence - voice transients (consonants) are never affected. Recommended for AM airband listening.
 
 Band Defaults
@@ -634,7 +637,7 @@ Each recording embeds metadata directly in the audio file.
 
 **WAV format** (default): Industry-standard Broadcast WAV (BWF/BEXT, EBU Tech 3285) with sample-accurate timestamps. Audio editors like Audacity, Reaper, and iZotope RX can place recordings on a timeline at their real capture time. These are standard `.wav` files that play in any audio player.
 
-**FLAC format**: Vorbis comment tags store the same fields (band, frequency, date, time, modulation) as text. FLAC files are roughly 55–60% smaller than WAV for typical narrowband voice recordings but cannot carry the sample-accurate `time_reference` used for timeline placement in audio editors.
+**FLAC format**: Vorbis comment tags store the same fields (band, frequency, date, time, modulation) as text. FLAC files are typically 20–45% smaller than WAV, depending on band and signal content, but cannot carry the sample-accurate `time_reference` used for timeline placement in audio editors.
 
 ### Metadata Example
 If you open a recording in a professional audio tool or a BWF viewer, you will see fields like these:
@@ -675,7 +678,7 @@ The `snr_threshold_db` setting controls how far above the noise floor a signal m
 - The OFF threshold is `snr_threshold_db - hysteresis_db` (default 3 dB below ON) to prevent rapid toggling. Set `hysteresis_db` lower for weak-signal scanning.
 
 **General tips**:
-- Available gain element names and their valid ranges are logged at INFO level on startup. Check these before setting values.
+- Available gain element names and their valid ranges are logged at DEBUG level on startup. Enable debug logging and check these before setting values (the *active* values are logged at INFO once applied).
 - Optimal values depend on your antenna, band, and local RF environment - a rooftop antenna in a city needs different gain from a small whip in a rural area.
 - Airband (AM, 118-137 MHz) typically needs less gain than PMR (NFM, 446 MHz) because aircraft transmitters are more powerful (5-25W) than PMR handhelds (0.5W).
 
@@ -744,7 +747,7 @@ recording:
   discard_empty_enabled: true   # Gates 2 and 3 (default: true)
 
 bands:
-  air_civil_bristol_airspyhf:
+  air_civil_bristol:
     type: AIR
     freq_start: 125.5e+6
     freq_end: 126.0e+6
@@ -798,8 +801,8 @@ Discarded empty recording: 2026-04-11_15-09-28_air_civil_bristol_airspyhf_59_6.0
 
 All three gates are modulation-agnostic:
 
-- Gate 1 operates on raw channel power from FFT bins - works for any signal type
-- Gates 2 and 3 operate on spectral flatness of demodulated audio - any non-noise signal (voice, data, tones, beacons) produces a peaked spectrum that passes the check
+- Gate 1 operates on raw channel power from FFT bins - works for any signal type, including detection-only bands with no demodulator (TETRA)
+- Gates 2 and 3 operate on spectral flatness of demodulated audio - any non-noise signal (voice, data, tones, beacons) produces a peaked spectrum that passes the check. They apply to every band whose modulation has a demodulator, including detection-only bands (e.g. DMR, ACARS) where the demodulation is purely speculative - so channel activation events stay clean even when nothing is recorded
 - No demodulator-specific tuning is needed
 
 ## Dynamics Curve (Experimental)

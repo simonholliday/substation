@@ -5,6 +5,7 @@ import logging
 import numpy
 import pytest
 
+import substation.config
 import substation.constants
 import substation.scanner
 
@@ -204,6 +205,68 @@ class TestSegmentPowerVariance:
 
 		assert sc._segment_power_variance(ch_freq, []) == 0.0
 		assert sc._segment_power_variance(ch_freq, None) == 0.0
+
+
+class TestDetectionOnlyBands:
+
+	"""
+	Regression tests for detection-only bands (recording_enabled: false)
+	whose modulation still has a demodulator — the shape of every shipped
+	dmr* band and the ACARS/VDL DATA bands.
+
+	Before the fix, the channel extraction filter was only built when
+	recording was enabled, so Gate 2's speculative demodulation crashed the
+	whole scan (ValueError from sosfilt_zi(None)) the first time a real
+	signal activated a channel on one of those bands.
+	"""
+
+	@staticmethod
+	def _make_detection_scanner (minimal_config_dict):
+		"""Scanner for an NFM band that detects but does not record."""
+		minimal_config_dict["bands"]["test_nfm"]["recording_enabled"] = False
+		config = substation.config.validate_config(minimal_config_dict)
+		sc = substation.scanner.RadioScanner(
+			config=config, band_name="test_nfm", device_type="rtlsdr"
+		)
+		sc._precompute_fft_params()
+		return sc
+
+	@staticmethod
+	def _bursty_fm_signal (sc, channel_freq):
+		"""FM voice-tone burst on one channel: passes SNR, Gate 1, and Gate 2."""
+		n = sc.samples_per_slice
+		rng = numpy.random.default_rng(42)
+		noise = (rng.normal(0, 0.001, n) + 1j * rng.normal(0, 0.001, n)).astype(numpy.complex64)
+
+		t = numpy.arange(n) / sc.sample_rate
+		offset = channel_freq - sc.center_freq
+		# 1 kHz FM tone (peaked audio spectrum → passes Gate 2) with a
+		# square-wave envelope (large per-segment power swing → passes Gate 1).
+		envelope = 0.02 * (numpy.sign(numpy.sin(2 * numpy.pi * 12 * t)) + 1.1)
+		phase = 2 * numpy.pi * offset * t - (2500.0 / 1000.0) * numpy.cos(2 * numpy.pi * 1000.0 * t)
+		return noise + (envelope * numpy.exp(1j * phase)).astype(numpy.complex64)
+
+	def test_channel_filter_built_without_recording (self, minimal_config_dict):
+		"""The extraction filter must exist whenever a demodulator exists."""
+		sc = self._make_detection_scanner(minimal_config_dict)
+		assert sc.can_demod and not sc.can_record
+		assert sc.channel_filter_sos is not None
+
+	def test_gate2_activation_does_not_crash (self, minimal_config_dict):
+		"""A real signal on a detection-only band activates cleanly through Gate 2."""
+		sc = self._make_detection_scanner(minimal_config_dict)
+		sc.sdr = _FakeSdr()
+		sc._warmup_remaining = 0
+
+		samples = self._bursty_fm_signal(sc, sc.channels[3])
+
+		for _ in range(3):
+			sc._process_samples(samples, loop=None)
+
+		# The signal must have turned its channel ON (no recording started —
+		# the band is detection-only, so there is no recorder to create).
+		assert any(sc.channel_states.values())
+		assert not sc.channel_recorders
 
 
 class TestADCSaturationCheck:
