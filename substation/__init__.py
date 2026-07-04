@@ -43,5 +43,3 @@ Typical usage:
     substation --band air_civil_1 --device-type hackrf
     substation --band air_civil_bristol --device-type airspyhf
 """
-
-__version__ = "0.1.0"

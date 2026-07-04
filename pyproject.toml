@@ -1,7 +1,7 @@
 [build-system]
 # setuptools 81 removed pkg_resources, which several of our runtime
 # dependencies still import.  Pin below 81 until they catch up.
-requires = ["setuptools>=61.0,<81"]
+requires = ["setuptools>=61.0,<81", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -70,8 +70,11 @@ substation = "substation.cli:main"
 [tool.setuptools.packages.find]
 include = ["substation*"]
 
-[tool.setuptools.dynamic]
-version = {attr = "substation.__version__"}
+[tool.setuptools_scm]
+# Version is derived from git release tags (vX.Y.Z), same as the other
+# Sub* projects.  Between tags, setuptools-scm generates a dev version
+# from the latest tag plus commit distance.  Re-run `pip install -e .`
+# after tagging to refresh the installed metadata.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
