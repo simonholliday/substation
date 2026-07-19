@@ -399,7 +399,7 @@ if __name__ == "__main__":
 	asyncio.run (main ())
 ```
 
-See [examples/scan_demo.py](examples/scan_demo.py) for a more detailed implementation.
+See [examples/scan_demo.py](https://github.com/simonholliday/substation/blob/main/examples/scan_demo.py) for a more detailed implementation (in the source repository).
 
 ### OSC event forwarding
 
@@ -432,7 +432,7 @@ The sender emits the following OSC messages:
 
 `ctcss_hz` and `dcs_code` carry any subaudible tone detected on the activation. OSC has no native null, so `0.0` / `0` mean "no tone detected" (valid CTCSS tones start at 67 Hz, and DCS codes are always nonzero, so these sentinels are unambiguous).
 
-Sends are non-blocking UDP (fire-and-forget); transient socket errors are logged as warnings and never raised back into the scanner. See [examples/scan_osc.py](examples/scan_osc.py) for a working script.
+Sends are non-blocking UDP (fire-and-forget); transient socket errors are logged as warnings and never raised back into the scanner. See [examples/scan_osc.py](https://github.com/simonholliday/substation/blob/main/examples/scan_osc.py) for a working script (in the source repository).
 
 Options:
 - `--config`, `-c`: path to user config override file (default: `config.yaml` in CWD if it exists).
