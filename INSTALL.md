@@ -200,26 +200,43 @@ python3 -m venv --system-site-packages venv
 # python3 -m venv venv
 
 source venv/bin/activate
+```
 
-# Install the package in editable mode
+Then install substation. Most users want one of the first two:
+
+```bash
+# From PyPI (stable release)
+pip install substation
+
+# From GitHub (latest, no release needed)
+pip install git+https://github.com/simonholliday/substation.git
+
+# From a local clone, editable — for development
 pip install -e .
+```
+
+The default configuration ships inside the package, so no clone is needed. After installing, create an editable starter config in your working directory:
+
+```bash
+substation --init          # writes ./config.yaml (the fully-commented defaults)
 ```
 
 ### Optional extras
 
-Two extras add integrations that aren't required for basic scanning:
-
 ```bash
 # OSC event forwarding (for MIDI sequencer, sampler, etc.)
-pip install -e ".[osc]"
-
-# Supervisor dashboard (real-time WebSocket state broadcast)
-pip install -e ".[supervisor]"
+pip install "substation[osc]"
 ```
 
-The `[supervisor]` extra pulls the `supervisor` package from GitHub. While the repository is private, the pip install uses SSH and requires a GitHub SSH key on the machine — see [GitHub's SSH setup guide](https://docs.github.com/en/authentication/connecting-to-github-with-ssh). When the repo is made public the URL will switch to HTTPS and no key is needed.
+**Supervisor dashboard** (real-time WebSocket state broadcast) is a separate package installed from GitHub — it is *not* a PyPI extra, because PyPI does not permit direct-URL dependencies:
 
-After installing, enable the dashboard in `config.yaml`:
+```bash
+pip install git+https://github.com/simonholliday/supervisor.git
+```
+
+While the supervisor repository is private, this install uses SSH (`git+ssh://git@github.com/...`) and requires a GitHub SSH key on the machine — see [GitHub's SSH setup guide](https://docs.github.com/en/authentication/connecting-to-github-with-ssh). The scanner runs normally with the dashboard disabled if the package isn't present.
+
+After installing supervisor, enable the dashboard in `config.yaml`:
 
 ```yaml
 supervisor:

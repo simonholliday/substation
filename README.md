@@ -312,13 +312,17 @@ The same `sdr_gain_db`, `sdr_gain_elements`, and `sdr_device_settings` config ke
 **Reference:** [SoapySDR project](https://github.com/pothosware/SoapySDR)
 
 ## Quick Start
-1) Install dependencies (see [INSTALL.md](INSTALL.md) for SDR drivers and platform-specific setup).
-2) Install package in editable mode:
+1) Install the SDR drivers and platform dependencies (see [INSTALL.md](INSTALL.md)).
+2) Install substation:
 ```bash
-pip install -e .
+pip install substation                                    # from PyPI
+# or: pip install git+https://github.com/simonholliday/substation.git   # latest from GitHub
 ```
-3) Run (works out of the box with the default configuration):
-
+3) Create a starter config in your working directory (optional — it runs on the built-in defaults without one):
+```bash
+substation --init          # writes ./config.yaml, the fully-commented defaults
+```
+4) Run:
 
 ```bash
 substation --band air_civil_bristol --device-type rtlsdr --device-index 0
@@ -331,16 +335,16 @@ Audio files are written to:
 
 ## Utility scripts
 
-Substation ships with a small `scripts/` directory of one-shot user utilities. These are not part of the main scanner - they're tools that read the config or work with frequencies, and are run with `python -m scripts.<name>`.
+Substation installs a small companion command for one-shot tasks that read the config or work with frequencies. It's a separate console entry point, not part of the scanner itself.
 
 ### Antenna length calculator
 
 Calculate optimal antenna lengths (half-wave dipole, quarter-wave vertical, 5/8-wave vertical, full-wave loop) for any configured band or any frequency:
 
 ```bash
-python -m scripts.antenna --band hf_night_4mhz   # use a configured band's centre frequency
-python -m scripts.antenna --freq 4625e3          # use a manual frequency in Hz
-python -m scripts.antenna --list                 # list all configured bands
+substation-antenna --band hf_night_4mhz   # use a configured band's centre frequency
+substation-antenna --freq 4625e3          # use a manual frequency in Hz
+substation-antenna --list                 # list all configured bands
 ```
 
 For HF bands wider than ±2% of their centre frequency the report also shows the dipole's natural SWR window and the antenna lengths at the band edges, so you can decide whether to cut for the centre, an edge, or use a tuner. Lengths are reported in metres for HF/VHF and centimetres for UHF.
@@ -399,10 +403,10 @@ See [examples/scan_demo.py](examples/scan_demo.py) for a more detailed implement
 
 ### OSC event forwarding
 
-Substation can forward channel state changes and saved recordings as OSC (Open Sound Control) messages, so downstream tools - MIDI sequencers, sample players, VJ software, lighting rigs - can react to radio activity in real time. Install the optional dependency:
+Substation can forward channel state changes and saved recordings as OSC (Open Sound Control) messages, so downstream tools - MIDI sequencers, sample players, VJ software, lighting rigs - can react to radio activity in real time. Install the optional extra:
 
 ```bash
-pip install -e ".[osc]"
+pip install "substation[osc]"
 ```
 
 Then attach an `OscEventSender` to any `RadioScanner` instance:
@@ -457,8 +461,8 @@ The IQ file must be a WAV with 2 channels (I and Q) at any sample rate. The cent
 
 Substation uses a two-layer configuration system:
 
-- **`config.yaml.default`** ships with the package and contains all known bands and sensible defaults. This file is always loaded first.
-- **`config.yaml`** (optional) is your user override file. Create it in the working directory and specify only the settings you want to change - everything else inherits from the defaults.
+- **`config.yaml.default`** ships bundled inside the package and contains all known bands and sensible defaults. This file is always loaded first, so the scanner works out of the box with no config file at all.
+- **`config.yaml`** (optional) is your user override file. Put it in the working directory and specify only the settings you want to change - everything else inherits from the defaults. Run `substation --init` to drop a copy of the fully-commented defaults into the current directory as a starting point (it won't overwrite an existing `config.yaml`).
 
 For example, to override just the audio output directory:
 ```yaml
@@ -861,7 +865,7 @@ If you see repeated `Sample queue full` warnings, reduce the band's `sample_rate
 
 ## Roadmap
 
-- **Supervisor dashboard** (in progress) — a real-time browser dashboard that displays scanner state (active channels, SNR levels, noise floor, recordings) via WebSocket. The scanner emits structured events which the [Supervisor](https://github.com/simonholliday/supervisor) server relays to connected clients. Install with `pip install -e ".[supervisor]"` and enable in `config.yaml`.
+- **Supervisor dashboard** (in progress) — a real-time browser dashboard that displays scanner state (active channels, SNR levels, noise floor, recordings) via WebSocket. The scanner emits structured events which the [Supervisor](https://github.com/simonholliday/supervisor) server relays to connected clients. Install it separately with `pip install git+https://github.com/simonholliday/supervisor.git` (it's a standalone package, not a PyPI extra) and enable it in `config.yaml`.
 
 ## Author
 Written by Simon Holliday ([https://simonholliday.com/](https://simonholliday.com/))

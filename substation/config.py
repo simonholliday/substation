@@ -584,11 +584,12 @@ class SupervisorConfig (pydantic.BaseModel):
 	Supervisor dashboard integration.
 
 	When enabled, broadcasts scanner events over WebSocket for real-time
-	display in the Supervisor dashboard.  Requires the supervisor package:
-	`pip install -e ".[supervisor]"`.  The extra pulls the supervisor
-	package from the simonholliday/supervisor GitHub repo — while that
-	repo is private the install uses SSH and requires a GitHub SSH key
-	on the machine; see INSTALL.md for details.
+	display in the Supervisor dashboard.  Requires the separate supervisor
+	package, installed from GitHub (it is not a PyPI extra of substation —
+	PyPI does not allow direct-URL dependencies):
+	`pip install git+https://github.com/simonholliday/supervisor.git`.
+	See INSTALL.md for details.  When the package is absent the scan runs
+	normally with the dashboard disabled.
 	"""
 
 	model_config = pydantic.ConfigDict(extra='forbid')
@@ -676,10 +677,18 @@ def _locate_default_config () -> pathlib.Path:
 
 	"""Return the path to the bundled config.yaml.default.
 
+	The file ships as package data inside the substation package (declared
+	in pyproject.toml under [tool.setuptools.package-data]), so a plain
+	__file__-relative path resolves identically for editable installs and
+	wheels installed from PyPI or a Git URL — no git checkout required.
+	A real filesystem Path is returned deliberately (rather than
+	importlib.resources): callers read and copy the file, and the package
+	never runs from a zipped location.
+
 	Raises FileNotFoundError if the file is missing (broken installation).
 	"""
 
-	default = pathlib.Path(__file__).parent.parent / "config.yaml.default"
+	default = pathlib.Path(__file__).parent / "config.yaml.default"
 
 	if not default.exists():
 		raise FileNotFoundError(

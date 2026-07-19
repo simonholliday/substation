@@ -31,13 +31,14 @@ Features:
   as a property of each activation; used by the OSC bridge and the
   Supervisor dashboard integration
 - Optional OSC event forwarding to downstream tools (MIDI sequencer,
-  sampler, VJ software, ...) via substation.osc_sender — install with
-  pip install -e ".[osc]"
+  sampler, VJ software, ...) via substation.osc_sender — install the
+  optional extra with pip install "substation[osc]"
 - Optional real-time Supervisor dashboard — broadcasts scanner state
-  over WebSocket for a web UI — install with
-  pip install -e ".[supervisor]"
+  over WebSocket for a web UI — install the separate supervisor package
+  from GitHub (see INSTALL.md)
 
 Typical usage:
+    substation --init                              # Write a starter config.yaml
     substation --band pmr
     substation --list-bands
     substation --band air_civil_1 --device-type hackrf

@@ -1,7 +1,8 @@
 [build-system]
 # setuptools 81 removed pkg_resources, which several of our runtime
-# dependencies still import.  Pin below 81 until they catch up.
-requires = ["setuptools>=61.0,<81", "setuptools-scm>=8.0"]
+# dependencies still import.  Pin below 81 until they catch up.  The >=77
+# floor is required for the PEP 639 SPDX `license` string form below.
+requires = ["setuptools>=77,<81", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,11 +10,20 @@ name = "substation"
 dynamic = ["version"]
 description = "A versatile SDR band scanner for RTL-SDR, HackRF, AirSpy, and SoapySDR devices"
 authors = [
-    { name = "Simon Holliday" }
+    { name = "Simon Holliday", email = "simon.holliday@protonmail.com" }
 ]
-license = { text = "AGPL-3.0" }
+# SPDX expression (PEP 639).  The old table form and the License:: classifier
+# are deprecated by setuptools; the SPDX string is now the single source of
+# truth for the license.
+license = "AGPL-3.0-or-later"
 readme = "README.md"
 requires-python = ">=3.10"
+keywords = ["sdr", "radio", "scanner", "rtl-sdr", "hackrf", "airspy", "soapysdr"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Communications :: Ham Radio",
+]
 dependencies = [
     "numpy>=1.24.0",
     "pydantic>=2.0",
@@ -56,19 +66,30 @@ osc = [
     "python-osc>=1.8",
 ]
 
-# Supervisor dashboard — install with `pip install -e ".[supervisor]"`.
-# Pulls in the supervisor package which provides the WebSocket
-# broadcast server for the real-time dashboard.
-supervisor = [
-    # SSH while repo is private; switch to git+https:// when public.
-    "supervisor @ git+ssh://git@github.com/simonholliday/supervisor.git",
-]
+# Note: the Supervisor dashboard is NOT an extra here.  Its package is only
+# distributed from GitHub, and PyPI rejects any distribution whose
+# dependencies (including extras) are direct URLs — so a `supervisor` extra
+# pointing at git+https would block publishing substation to PyPI.  The
+# scanner lazy-imports supervisor and warns if it is absent, so it stays an
+# optional add-on you install separately:
+#     pip install git+https://github.com/simonholliday/supervisor.git
+# See INSTALL.md and the README "Supervisor dashboard" section.
+
+[project.urls]
+Repository = "https://github.com/simonholliday/substation"
+Issues = "https://github.com/simonholliday/substation/issues"
 
 [project.scripts]
 substation = "substation.cli:main"
+substation-antenna = "substation.antenna:main"
 
 [tool.setuptools.packages.find]
 include = ["substation*"]
+
+[tool.setuptools.package-data]
+# Ship the default configuration inside the package so it resolves for
+# editable installs and wheels alike (see config._locate_default_config).
+substation = ["config.yaml.default"]
 
 [tool.setuptools_scm]
 # Version is derived from git release tags (vX.Y.Z), same as the other

@@ -6,9 +6,9 @@ dipole, quarter-wave vertical, 5/8-wave vertical, full-wave loop) for
 either a configured Substation band or a manually-specified frequency.
 
 Usage:
-    python -m scripts.antenna --band hf_night_4mhz
-    python -m scripts.antenna --freq 4625e3
-    python -m scripts.antenna --list
+    substation-antenna --band hf_night_4mhz
+    substation-antenna --freq 4625e3
+    substation-antenna --list
 
 Run with --help for the full argument list.
 
@@ -297,7 +297,7 @@ def main () -> int:
 	"""
 
 	parser = argparse.ArgumentParser(
-		prog='scripts.antenna',
+		prog='substation-antenna',
 		description='Calculate optimal antenna lengths for a Substation band or frequency.',
 	)
 

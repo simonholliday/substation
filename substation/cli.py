@@ -5,10 +5,11 @@ Provides a simple command-line tool for running the scanner with arguments
 for selecting bands, SDR devices, and listing available configuration.
 
 Typical usage:
-	python -m substation --band pmr                 # Scan PMR band
-	python -m substation --list-bands               # Show available bands
-	python -m substation --band airband --device-type hackrf  # Use HackRF
-	python -m substation --band pmr --iq-file recording.wav --center-freq 446059313
+	substation --init                              # Write a starter config.yaml
+	substation --band pmr                          # Scan PMR band
+	substation --list-bands                        # Show available bands
+	substation --band airband --device-type hackrf # Use HackRF
+	substation --band pmr --iq-file recording.wav --center-freq 446059313
 """
 
 import argparse
@@ -66,6 +67,58 @@ def list_bands (config_path: pathlib.Path | None) -> None:
 	except Exception as e:
 		print(f"Error loading configuration: {e}", file=sys.stderr)
 		sys.exit(1)
+
+def init_config () -> None:
+
+	"""
+	Scaffold a starter config.yaml in the current directory, then exit.
+
+	Copies the bundled, fully-commented default configuration to
+	./config.yaml.  This gives users who installed from PyPI or a Git URL
+	(with no repository checkout) an editable starting point — every band
+	and setting is present and documented, and anything left untouched
+	falls back to the same built-in default at runtime.
+
+	Refuses to overwrite an existing config.yaml, and refuses to run inside
+	the substation source tree so it can never scatter a config into the
+	repo itself.
+
+	Exits:
+		Exits with code 1 if config.yaml already exists or if run from the
+		source checkout.
+	"""
+
+	cwd = pathlib.Path.cwd()
+
+	# Guard against scaffolding into the substation source checkout — the
+	# repo is the application, not a place for a user config.
+	if (cwd / "substation" / "__init__.py").exists():
+		print(
+			"This looks like the substation source repository (it contains the "
+			"substation/ package). Run --init from the directory where you want "
+			"your config.yaml instead.",
+			file=sys.stderr,
+		)
+		sys.exit(1)
+
+	target = cwd / "config.yaml"
+
+	if target.exists():
+		print(
+			f"Refusing to overwrite existing {target} — nothing was created. "
+			"Edit it directly, or move it aside and re-run --init.",
+			file=sys.stderr,
+		)
+		sys.exit(1)
+
+	default_text = substation.config._locate_default_config().read_text(encoding='utf-8')
+	target.write_text(default_text, encoding='utf-8')
+
+	print(f"Created {target}")
+	print("This is the full default configuration, fully commented. Edit it to suit")
+	print("your hardware and bands, then start a scan, e.g. `substation --band pmr`.")
+	print("Any setting you delete falls back to the built-in default.")
+
 
 async def run_scanner (config_path: pathlib.Path | None, band_name: str, device_type: str, device_index: int) -> None:
 
@@ -194,7 +247,7 @@ def _start_supervisor (scanner: typing.Any, port: int) -> typing.Any | None:
 	except ImportError as exc:
 		logger.warning(
 			f"Supervisor enabled but missing dependency ({exc}). "
-			f"Install with: pip install -e \".[supervisor]\""
+			f"Install it with: pip install git+https://github.com/simonholliday/supervisor.git"
 		)
 		return None
 
@@ -221,6 +274,7 @@ def main () -> int:
 		formatter_class=argparse.RawDescriptionHelpFormatter,
 		epilog="""
 Examples:
+  substation --init                        # Write a starter config.yaml here
   substation --band pmr                    # Scan PMR band with RTL-SDR
   substation --band marine --device-type hackrf  # Scan marine band with HackRF
   substation --list-bands                  # List all available bands
@@ -264,6 +318,13 @@ Examples:
 		help='List available bands and exit'
 	)
 
+	# Scaffold a starter config.yaml in the current directory
+	parser.add_argument(
+		'--init',
+		action='store_true',
+		help='Create a starter config.yaml (a copy of the documented defaults) in the current directory and exit. Refuses to overwrite an existing file.'
+	)
+
 	# IQ file playback
 	parser.add_argument(
 		'--iq-file',
@@ -287,6 +348,11 @@ Examples:
 	args = parser.parse_args()
 
 	config_path = pathlib.Path(args.config) if args.config else None
+
+	# Scaffold a starter config.yaml and exit (doesn't require --band)
+	if args.init:
+		init_config()
+		return 0
 
 	# Handle --list-bands mode (doesn't require --band)
 	if args.list_bands:
