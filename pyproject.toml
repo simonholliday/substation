@@ -26,7 +26,9 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=1.24.0",
-    "pydantic>=2.0",
+    # 2.7 added use_attribute_docstrings, which turns each config field's
+    # docstring into its description in the JSON schema.
+    "pydantic>=2.7",
     # pyrtlsdr 0.4.0+ requires the rtlsdr_set_dithering symbol from the
     # rtl-sdr-blog fork.  Pinning below 0.4.0 keeps the package working
     # against distro-packaged librtlsdr too — see INSTALL.md for

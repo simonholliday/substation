@@ -94,6 +94,32 @@ class TestYamlLoading:
 
 
 # ---------------------------------------------------------------------------
+# Schema descriptions
+# ---------------------------------------------------------------------------
+
+class TestSchemaDescriptions:
+
+	def test_every_setting_has_a_description (self):
+		"""Every setting in the published JSON schema carries a description.
+
+		The configuration reference is generated from this schema, so a setting
+		without a description would appear there with no explanation.  Each
+		field's description is the docstring written directly under it.
+		"""
+		schema = substation.config.AppConfig.model_json_schema()
+
+		models = [("AppConfig", schema)] + list(schema.get("$defs", {}).items())
+		undescribed = [
+			f"{model_name}.{setting}"
+			for model_name, model in models
+			for setting, details in model.get("properties", {}).items()
+			if not details.get("description")
+		]
+
+		assert undescribed == [], f"Settings with no docstring under their field: {undescribed}"
+
+
+# ---------------------------------------------------------------------------
 # Deep merge
 # ---------------------------------------------------------------------------
 

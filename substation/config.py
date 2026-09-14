@@ -8,6 +8,11 @@ Pydantic models. The configuration system supports:
 - Band type templates (e.g., "DMR", "TETRA") that can be applied to multiple bands
 - Per-band overrides of type defaults
 
+Each setting's description is the docstring written directly under its field.
+Every model sets use_attribute_docstrings, so those docstrings become the
+descriptions in AppConfig.model_json_schema(), which the published
+configuration reference is generated from.  A test fails if a setting has none.
+
 Pydantic provides automatic type checking, validation, and clear error messages
 when configuration is invalid, which is much better than runtime errors or silent
 failures.
@@ -108,92 +113,109 @@ def _normalize_gain (value: typing.Any) -> typing.Any:
 
 class ScannerConfig(pydantic.BaseModel):
 	"""
-	Scanner-level configuration (applies to all bands).
+	Scanner settings, applying to every band.
 
-	These parameters control the core scanning engine behavior: how samples
-	are acquired from the SDR, how they're buffered, and optional frequency
-	calibration.
-
-	Attributes:
-		sdr_device_sample_size: Number of samples to read from SDR in each chunk.
-			Larger = more efficient USB transfers, smaller = lower latency.
-			Must be power of 2 for RTL-SDR (e.g., 16384, 32768, 65536).
-
-		band_time_slice_ms: How often to analyze the spectrum (in milliseconds).
-			100ms is typical: fast enough to detect brief transmissions but
-			not so fast that processing can't keep up. Longer = less CPU, but
-			slower detection.
-
-		sample_queue_maxsize: Maximum number of sample blocks to buffer.
-			If processing falls behind, newly arriving blocks are dropped
-			while the queue is full (buffered audio already queued is kept).
-			Larger queue = more tolerance for processing spikes, but more memory.
-
-		calibration_frequency_hz: Optional frequency of a known strong signal
-			for automatic PPM calibration (e.g., 93.7e6 for a local FM station).
-			If None, calibration is skipped. Requires a device with both a
-			synchronous read and a PPM correction control — currently RTL-SDR
-			only; other devices skip calibration automatically.  If no strong,
-			steady signal is found there, calibration is skipped with a warning
-			and the receiver's correction is left unchanged.
+	These settings control how the scanner reads IQ samples from the SDR, how it
+	buffers them, and whether it calibrates the receiver's frequency at startup.
 	"""
 
-	# Reject unknown fields (catch typos in config file)
-	model_config = pydantic.ConfigDict(extra='forbid')
+	# Reject unknown fields (catch typos in config file), and publish each
+	# field's docstring as its description in the JSON schema
+	model_config = pydantic.ConfigDict(extra='forbid', use_attribute_docstrings=True)
 
 	sdr_device_sample_size: int = pydantic.Field(gt=0)
+	"""
+	Number of IQ samples the scanner reads from the SDR in each block. Larger
+	blocks make USB transfers more efficient; smaller blocks lower the latency.
+	Must be a power of two for RTL-SDR, for example 16384, 32768 or 65536.
+	"""
+
 	band_time_slice_ms: int = pydantic.Field(gt=0)
+	"""
+	How often the scanner analyses the spectrum, in milliseconds. The scanner
+	rounds each slice up to a whole number of `sdr_device_sample_size` blocks.
+	Shorter slices detect brief transmissions sooner; longer slices use less CPU.
+	"""
+
 	sample_queue_maxsize: int = pydantic.Field(default=30, gt=0)
+	"""
+	Number of blocks of IQ samples the scanner holds while processing catches up.
+	When the queue is full, the scanner drops newly arriving blocks with a
+	warning and keeps the blocks already queued. A larger queue tolerates longer
+	processing spikes, such as several radio channels activating at once, and
+	uses more memory, because each block holds `sdr_device_sample_size` IQ
+	samples. Recommended: 100-200 for normal use, 50-100 on memory-constrained
+	systems.
+	"""
+
 	calibration_frequency_hz: float | None = pydantic.Field(default=None, gt=0)
-	
-	# Optional: threshold in seconds to consider a channel "stuck" (e.g., constant transmitter).
-	# If exceeded, a warning will be logged to console. Set to null or remove to disable.
+	"""
+	Frequency in Hz of a strong, steady local signal, such as an FM broadcast
+	station, that the scanner uses at startup to measure and correct the
+	receiver's frequency error. If no strong, steady signal is found there, the
+	scanner skips calibration with a warning and leaves the receiver's correction
+	unchanged. Only RTL-SDR receivers have a PPM correction control; other devices
+	skip calibration. Set to null to turn calibration off.
+	"""
+
 	stuck_channel_threshold_seconds: float | None = pydantic.Field(default=None, gt=0)
+	"""
+	Time in seconds after which the scanner warns that a radio channel has stayed
+	active, which usually points to interference or a stuck transmitter. The
+	scanner repeats the warning at most once a minute and keeps detecting and
+	recording. Recommended: 30-120 seconds. Set to null to turn the warning off.
+	"""
 
 
 class DynamicsCurveConfig(pydantic.BaseModel):
 
 	"""
-	Parameters for the experimental dynamics-curve noise reduction stage.
+	Settings for the experimental dynamics curve.
 
-	apply_dynamics_curve is a per-sample dual-region expander: a smoothstep
-	S-curve cuts the level of quiet samples below the threshold (downward
-	expansion, suppresses noise), and a sin² hump gently boosts samples
-	above the threshold (upward expansion, gives voice presence).
-
-	See substation.dsp.noise_reduction.apply_dynamics_curve for the full
-	mathematical specification.
-
-	Attributes:
-		threshold_dbfs: Dividing line between cut and boost regions, in dBFS.
-			Must be strictly less than 0.  Typical values: -20 to -35 dBFS.
-
-		cut_db: Gain reduction at the midpoint of the cut S-curve.  The
-			maximum reduction (at the floor) is twice this value.  Set to
-			0.0 to disable the cut region.  Default: 6.0.
-
-		boost_db: Maximum gain boost at the peak of the boost hump.  Set
-			to 0.0 to disable the boost region.  Default: 1.5.
-
-		floor_dbfs: Lower threshold below which output is hard-zeroed.
-			Must be strictly less than threshold_dbfs.  Default: -60.0.
-
-		cut_curve: Position of the steepest gradient within the cut
-			S-curve, in [0, 1].  0.5 = symmetric.  Lower values shift the
-			steepest part toward the threshold; higher values shift it
-			toward the floor.
-
-		boost_curve: Same concept for the boost hump.  0.5 = symmetric.
+	The dynamics curve is a dual-region expander applied to each audio sample: a
+	smoothstep S-curve reduces the level of quiet audio below the threshold,
+	which suppresses noise, and a sin² hump gently boosts audio above the
+	threshold, which gives voice more presence.
 	"""
 
-	model_config = pydantic.ConfigDict(extra='forbid')
+	model_config = pydantic.ConfigDict(extra='forbid', use_attribute_docstrings=True)
 
 	threshold_dbfs: float = pydantic.Field(default=-25.0, lt=0.0)
+	"""
+	Level in dBFS that divides the cut region from the boost region. Typical
+	values: -20 to -35 dBFS.
+	"""
+
 	cut_db: float = pydantic.Field(default=6.0, ge=0.0)
+	"""
+	Gain reduction in dB at the midpoint of the cut S-curve. The largest
+	reduction, at `floor_dbfs`, is twice this value. Set to 0 to turn the cut
+	region off.
+	"""
+
 	boost_db: float = pydantic.Field(default=1.5, ge=0.0)
+	"""
+	Largest gain boost in dB, at the peak of the boost hump. Set to 0 to turn the
+	boost region off.
+	"""
+
 	floor_dbfs: float = pydantic.Field(default=-60.0, lt=0.0)
+	"""
+	Level in dBFS below which the output is silenced. Must be below
+	`threshold_dbfs`.
+	"""
+
 	cut_curve: float = pydantic.Field(default=0.5, ge=0.0, le=1.0)
+	"""
+	Where the cut S-curve is steepest. 0.5 is symmetric; lower values move the
+	steepest part towards `threshold_dbfs`, and higher values towards
+	`floor_dbfs`.
+	"""
+
 	boost_curve: float = pydantic.Field(default=0.5, ge=0.0, le=1.0)
+	"""
+	Skew of the boost hump, on the same scale as `cut_curve`. 0.5 is symmetric.
+	"""
 
 	@pydantic.model_validator(mode='after')
 	def _validate_levels (self) -> 'DynamicsCurveConfig':
@@ -235,135 +257,178 @@ class DynamicsCurveConfig(pydantic.BaseModel):
 
 class RecordingConfig(pydantic.BaseModel):
 	"""
-	Recording configuration (applies to all recorded bands).
+	Recording settings, applying to every band that records.
 
-	Controls how audio is recorded, buffered, and saved to WAV files.
-
-	Attributes:
-		buffer_size_seconds: Maximum audio buffer size per channel (in seconds).
-			If disk writes fall behind, oldest audio is dropped. Larger = more
-			tolerance for slow disks, but more memory usage. 30s is generous.
-
-		disk_flush_interval_seconds: How often to write buffered audio to disk.
-			More frequent = less buffering delay and memory, but more I/O overhead.
-			5 seconds is a good balance.
-
-		audio_sample_rate: Output audio sample rate in Hz.
-			16000 (16 kHz) is sufficient for voice and uses half the disk space
-			of 32 kHz. Higher rates preserve more high-frequency content.
-
-		audio_format: Output audio file format: 'wav' or 'flac'.
-			WAV (default) is uncompressed and embeds broadcast metadata (BEXT)
-			with sample-accurate timestamps, allowing audio editors to place
-			recordings on a timeline at their real capture time.
-			FLAC is lossless compressed — typically 20-45% smaller than WAV
-			depending on band and signal content (measured on real PMR and
-			airband archives) — but cannot carry BEXT timeline metadata;
-			date and time are stored as text tags only.
-
-		audio_output_dir: Directory where audio files are saved.
-			Files are organized as: output_dir/YYYY-MM-DD/band_name/filename.{wav,flac}
-
-		fade_in_ms: Fade-in duration in milliseconds when recording starts.
-			Prevents clicks from sudden audio onset. None = no fade. 50-100ms typical.
-
-		fade_out_ms: Fade-out duration in milliseconds when recording ends.
-			Prevents clicks from sudden cutoff. None = no fade. 50-100ms typical.
-
-		soft_limit_drive: Soft limiter aggressiveness (1.0 to 4.0).
-			Higher = more compression of loud signals. 2.0 is moderate limiting.
-			Prevents clipping while maintaining some dynamic range.
-
-		noise_reduction_enabled: Toggle spectral-subtraction noise reduction
-			on recorded audio.  Default: True.
-
-		recording_hold_time_ms: Duration in ms to continue recording after
-			signal drops below threshold (RF hold time).  Default: 500.
-
-		discard_empty_enabled: Automatically discard noise-only recordings
-			using spectral flatness.  Applies at turn-ON (Gate 2) and
-			turn-OFF (Gate 3b).  Default: True.
-
-		min_recording_seconds: Discard recordings shorter than this duration.
-			Catches brief transients (radar, ignition).  Set to 0 to
-			disable.  Default: 0.5.
-
-		audio_silence_timeout_ms: Stop recording when demodulated audio has
-			been silent for this duration, even if the RF carrier persists
-			(common on AM airband).  Set to 0 to disable.  Default: 3000.
-
-		dynamics_curve_enabled: Whether to apply the experimental dynamics-curve
-			noise reduction stage to recorded audio.  Disabled by default; see
-			DynamicsCurveConfig and apply_dynamics_curve for details.
-
-		dynamics_curve: Parameters for the dynamics-curve stage.  Only consulted
-			when dynamics_curve_enabled is True.
+	These settings control how the scanner buffers, processes, and saves the
+	audio it demodulates.
 	"""
 
-	model_config = pydantic.ConfigDict(extra='forbid')
+	model_config = pydantic.ConfigDict(extra='forbid', use_attribute_docstrings=True)
 
 	buffer_size_seconds: float = pydantic.Field(default=30.0, gt=0.0)
+	"""
+	Most audio, in seconds, the scanner holds in memory for each radio channel
+	before writing it to disk. If disk writes fall behind, the scanner drops the
+	oldest audio. A larger buffer tolerates slower disks and uses more memory.
+	"""
+
 	disk_flush_interval_seconds: float = pydantic.Field(default=5.0, gt=0.0)
+	"""
+	How often the scanner writes buffered audio to disk, in seconds. Shorter
+	intervals hold less audio in memory and cost more disk activity.
+	"""
+
 	audio_sample_rate: int = pydantic.Field(default=16000, gt=0)
+	"""
+	Sample rate of the recorded audio, in Hz. 16 kHz covers the voice band;
+	higher rates keep more high-frequency content and use more disk space.
+	"""
+
 	audio_format: typing.Literal['wav', 'flac'] = 'wav'
+	"""
+	File format for recordings. WAV is uncompressed and embeds Broadcast WAV
+	(BEXT) metadata with sample-accurate timestamps, so audio editors such as
+	Audacity, Reaper, and iZotope RX place each recording on a timeline at its
+	real capture time. FLAC is lossless and typically 20-45% smaller than WAV,
+	depending on the band and the signal, but cannot carry BEXT timeline
+	metadata: the date, time, and frequency are stored as text tags.
+	"""
+
 	audio_output_dir: str = './audio'
+	"""
+	Directory where the scanner saves recordings, in a folder for each date and
+	then each band: `<audio_output_dir>/YYYY-MM-DD/<band>/`.
+	"""
+
 	fade_in_ms: float | None = pydantic.Field(default=None, ge=0.0)
+	"""
+	Length of the fade-in at the start of each recording, in milliseconds, which
+	prevents a click from a sudden onset. Set to 0 or null for no fade.
+	"""
+
 	fade_out_ms: float | None = pydantic.Field(default=None, ge=0.0)
+	"""
+	Length of the fade-out at the end of each recording, in milliseconds, which
+	prevents a click from a sudden cutoff. Set to 0 or null for no fade.
+	"""
+
 	soft_limit_drive: float = pydantic.Field(default=2.0, gt=0.0)
+	"""
+	Drive of the soft limiter that keeps recordings from clipping. Higher values
+	compress loud signals more strongly; lower values leave more of the dynamic
+	range untouched.
+	"""
+
 	noise_reduction_enabled: bool = pydantic.Field(default=True)
+	"""
+	Whether the scanner applies spectral-subtraction noise reduction to recorded
+	audio. Set to false to record the demodulated audio without it.
+	"""
+
 	recording_hold_time_ms: float = pydantic.Field(default=500.0, ge=0.0)
+	"""
+	Time in milliseconds the scanner keeps recording after a radio channel's
+	signal drops below its off threshold.
+	"""
+
 	discard_empty_enabled: bool = pydantic.Field(default=True)
+	"""
+	Whether the scanner discards noise-only recordings, using spectral flatness
+	analysis. It rejects noise triggers before a recording starts, and discards
+	files that turn out to be mostly noise when they close.
+	"""
+
 	min_recording_seconds: float = pydantic.Field(default=0.5, ge=0.0)
+	"""
+	Shortest recording the scanner keeps, in seconds. It deletes shorter
+	recordings when they close, which catches brief transients, such as radar
+	pulses and ignition noise, that pass the spectral checks. Set to 0 to keep
+	every recording.
+	"""
+
 	audio_silence_timeout_ms: float = pydantic.Field(default=3000.0, ge=0.0)
+	"""
+	Audio silence timeout in milliseconds. Stops recording when demodulated audio
+	has been silent for this long, even if the RF carrier is still present
+	(common on AM airband where the carrier persists after voice stops). Set to 0
+	to rely on RF-only detection.
+	"""
+
 	trim_carrier_transients: bool = pydantic.Field(default=False)
+	"""
+	Whether the scanner removes the sharp clicks a transmitter makes at key-on
+	and key-off. It trims only transients bordered by silence, so voice is never
+	affected. Recommended for AM airband listening.
+	"""
+
 	dynamics_curve_enabled: bool = pydantic.Field(default=False)
+	"""
+	Whether the scanner applies the experimental dynamics curve, set by
+	`dynamics_curve`, to recorded audio.
+	"""
+
 	dynamics_curve: DynamicsCurveConfig = pydantic.Field(default_factory=DynamicsCurveConfig)
+	"""
+	Settings for the experimental dynamics curve. The scanner uses them only when
+	`dynamics_curve_enabled` is true.
+	"""
 
 
 class BandTypeConfig(pydantic.BaseModel):
 	"""
-	Template for common band types (e.g., DMR, TETRA, PMR).
+	A template of settings shared by one type of radio service, such as DMR,
+	TETRA, or PMR.
 
-	Allows defining default settings for a type of radio service, then applying
-	those defaults to multiple bands. For example, all DMR bands can share the
-	same channel spacing (12.5 kHz), modulation (4FSK), etc.
-
-	Bands can override any of these defaults by specifying the parameter explicitly.
-
-	All fields are optional here (bands must specify required fields or inherit them).
-
-	Attributes:
-		channel_spacing: Spacing between channel center frequencies in Hz.
-			E.g., 12.5 kHz for PMR/DMR, 25 kHz for marine VHF.
-
-		sample_rate: SDR sample rate in Hz. Must be high enough to cover
-			the entire band plus margins. E.g., 2 MHz for PMR446 (188 kHz band).
-
-		channel_width: Occupied bandwidth per channel in Hz.
-			If None, defaults to channel_spacing * 0.84 (leaves guard bands).
-
-		modulation: Modulation scheme (e.g., "NFM", "AM", "WFM").
-			Determines which demodulator is used for recording.
-
-		recording_enabled: Whether to record audio from detected transmissions.
-			False = detection only (no audio files created).
-
-		snr_threshold_db: Minimum SNR to consider a channel active (in dB).
-			Lower = more sensitive (detects weak signals) but more false positives.
-
-		sdr_gain_db: SDR gain setting in dB, or 'auto' for automatic gain control.
-			Higher gain = more sensitive but also amplifies noise and can cause clipping.
+	A band names its template in `type` and inherits the settings the template
+	gives, such as the radio channel spacing and modulation that every DMR band
+	shares. A band overrides an inherited setting by giving it itself. Every
+	setting in a template is optional, but each band must still end up with the
+	settings a band requires.
 	"""
 
-	model_config = pydantic.ConfigDict(extra='forbid')
+	model_config = pydantic.ConfigDict(extra='forbid', use_attribute_docstrings=True)
 
 	channel_spacing: float | None = pydantic.Field(default=None, gt=0)
+	"""
+	Spacing between radio channel centre frequencies, in Hz, for example 12.5 kHz
+	for PMR and DMR, or 25 kHz for marine VHF.
+	"""
+
 	sample_rate: float | None = pydantic.Field(default=None, gt=0)
+	"""
+	SDR sample rate in Hz. Must be high enough to cover the whole band plus
+	margins, for example 2 MHz for the 188 kHz PMR446 band.
+	"""
+
 	channel_width: float | None = pydantic.Field(default=None, gt=0)
+	"""
+	Occupied bandwidth of each radio channel, in Hz. When null, the scanner uses
+	84% of `channel_spacing`, which leaves guard bands between radio channels.
+	"""
+
 	modulation: str | None = None
+	"""
+	Modulation the scanner demodulates for recording: `NFM`, `AM`, `USB`, or
+	`LSB`, in any letter case.
+	"""
+
 	recording_enabled: bool = False
+	"""
+	Whether the scanner records audio from detected transmissions. Set to false
+	for detection only, with no audio files.
+	"""
+
 	snr_threshold_db: float | None = pydantic.Field(default=None)
+	"""
+	Signal-to-noise ratio in dB at which a radio channel counts as active. Lower
+	values detect weaker signals and trigger more often on noise.
+	"""
+
 	sdr_gain_db: float | str | None = 'auto'
+	"""
+	SDR gain in dB, or `auto` for automatic gain control. Higher gain is more
+	sensitive, and also amplifies noise and can cause clipping.
+	"""
 
 	@pydantic.field_validator('modulation', mode='before')
 	@classmethod
@@ -379,28 +444,49 @@ class BandTypeConfig(pydantic.BaseModel):
 
 
 class DeviceOverrideConfig(pydantic.BaseModel):
-	"""Device-specific overrides for a band.
+	"""
+	Settings that replace a band's own when the scanner runs on one family of SDR
+	device.
 
-	All fields are optional — only specified fields override the band's
-	base values when the matching device type is selected at runtime.
-
-	Attributes:
-		sample_rate: Device-specific SDR sample rate (must cover band span).
-		sdr_gain_db: Gain in dB or 'auto'.
-		sdr_gain_elements: Per-element gain mapping (e.g., LNA, MIX, VGA).
-		sdr_device_settings: Device-specific settings (e.g., bias tee).
-		snr_threshold_db: Device-specific SNR threshold.
-		activation_variance_db: Device-specific variance threshold.
+	Every setting is optional. Only the settings given here replace the band's,
+	and only when the device selected with `--device-type` is in that family.
 	"""
 
-	model_config = pydantic.ConfigDict(extra='forbid')
+	model_config = pydantic.ConfigDict(extra='forbid', use_attribute_docstrings=True)
 
 	sample_rate: float | None = pydantic.Field(default=None, gt=0)
+	"""
+	SDR sample rate in Hz on this device. Must cover the band's span.
+	"""
+
 	sdr_gain_db: float | str | None = None
+	"""
+	SDR gain in dB on this device, or `auto` for automatic gain control.
+	"""
+
 	sdr_gain_elements: dict[str, float] | None = None
+	"""
+	Gain in dB for each of this device's gain stages, keyed by stage name, for
+	example `LNA`, `MIX`, and `VGA`.
+	"""
+
 	sdr_device_settings: dict[str, str] | None = None
+	"""
+	Device-specific settings on this device, such as bias tee control, as string
+	keys and values.
+	"""
+
 	snr_threshold_db: float | None = None
+	"""
+	Signal-to-noise ratio in dB at which a radio channel counts as active on this
+	device.
+	"""
+
 	activation_variance_db: float | None = pydantic.Field(default=None, ge=0)
+	"""
+	Power variance in dB that a radio channel must show to count as active on
+	this device. Set to 0 to turn the check off.
+	"""
 
 	@pydantic.field_validator('sdr_gain_db', mode='before')
 	@classmethod
@@ -413,96 +499,126 @@ class DeviceOverrideConfig(pydantic.BaseModel):
 
 class BandConfig(pydantic.BaseModel):
 	"""
-	Configuration for a specific band to scan.
+	One band to scan.
 
-	Each band defines a frequency range, channel spacing, and scanning parameters.
-	The scanner will monitor all channels in this band simultaneously.
-
-	Attributes:
-		freq_start: Start of frequency range in Hz (e.g., 446.00625e6 for PMR446).
-
-		freq_end: End of frequency range in Hz (e.g., 446.19375e6 for PMR446).
-			Must be greater than freq_start.
-
-		channel_spacing: Spacing between channel centers in Hz (e.g., 12500 for 12.5 kHz).
-			Channels are generated from freq_start to freq_end with this spacing.
-
-		sample_rate: SDR sample rate in Hz. Must be high enough to cover
-			(freq_end - freq_start + channel_width + margins). E.g., 2 MHz for PMR446.
-
-		channel_width: Occupied bandwidth per channel in Hz.
-			If None, defaults to channel_spacing * 0.84 (leaves 16% guard bands).
-
-		type: Optional band type for inheriting defaults (e.g., "DMR", "TETRA").
-			If specified, inherits default values from band_defaults section.
-
-		modulation: Modulation scheme for demodulation (e.g., "NFM", "AM").
-			Required if recording_enabled is True.
-
-		recording_enabled: Whether to record audio from active channels.
-			If False, only detection is performed (no audio files).
-
-		exclude_channel_indices: List of channel numbers to skip (1-based,
-			matching the channel numbers shown in log output and filenames).
-			Useful for excluding known interference or out-of-band channels.
-			E.g., [1, 2] excludes the first two channels.
-
-		snr_threshold_db: Minimum SNR to detect a channel as active (in dB).
-			Default 12 dB is conservative. Lower values (e.g., 8-10 dB) detect
-			weaker signals but may have more false positives from noise.
-
-		sdr_gain_db: SDR gain in dB, or 'auto' for AGC.
-			'auto' is convenient but may not be optimal. Manual gain (e.g., 20-40 dB
-			for RTL-SDR) often works better for specific scenarios.
-
-		sdr_gain_elements: Optional per-element gain mapping for devices with
-			multiple gain stages (e.g., AirSpy R2 has LNA, Mixer, VGA).
-			Element names are device-specific — check the log output at
-			startup for available elements and their ranges.
-			Mutually exclusive with sdr_gain_db — if both are set,
-			sdr_gain_elements takes priority.
-
-		sdr_device_settings: Optional device-specific settings passed through
-			SoapySDR's writeSetting() API. Used for features like bias tee
-			control, external clock configuration, or device calibration.
-			Keys and values are device-specific strings.
-
-		hysteresis_db: Margin in dB between the ON and OFF thresholds.
-			A channel turns ON when SNR > snr_threshold_db, and OFF when
-			SNR < (snr_threshold_db - hysteresis_db).  This prevents rapid
-			toggling when SNR hovers near threshold.  Default 3.0 dB is
-			good for strong signals; use a lower value (e.g. 1.5) when
-			scanning weak signals with a low snr_threshold_db.
-
-		activation_variance_db: Minimum power variance (dB) across segment PSDs
-			required for a channel to be considered active.  Suppresses
-			channel triggers caused by stationary noise that crosses the SNR
-			threshold but contains no real signal.  Voice and data signals
-			show 5-15+ dB variance over a typical detection slice; stationary
-			noise shows under 2 dB.
-			Applies to all bands regardless of recording state.
-			Defaults to substation.constants.ACTIVATION_VARIANCE_DB.
-			Set to 0 to disable the check entirely.
+	A band sets a frequency range, the spacing of its radio channels, and how the
+	scanner treats them. The scanner monitors every radio channel in the band at
+	once.
 	"""
 
-	model_config = pydantic.ConfigDict(extra='forbid')
+	model_config = pydantic.ConfigDict(extra='forbid', use_attribute_docstrings=True)
 
 	freq_start: float = pydantic.Field(gt=0)
+	"""
+	Start of the band's frequency range in Hz, for example 446.00625 MHz for
+	PMR446.
+	"""
+
 	freq_end: float = pydantic.Field(gt=0)
+	"""
+	End of the band's frequency range in Hz, for example 446.19375 MHz for
+	PMR446. Must be above `freq_start`.
+	"""
+
 	channel_spacing: float = pydantic.Field(gt=0)
+	"""
+	Spacing between radio channel centre frequencies, in Hz, for example 12.5 kHz.
+	The scanner places radio channels from `freq_start` to `freq_end` at this
+	spacing.
+	"""
+
 	sample_rate: float = pydantic.Field(gt=0)
+	"""
+	SDR sample rate in Hz. Must be high enough to cover the band's span plus one
+	radio channel's width and margins, for example 2 MHz for PMR446.
+	"""
+
 	channel_width: float | None = pydantic.Field(default=None, gt=0)
+	"""
+	Occupied bandwidth of each radio channel, in Hz. When null, the scanner uses
+	84% of `channel_spacing`, which leaves 16% as guard bands.
+	"""
+
 	type: str | None = None
+	"""
+	Name of a template in `band_defaults`, such as `DMR` or `TETRA`, whose
+	settings the band inherits.
+	"""
+
 	modulation: str | None = None
+	"""
+	Modulation the scanner demodulates: `NFM`, `AM`, `USB`, or `LSB`, in any
+	letter case. Recording needs one; without it, the scanner only detects
+	activity in the band.
+	"""
+
 	recording_enabled: bool = False
+	"""
+	Whether the scanner records audio from active radio channels. Set to false
+	for detection only, with no audio files.
+	"""
+
 	exclude_channel_indices: list[int] = pydantic.Field(default_factory=list)
+	"""
+	Radio channel numbers the scanner skips, counting from 1, as shown in log
+	output and filenames. Use it for known interference or out-of-band radio
+	channels: `[1, 2]` skips the first two.
+	"""
+
 	snr_threshold_db: float = pydantic.Field(default=12.0)
+	"""
+	Signal-to-noise ratio in dB at which a radio channel turns on. Lower values,
+	such as 8-10 dB, detect weaker signals and trigger more often on noise.
+	"""
+
 	hysteresis_db: float = pydantic.Field(default=3.0, ge=0)
+	"""
+	Margin in dB between the on and off thresholds. A radio channel turns on when
+	its SNR rises above `snr_threshold_db`, and off when it falls below
+	`snr_threshold_db` minus this margin, which stops it toggling while the SNR
+	hovers near the threshold. Use a lower value, such as 1.5 dB, when scanning
+	weak signals with a low `snr_threshold_db`.
+	"""
+
 	sdr_gain_db: float | str | None = 'auto'
+	"""
+	SDR gain in dB, or `auto` for automatic gain control. `auto` is convenient,
+	but a manual gain, for example 20-40 dB on RTL-SDR, often works better.
+	"""
+
 	sdr_gain_elements: dict[str, float] | None = None
+	"""
+	Gain in dB for each gain stage, on devices with several, keyed by stage name:
+	the AirSpy R2, for example, has `LNA`, `MIX`, and `VGA`. Stage names depend on
+	the device, and the scanner logs the available stages and their ranges at
+	startup. When set, it takes priority over `sdr_gain_db`.
+	"""
+
 	sdr_device_settings: dict[str, str] | None = None
+	"""
+	Device-specific settings the scanner passes to the SDR through SoapySDR's
+	`writeSetting()`, such as bias tee control, an external clock, or device
+	calibration. Keys and values are device-specific strings.
+	"""
+
 	activation_variance_db: float | None = pydantic.Field(default=None, ge=0)
+	"""
+	Power variance in dB, across a detection slice, that a radio channel must
+	show to turn on. It suppresses triggers from stationary noise that crosses
+	the SNR threshold with no real signal: voice and data vary by 5-15 dB or more
+	over a slice, and stationary noise by under 2 dB. It applies whether or not
+	the band records. When null, the scanner uses
+	`substation.constants.ACTIVATION_VARIANCE_DB`. Set to 0 to turn the check
+	off.
+	"""
+
 	device_overrides: dict[str, DeviceOverrideConfig] | None = None
+	"""
+	Settings that replace this band's own on one family of SDR device, keyed by
+	family: `rtlsdr`, `hackrf`, `airspy`, `airspyhf`, or a SoapySDR driver name.
+	When the scanner runs with a matching `--device-type`, it merges those
+	settings onto the band's.
+	"""
 
 	@pydantic.field_validator('modulation', 'type', mode='before')
 	@classmethod
@@ -582,39 +698,34 @@ class BandConfig(pydantic.BaseModel):
 
 class AppConfig(pydantic.BaseModel):
 	"""
-	Top-level application configuration.
+	The whole configuration.
 
-	This is the root of the configuration hierarchy, containing global settings
-	(scanner and recording) and band-specific settings.
-
-	Configuration file structure:
-		scanner: {...}           # Global scanner settings
-		recording: {...}         # Global recording settings
-		band_defaults:           # Optional templates for band types
-			DMR: {...}
-			TETRA: {...}
-		bands:                   # Actual bands to scan
-			pmr: {...}
-			airband: {...}
-
-	Attributes:
-		scanner: Global scanner configuration (required).
-
-		recording: Global recording configuration (optional, uses defaults if not specified).
-
-		band_defaults: Optional templates for band types. Bands can reference these
-			via the 'type' field to inherit default values.
-
-		bands: Dictionary of bands to scan, keyed by band name.
-			At least one band is required.
+	A configuration file has four top-level sections: `scanner`, `recording`,
+	`band_defaults`, and `bands`.
 	"""
 
-	model_config = pydantic.ConfigDict(extra='forbid')
+	model_config = pydantic.ConfigDict(extra='forbid', use_attribute_docstrings=True)
 
 	scanner: ScannerConfig
+	"""
+	Scanner settings, applying to every band.
+	"""
+
 	recording: RecordingConfig = pydantic.Field(default_factory=RecordingConfig)
+	"""
+	Recording settings, applying to every band that records.
+	"""
+
 	band_defaults: dict[str, BandTypeConfig] = pydantic.Field(default_factory=dict)
+	"""
+	Templates of settings for types of radio service, keyed by type name. A band
+	inherits a template's settings by naming it in `type`.
+	"""
+
 	bands: dict[str, BandConfig]
+	"""
+	The bands to scan, keyed by band name. At least one band is required.
+	"""
 
 	@pydantic.model_validator(mode='after')
 	def _validate_bands (self) -> 'AppConfig':
