@@ -11,14 +11,51 @@ Typical specifications:
 This implementation wraps the pyrtlsdr library to conform to the BaseDevice interface.
 """
 
+import importlib
+import importlib.util
 import logging
+import sys
+import types
 import typing
-
-import rtlsdr
 
 import substation.devices.base
 
 logger = logging.getLogger(__name__)
+
+
+def _import_pyrtlsdr () -> types.ModuleType:
+
+	"""
+	Import pyrtlsdr, even where the pkg_resources module it expects is missing.
+
+	pyrtlsdr 0.3.0 runs `import pkg_resources` when it loads, only to read its
+	own version number inside a try/except that falls back to 'unknown'.
+	pkg_resources ships with setuptools, which Python 3.12 and later no longer
+	put in a new venv, and which setuptools 81 removed.  Without it, the RTL-SDR
+	cannot be opened at all.  pyrtlsdr 0.4.0 no longer needs it, but requires a
+	librtlsdr symbol that distro builds lack, so the project stays on 0.3.0.
+
+	When the real module is missing, an empty stand-in is registered for the
+	length of the import only, so pyrtlsdr's version lookup fails harmlessly
+	inside its own try/except.  Anything importing pkg_resources afterwards
+	still gets an ImportError rather than the empty stand-in.
+	"""
+
+	stand_in = None
+
+	if importlib.util.find_spec("pkg_resources") is None:
+		stand_in = types.ModuleType("pkg_resources")
+		sys.modules["pkg_resources"] = stand_in
+
+	try:
+		return importlib.import_module("rtlsdr")
+
+	finally:
+		if stand_in is not None and sys.modules.get("pkg_resources") is stand_in:
+			del sys.modules["pkg_resources"]
+
+
+rtlsdr = _import_pyrtlsdr()
 
 
 class RtlSdrDevice (substation.devices.base.BaseDevice):

@@ -1,7 +1,11 @@
 """Tests for the device factory, mock protocol, and FileDevice."""
 
+import ctypes.util
 import datetime
 import importlib
+import importlib.machinery
+import importlib.util
+import subprocess
 import sys
 import threading
 import types
@@ -142,6 +146,89 @@ class TestRtlSdrFreqCorrection:
 
 		assert device.freq_correction == 5
 		assert device._device.corrections_sent == [5]
+
+
+# pyrtlsdr 0.3.0's __init__.py, reduced to the part that matters here: it
+# imports pkg_resources unconditionally, then reads its own version inside a
+# bare try/except.
+PYRTLSDR_0_3_0_INIT = """
+import pkg_resources
+
+try:
+    __version__ = pkg_resources.require('pyrtlsdr')[0].version
+except:
+    __version__ = 'unknown'
+
+
+class RtlSdr:
+    pass
+"""
+
+
+@pytest.fixture
+def import_rtlsdr_device_module (tmp_path, monkeypatch):
+
+	"""Import substation.devices.rtlsdr afresh against a pyrtlsdr that imports pkg_resources as 0.3.0 does."""
+
+	package = tmp_path / "rtlsdr"
+	package.mkdir()
+	(package / "__init__.py").write_text(PYRTLSDR_0_3_0_INIT)
+	monkeypatch.syspath_prepend(str(tmp_path))
+
+	with unittest.mock.patch.dict(sys.modules):
+
+		for name in ("rtlsdr", "substation.devices.rtlsdr", "pkg_resources"):
+			sys.modules.pop(name, None)
+
+		yield lambda: importlib.import_module("substation.devices.rtlsdr")
+
+	if hasattr(substation.devices, "rtlsdr"):
+		delattr(substation.devices, "rtlsdr")
+
+
+class TestPyrtlsdrImport:
+
+	def test_imports_when_pkg_resources_is_missing (self, import_rtlsdr_device_module, monkeypatch):
+		"""Regression: without pkg_resources, pyrtlsdr 0.3.0 failed to import, so no RTL-SDR could open.
+
+		Python 3.12 and later no longer put setuptools, which provides
+		pkg_resources, in a new venv.  The import must now succeed, and the
+		stand-in must not outlive it.
+		"""
+		real_find_spec = importlib.util.find_spec
+		monkeypatch.setattr(importlib.util, "find_spec", lambda name, *args: None if name == "pkg_resources" else real_find_spec(name, *args))
+
+		module = import_rtlsdr_device_module()
+
+		assert module.rtlsdr.__version__ == "unknown"
+		assert "pkg_resources" not in sys.modules
+
+	def test_real_pkg_resources_is_used_when_present (self, import_rtlsdr_device_module):
+		"""Where pkg_resources exists, pyrtlsdr imports it untouched and reads its version."""
+		distribution = types.SimpleNamespace(version="0.3.0")
+		real = types.ModuleType("pkg_resources")
+		real.__spec__ = importlib.machinery.ModuleSpec("pkg_resources", None)
+		real.require = lambda name: [distribution]
+		sys.modules["pkg_resources"] = real
+
+		module = import_rtlsdr_device_module()
+
+		assert module.rtlsdr.__version__ == "0.3.0"
+		assert sys.modules["pkg_resources"] is real
+
+	@pytest.mark.skipif(
+		importlib.util.find_spec("rtlsdr") is None or ctypes.util.find_library("rtlsdr") is None,
+		reason="needs pyrtlsdr and librtlsdr installed",
+	)
+	def test_real_pyrtlsdr_imports_in_a_fresh_interpreter (self):
+		"""The installed pyrtlsdr imports through Substation's device module, whether or not setuptools is installed."""
+		result = subprocess.run(
+			[sys.executable, "-c", "import substation.devices.rtlsdr"],
+			capture_output=True,
+			text=True,
+		)
+
+		assert result.returncode == 0, result.stderr
 
 
 class TestFileDevice:

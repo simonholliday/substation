@@ -1,7 +1,10 @@
 [build-system]
-# setuptools 81 removed pkg_resources, which several of our runtime
-# dependencies still import.  Pin below 81 until they catch up.  The >=77
-# floor is required for the PEP 639 SPDX `license` string form below.
+# The >=77 floor is required for the PEP 639 SPDX `license` string form below.
+# The <81 cap dates from setuptools 81 removing pkg_resources, but a build
+# requirement never reaches the environment Substation runs in.  pyrtlsdr,
+# the only runtime dependency that imports pkg_resources, is handled in
+# substation/devices/rtlsdr.py instead.  The cap stays until a build without
+# it has been checked.
 requires = ["setuptools>=77,<81", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
@@ -32,7 +35,9 @@ dependencies = [
     # pyrtlsdr 0.4.0+ requires the rtlsdr_set_dithering symbol from the
     # rtl-sdr-blog fork.  Pinning below 0.4.0 keeps the package working
     # against distro-packaged librtlsdr too — see INSTALL.md for
-    # the fork build instructions.
+    # the fork build instructions.  0.3.0 imports pkg_resources at load time,
+    # which substation/devices/rtlsdr.py provides a stand-in for when setuptools
+    # is absent (the default in Python 3.12+ venvs).
     "pyrtlsdr>=0.3.0,<0.4.0",
     "python_hackrf",
     "noisereduce>=3.0.3",
