@@ -123,21 +123,21 @@ class ScannerConfig(pydantic.BaseModel):
 	# field's docstring as its description in the JSON schema
 	model_config = pydantic.ConfigDict(extra='forbid', use_attribute_docstrings=True)
 
-	sdr_device_sample_size: int = pydantic.Field(gt=0)
+	sdr_device_sample_size: int = pydantic.Field(default=131072, gt=0)
 	"""
 	Number of IQ samples the scanner reads from the SDR in each block. Larger
 	blocks make USB transfers more efficient; smaller blocks lower the latency.
 	Must be a power of two for RTL-SDR, for example 16384, 32768 or 65536.
 	"""
 
-	band_time_slice_ms: int = pydantic.Field(gt=0)
+	band_time_slice_ms: int = pydantic.Field(default=200, gt=0)
 	"""
 	How often the scanner analyses the spectrum, in milliseconds. The scanner
 	rounds each slice up to a whole number of `sdr_device_sample_size` blocks.
 	Shorter slices detect brief transmissions sooner; longer slices use less CPU.
 	"""
 
-	sample_queue_maxsize: int = pydantic.Field(default=30, gt=0)
+	sample_queue_maxsize: int = pydantic.Field(default=200, gt=0)
 	"""
 	Number of blocks of IQ samples the scanner holds while processing catches up.
 	When the queue is full, the scanner drops newly arriving blocks with a
@@ -148,7 +148,7 @@ class ScannerConfig(pydantic.BaseModel):
 	systems.
 	"""
 
-	calibration_frequency_hz: float | None = pydantic.Field(default=None, gt=0)
+	calibration_frequency_hz: float | None = pydantic.Field(default=93.7e6, gt=0)
 	"""
 	Frequency in Hz of a strong, steady local signal, such as an FM broadcast
 	station, that the scanner uses at startup to measure and correct the
@@ -158,7 +158,7 @@ class ScannerConfig(pydantic.BaseModel):
 	skip calibration. Set to null to turn calibration off.
 	"""
 
-	stuck_channel_threshold_seconds: float | None = pydantic.Field(default=None, gt=0)
+	stuck_channel_threshold_seconds: float | None = pydantic.Field(default=60.0, gt=0)
 	"""
 	Time in seconds after which the scanner warns that a radio channel has stayed
 	active, which usually points to interference or a stuck transmitter. The
@@ -300,19 +300,19 @@ class RecordingConfig(pydantic.BaseModel):
 	then each band: `<audio_output_dir>/YYYY-MM-DD/<band>/`.
 	"""
 
-	fade_in_ms: float | None = pydantic.Field(default=None, ge=0.0)
+	fade_in_ms: float | None = pydantic.Field(default=15.0, ge=0.0)
 	"""
 	Length of the fade-in at the start of each recording, in milliseconds, which
 	prevents a click from a sudden onset. Set to 0 or null for no fade.
 	"""
 
-	fade_out_ms: float | None = pydantic.Field(default=None, ge=0.0)
+	fade_out_ms: float | None = pydantic.Field(default=50.0, ge=0.0)
 	"""
 	Length of the fade-out at the end of each recording, in milliseconds, which
 	prevents a click from a sudden cutoff. Set to 0 or null for no fade.
 	"""
 
-	soft_limit_drive: float = pydantic.Field(default=2.0, gt=0.0)
+	soft_limit_drive: float = pydantic.Field(default=1.25, gt=0.0)
 	"""
 	Drive of the soft limiter that keeps recordings from clipping. Higher values
 	compress loud signals more strongly; lower values leave more of the dynamic
@@ -464,13 +464,13 @@ class DeviceOverrideConfig(pydantic.BaseModel):
 	SDR gain in dB on this device, or `auto` for automatic gain control.
 	"""
 
-	sdr_gain_elements: dict[str, float] | None = None
+	sdr_gain_elements: dict[str, float] | None = pydantic.Field(default=None, examples=[{'LNA': 10, 'MIX': 5, 'VGA': 12}])
 	"""
 	Gain in dB for each of this device's gain stages, keyed by stage name, for
 	example `LNA`, `MIX`, and `VGA`.
 	"""
 
-	sdr_device_settings: dict[str, str] | None = None
+	sdr_device_settings: dict[str, str] | None = pydantic.Field(default=None, examples=[{'biastee': 'true'}])
 	"""
 	Device-specific settings on this device, such as bias tee control, as string
 	keys and values.
@@ -586,7 +586,7 @@ class BandConfig(pydantic.BaseModel):
 	but a manual gain, for example 20-40 dB on RTL-SDR, often works better.
 	"""
 
-	sdr_gain_elements: dict[str, float] | None = None
+	sdr_gain_elements: dict[str, float] | None = pydantic.Field(default=None, examples=[{'LNA': 10, 'MIX': 5, 'VGA': 12}])
 	"""
 	Gain in dB for each gain stage, on devices with several, keyed by stage name:
 	the AirSpy R2, for example, has `LNA`, `MIX`, and `VGA`. Stage names depend on
@@ -594,7 +594,7 @@ class BandConfig(pydantic.BaseModel):
 	startup. When set, it takes priority over `sdr_gain_db`.
 	"""
 
-	sdr_device_settings: dict[str, str] | None = None
+	sdr_device_settings: dict[str, str] | None = pydantic.Field(default=None, examples=[{'biastee': 'true'}])
 	"""
 	Device-specific settings the scanner passes to the SDR through SoapySDR's
 	`writeSetting()`, such as bias tee control, an external clock, or device
@@ -612,7 +612,10 @@ class BandConfig(pydantic.BaseModel):
 	off.
 	"""
 
-	device_overrides: dict[str, DeviceOverrideConfig] | None = None
+	device_overrides: dict[str, DeviceOverrideConfig] | None = pydantic.Field(
+		default=None,
+		examples=[{'airspy': {'sample_rate': 2.5e6, 'sdr_gain_elements': {'LNA': 14, 'MIX': 5, 'VGA': 12}}}],
+	)
 	"""
 	Settings that replace this band's own on one family of SDR device, keyed by
 	family: `rtlsdr`, `hackrf`, `airspy`, `airspyhf`, or a SoapySDR driver name.
