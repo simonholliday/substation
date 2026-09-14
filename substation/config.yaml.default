@@ -15,6 +15,7 @@ scanner:
 
     # Frequency calibration using a known strong signal (e.g., WFM broadcast)
     # Set to null to disable calibration
+    # If no strong, steady signal is found there, calibration is skipped with a warning
     # Example: 93.7e+6 for a strong FM radio station at 93.7 MHz
     calibration_frequency_hz: 93.7e+6
     

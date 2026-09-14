@@ -703,6 +703,12 @@ class RadioScanner:
 		"""
 		Calibrate SDR frequency offset using a known strong signal
 
+		Measures how far the known signal's peak sits from where it should be and
+		applies the opposite of that offset as a PPM correction, but only when the
+		measurements can be trusted (see _evaluate_calibration).  Otherwise the device's existing
+		correction is left unchanged and a warning says why.  The device's centre
+		frequency and sample rate are always restored, even if a read fails.
+
 		Args:
 			known_freq: Known signal frequency in Hz (e.g., 93.7 MHz for WFM broadcast)
 			bandwidth: Bandwidth to sample in Hz (default: 300 kHz)
@@ -716,115 +722,162 @@ class RadioScanner:
 		initial_center_freq = self.sdr.center_freq
 		initial_sample_rate = self.sdr.sample_rate
 
-		# Configure for calibration
-		self.sdr.center_freq = known_freq
-		self.sdr.sample_rate = bandwidth
-
-		# Warm-up: discard first few reads to flush stale buffer data
-
-		logger.info("Warming up SDR...")
-		sample_size = 256 * 1024
-
-		for _ in range(3):
-
-			self.sdr.read_samples(sample_size)
-			time.sleep(0.1)
-
-		freq_correction_ppm_list = []
+		offset_ppm_list: list[float] = []
 		peak_magnitudes = []
 		magnitude_db = None  # Will be set in loop, used for noise floor calculation
 
-		logger.info(f"Calibrating SDR using known signal at {known_freq/1e6:.3f} MHz within {bandwidth/1e3:.0f} kHz bandwidth. This will take a few seconds...")
+		try:
 
-		for iteration in range(iterations, 0, -1):
+			# Configure for calibration
+			self.sdr.center_freq = known_freq
+			self.sdr.sample_rate = bandwidth
 
-			logger.debug(f"Calibration measurement {iterations - iteration + 1}/{iterations}...")
+			# Warm-up: discard first few reads to flush stale buffer data
 
-			# Read samples
-			samples = self.sdr.read_samples(sample_size)
+			logger.info("Warming up SDR...")
+			sample_size = 256 * 1024
 
-			# Apply window and compute FFT
-			window = numpy.hanning(sample_size)
-			fft_result = numpy.fft.fftshift(numpy.fft.fft(samples * window))
-			freqs = numpy.fft.fftshift(numpy.fft.fftfreq(sample_size, 1 / self.sdr.sample_rate))
-			magnitude_db = 20 * numpy.log10(numpy.abs(fft_result) + 1e-10)
+			for _ in range(3):
 
-			# Find peak frequency within expected range (±50 kHz)
-			# This prevents locking onto wrong signals or noise spikes
-			search_range_hz = 50e3
-			freq_mask = numpy.abs(freqs) < search_range_hz
-			if numpy.sum(freq_mask) == 0:
-				logger.warning(f"No frequency bins within ±{search_range_hz/1e3:.0f} kHz search range")
-				continue
+				self.sdr.read_samples(sample_size)
+				time.sleep(0.1)
 
-			peak_index_local = numpy.argmax(magnitude_db[freq_mask])
-			freqs_filtered = freqs[freq_mask]
-			measured_freq = self.sdr.center_freq + freqs_filtered[peak_index_local]
-			peak_mag = magnitude_db[freq_mask][peak_index_local]
+			logger.info(f"Calibrating SDR using known signal at {known_freq/1e6:.3f} MHz within {bandwidth/1e3:.0f} kHz bandwidth. This will take a few seconds...")
 
-			# Store peak magnitude for signal validation
-			peak_magnitudes.append(peak_mag)
+			for iteration in range(iterations, 0, -1):
 
-			# Calculate PPM error (divide by known_freq, not center_freq)
-			freq_error_ppm = (measured_freq - known_freq) / known_freq * 1e6
-			freq_correction_ppm_list.append(freq_error_ppm)
+				logger.debug(f"Calibration measurement {iterations - iteration + 1}/{iterations}...")
 
-			# Settling delay between measurements
-			time.sleep(0.2)
+				# Read samples
+				samples = self.sdr.read_samples(sample_size)
 
-		# Bail out if no valid measurements were captured
-		if not freq_correction_ppm_list:
-			logger.warning("Calibration failed: no valid measurements collected")
+				# Apply window and compute FFT
+				window = numpy.hanning(sample_size)
+				fft_result = numpy.fft.fftshift(numpy.fft.fft(samples * window))
+				freqs = numpy.fft.fftshift(numpy.fft.fftfreq(sample_size, 1 / self.sdr.sample_rate))
+				magnitude_db = 20 * numpy.log10(numpy.abs(fft_result) + 1e-10)
+
+				# Find peak frequency within expected range (±50 kHz)
+				# This prevents locking onto wrong signals or noise spikes
+				search_range_hz = 50e3
+				freq_mask = numpy.abs(freqs) < search_range_hz
+				if numpy.sum(freq_mask) == 0:
+					logger.warning(f"No frequency bins within ±{search_range_hz/1e3:.0f} kHz search range")
+					continue
+
+				peak_index_local = numpy.argmax(magnitude_db[freq_mask])
+				freqs_filtered = freqs[freq_mask]
+				measured_freq = self.sdr.center_freq + freqs_filtered[peak_index_local]
+				peak_mag = magnitude_db[freq_mask][peak_index_local]
+
+				# Store peak magnitude for signal validation
+				peak_magnitudes.append(peak_mag)
+
+				# How far the station appears from its true frequency, in PPM
+				# (divide by known_freq, not center_freq)
+				offset_ppm = (measured_freq - known_freq) / known_freq * 1e6
+				offset_ppm_list.append(float(offset_ppm))
+
+				# Settling delay between measurements
+				time.sleep(0.2)
+
+		finally:
+
+			# Restore original settings, including when a read fails part way, so
+			# the scan never starts tuned to the calibration station
+			self.sdr.center_freq = initial_center_freq
+			self.sdr.sample_rate = initial_sample_rate
+
+		# Signal strength: strongest peak against the noise floor of the last spectrum
+		if magnitude_db is not None and peak_magnitudes:
+			signal_strength_db = float(numpy.mean(peak_magnitudes) - numpy.percentile(magnitude_db, 25))
+		else:
+			signal_strength_db = 0.0
+
+		freq_correction_ppm, reason = self._evaluate_calibration(offset_ppm_list, signal_strength_db)
+
+		if freq_correction_ppm is None:
+			logger.warning(
+				f"Frequency calibration at {known_freq/1e6:.3f} MHz skipped: {reason}. "
+				"The receiver's frequency correction is unchanged. Set scanner.calibration_frequency_hz "
+				"to a strong local station, or to null to turn calibration off."
+			)
 			return
 
-		# Validate signal strength (peak should be significantly above noise floor)
-		# Use the last magnitude_db array from the loop
-		avg_peak_mag = numpy.mean(peak_magnitudes)
-		if magnitude_db is not None:
-			noise_floor = numpy.percentile(magnitude_db, 25)
-			signal_strength_db = avg_peak_mag - noise_floor
-		else:
-			signal_strength_db = 0  # Fallback if no iterations ran
-
-		if signal_strength_db < 10:
-			logger.warning(f"Calibration signal weak ({signal_strength_db:.1f} dB SNR)")
-			logger.warning("Calibration may be inaccurate - ensure strong signal at calibration frequency")
-
-		# Remove outliers using IQR method
-		q1 = numpy.percentile(freq_correction_ppm_list, 25)
-		q3 = numpy.percentile(freq_correction_ppm_list, 75)
-		iqr = q3 - q1
-		filtered_ppm = [x for x in freq_correction_ppm_list if q1 - 1.5*iqr <= x <= q3 + 1.5*iqr]
-
-		# Use median of filtered values (more robust than mean)
-		if len(filtered_ppm) == 0:
-			logger.warning("All calibration measurements were outliers - using unfiltered data")
-			filtered_ppm = freq_correction_ppm_list
-
-		freq_correction_ppm = int(round(numpy.median(filtered_ppm)))
-		ppm_std = numpy.std(filtered_ppm)
-
-		# Log measurement statistics
-		logger.info(f"Calibration measurements: {len(freq_correction_ppm_list)} total, {len(filtered_ppm)} after outlier removal")
-
-		if ppm_std > 5:
-			logger.warning(f"Calibration measurements inconsistent (std dev: {ppm_std:.2f} PPM)")
-
-		# Restore original settings
-		self.sdr.center_freq = initial_center_freq
-		self.sdr.sample_rate = initial_sample_rate
-
-		# Apply correction if needed
-		if freq_correction_ppm != 0:
-			# Sanity check - typical RTL-SDR drift is within ±100 PPM
-			if abs(freq_correction_ppm) > 200:
-				logger.warning(f"Calibration calculated unusually large correction: {freq_correction_ppm} PPM")
-				logger.warning("This may indicate incorrect calibration frequency or hardware issue")
-
-			self.sdr.freq_correction = freq_correction_ppm
-			logger.info(f"SDR calibrated with frequency correction: {freq_correction_ppm} PPM (signal: {signal_strength_db:.1f} dB SNR)")
-		else:
+		if freq_correction_ppm == 0:
 			logger.info("SDR calibration complete - no correction needed")
+			return
+
+		# The offsets were measured with the device's current correction in
+		# effect, so the result adjusts that correction rather than replacing it
+		total_correction_ppm = self.sdr.freq_correction + freq_correction_ppm
+		self.sdr.freq_correction = total_correction_ppm
+		logger.info(f"SDR calibrated with frequency correction: {total_correction_ppm} PPM (signal: {signal_strength_db:.1f} dB SNR)")
+
+	@staticmethod
+	def _evaluate_calibration (ppm_measurements: list[float], signal_strength_db: float) -> tuple[int | None, str]:
+
+		"""
+		Decide whether calibration measurements are trustworthy enough to apply
+
+		A station that appears N PPM above its true frequency needs a correction
+		of -N.  Measured on an RTL-SDR Blog V4 against a broadcast station: each
+		PPM of correction moves the station one PPM further in the same direction,
+		so applying +N would double the error rather than cancel it.
+
+		A missing station is the case the checks guard against.  With nothing at
+		the calibration frequency, each measurement locks onto a random noise peak,
+		the results scatter by hundreds of PPM, and their median is a random
+		correction that would mistune every radio channel.  The spread check is
+		what catches it: pure noise passes the signal strength check.  The same
+		check refuses a heavily modulated station whose peak wanders.
+
+		Args:
+			ppm_measurements: How far the station appeared from its true frequency
+				in each measurement, in PPM
+			signal_strength_db: Strongest peak relative to the noise floor, in dB
+
+		Returns:
+			(correction_ppm, reason): correction_ppm is the change to make to the
+			device's correction, the negated and rounded median offset after
+			outlier removal, or None when it must not be applied, in which case
+			reason says why (and is empty otherwise).
+		"""
+
+		if not ppm_measurements:
+			return None, "no measurements were collected"
+
+		# Remove outliers with the IQR method, so a minority of disturbed
+		# measurements cannot drag the result.  The IQR range always keeps at
+		# least one measurement.
+		q1 = float(numpy.percentile(ppm_measurements, 25))
+		q3 = float(numpy.percentile(ppm_measurements, 75))
+		iqr = q3 - q1
+		filtered_ppm = [x for x in ppm_measurements if q1 - 1.5 * iqr <= x <= q3 + 1.5 * iqr]
+
+		spread_ppm = float(numpy.std(filtered_ppm))
+		correction_ppm = -int(round(float(numpy.median(filtered_ppm))))
+
+		if spread_ppm > substation.constants.CALIBRATION_MAX_SPREAD_PPM:
+			return None, (
+				f"the measurements disagree by {spread_ppm:.1f} PPM "
+				f"(at most {substation.constants.CALIBRATION_MAX_SPREAD_PPM:g} allowed), "
+				"which usually means no station is broadcasting there"
+			)
+
+		if signal_strength_db < substation.constants.CALIBRATION_MIN_SIGNAL_DB:
+			return None, (
+				f"the signal is too weak ({signal_strength_db:.1f} dB above the noise floor, "
+				f"at least {substation.constants.CALIBRATION_MIN_SIGNAL_DB:g} needed)"
+			)
+
+		if abs(correction_ppm) > substation.constants.CALIBRATION_MAX_CORRECTION_PPM:
+			return None, (
+				f"the measured correction of {correction_ppm} PPM is larger than a working "
+				f"receiver needs (at most {substation.constants.CALIBRATION_MAX_CORRECTION_PPM} allowed)"
+			)
+
+		return correction_ppm, ""
 
 	def _setup_sdr (self) -> None:
 

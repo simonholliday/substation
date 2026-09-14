@@ -133,7 +133,9 @@ class ScannerConfig(pydantic.BaseModel):
 			for automatic PPM calibration (e.g., 93.7e6 for a local FM station).
 			If None, calibration is skipped. Requires a device with both a
 			synchronous read and a PPM correction control — currently RTL-SDR
-			only; other devices skip calibration automatically.
+			only; other devices skip calibration automatically.  If no strong,
+			steady signal is found there, calibration is skipped with a warning
+			and the receiver's correction is left unchanged.
 	"""
 
 	# Reject unknown fields (catch typos in config file)

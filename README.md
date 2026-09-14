@@ -493,7 +493,7 @@ scanner:
 - `sdr_device_sample_size`: number of IQ samples per SDR callback. Higher values reduce callback overhead but increase latency.
 - `band_time_slice_ms`: time slice used for PSD/SNR detection. Must be a multiple of `sdr_device_sample_size` (rounded up internally).
 - `sample_queue_maxsize`: async queue depth. 100-200 is typical (each block can be several MB); higher tolerates bursts but uses more RAM, so use 50-100 on memory-constrained systems.
-- `calibration_frequency_hz`: optional known signal for PPM correction; set to `null` to disable. Requires a device with a PPM correction control — currently RTL-SDR only; other devices skip calibration automatically.
+- `calibration_frequency_hz`: optional known signal for PPM correction; set to `null` to disable. Requires a device with a PPM correction control — currently RTL-SDR only; other devices skip calibration automatically. If no strong, steady signal is found at that frequency, calibration is skipped with a warning and the receiver's correction is left as it was, so choose a station you can receive well.
 - `stuck_channel_threshold_seconds`: optional duration in seconds after which a constant signal will trigger a "Stuck Channel" warning. Useful for identifying interference or stuck transmitters. Set to `null` to disable.
 
 Recording

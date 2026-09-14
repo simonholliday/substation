@@ -39,6 +39,11 @@ class RtlSdrDevice (substation.devices.base.BaseDevice):
 		self._device_index = device_index
 		self._device = rtlsdr.RtlSdr(device_index)
 
+		# librtlsdr starts every opened device with no correction.  The value is
+		# remembered here rather than read back, because pyrtlsdr's getter treats
+		# any negative correction as an error code and closes the device.
+		self._freq_correction = 0
+
 	@property
 	def sample_rate (self) -> float:
 		"""Get the current sample rate in Hz"""
@@ -77,8 +82,11 @@ class RtlSdrDevice (substation.devices.base.BaseDevice):
 		RTL-SDR uses a crystal oscillator that can drift with temperature.
 		PPM correction compensates for this: +10 PPM means the crystal is
 		10 parts per million fast, so we adjust down by that amount.
+
+		Returns the last value set rather than asking the driver: pyrtlsdr
+		reports a negative correction as a failure and closes the device.
 		"""
-		return self._device.freq_correction
+		return self._freq_correction
 
 	@freq_correction.setter
 	def freq_correction (self, value: int) -> None:
@@ -88,8 +96,15 @@ class RtlSdrDevice (substation.devices.base.BaseDevice):
 		Positive values: crystal is fast, correct downward
 		Negative values: crystal is slow, correct upward
 		Typical range: -100 to +100 PPM
+
+		Setting the value the device already holds is skipped, because
+		librtlsdr rejects it as an invalid parameter.
 		"""
+		if value == self._freq_correction:
+			return
+
 		self._device.freq_correction = value
+		self._freq_correction = value
 
 	@property
 	def serial (self) -> str | None:

@@ -1,6 +1,7 @@
 """Tests for the device factory, mock protocol, and FileDevice."""
 
 import datetime
+import importlib
 import sys
 import threading
 import types
@@ -67,6 +68,80 @@ class TestCreateDevice:
 	def test_case_insensitive (self):
 		mock_cls = _mock_create_device("RTLSDR", "rtlsdr", "RtlSdrDevice")
 		mock_cls.assert_called_once()
+
+
+class FakePyRtlSdr:
+
+	"""Stands in for pyrtlsdr's RtlSdr, with the two correction quirks seen on a real RTL-SDR Blog V4."""
+
+	def __init__ (self, device_index: int) -> None:
+
+		"""Open with no correction, as librtlsdr does."""
+
+		self.correction = 0
+		self.corrections_sent: list[int] = []
+
+	@property
+	def freq_correction (self) -> int:
+
+		"""Like pyrtlsdr, treat a negative correction as an error code (the real one also closes the device)."""
+
+		if self.correction < 0:
+			raise OSError(f"Error code {self.correction}: Could not get freq. offset")
+
+		return self.correction
+
+	@freq_correction.setter
+	def freq_correction (self, value: int) -> None:
+
+		"""Like librtlsdr, reject setting the correction the device already holds."""
+
+		if value == self.correction:
+			raise OSError(f"Could not set freq. offset to {value} ppm")
+
+		self.corrections_sent.append(value)
+		self.correction = value
+
+
+@pytest.fixture
+def rtlsdr_device_class ():
+
+	"""RtlSdrDevice, imported against FakePyRtlSdr so no dongle or pyrtlsdr install is needed."""
+
+	fake_rtlsdr = types.ModuleType("rtlsdr")
+	fake_rtlsdr.RtlSdr = FakePyRtlSdr
+
+	with unittest.mock.patch.dict(sys.modules, {"rtlsdr": fake_rtlsdr}):
+		sys.modules.pop("substation.devices.rtlsdr", None)
+		module = importlib.import_module("substation.devices.rtlsdr")
+
+		yield module.RtlSdrDevice
+
+	if hasattr(substation.devices, "rtlsdr"):
+		delattr(substation.devices, "rtlsdr")
+
+
+class TestRtlSdrFreqCorrection:
+
+	def test_negative_correction_reads_back (self, rtlsdr_device_class):
+		"""Regression: reading a negative correction must not reach pyrtlsdr, which would close the device."""
+		device = rtlsdr_device_class(0)
+
+		device.freq_correction = -3
+
+		assert device.freq_correction == -3
+		assert device._device.corrections_sent == [-3]
+
+	def test_setting_the_same_correction_again_is_skipped (self, rtlsdr_device_class):
+		"""librtlsdr rejects an unchanged correction, so it is only sent when it changes."""
+		device = rtlsdr_device_class(0)
+
+		device.freq_correction = 0
+		device.freq_correction = 5
+		device.freq_correction = 5
+
+		assert device.freq_correction == 5
+		assert device._device.corrections_sent == [5]
 
 
 class TestFileDevice:

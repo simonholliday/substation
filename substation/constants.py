@@ -156,6 +156,31 @@ NOISE_FLOOR_EMA_ALPHA = 0.15
 NOISE_FLOOR_WARMUP_SLICES = 10
 
 # ==============================================================================
+# Frequency Calibration Constants
+# ==============================================================================
+
+# Calibration measures a known station's frequency error several times and
+# applies the median as a PPM correction.  It is applied only when all three
+# checks below pass.  Otherwise the receiver's correction is left unchanged,
+# because a correction measured from noise mistunes every radio channel.
+
+# Largest spread (standard deviation in PPM, after outlier removal) the
+# measurements may show.  With no station at the calibration frequency, each
+# measurement locks onto a random noise peak and the spread is hundreds of PPM
+# (283-353 in synthetic tests), so this is the check that catches a missing
+# station.
+CALIBRATION_MAX_SPREAD_PPM = 5.0
+
+# Weakest signal accepted, in dB between the strongest peak and the noise
+# floor.  Pure noise measures about 16 dB on this statistic, so it rejects a
+# very weak signal but cannot detect a missing one.
+CALIBRATION_MIN_SIGNAL_DB = 10.0
+
+# Largest correction accepted, in PPM.  Typical RTL-SDR drift is within
+# 100 PPM, so a larger result points at the wrong station or a fault.
+CALIBRATION_MAX_CORRECTION_PPM = 200
+
+# ==============================================================================
 # Sample-Level Transition Trimming Constants
 # ==============================================================================
 
