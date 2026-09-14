@@ -2,7 +2,7 @@
 
 ## Overview
 
-Substation is an SDR band scanner that detects, demodulates, and records radio transmissions automatically. Connect a USB SDR receiver, point it at a frequency band - Airband, PMR, Maritime, Amateur, or any conventional analogue band - and Substation will monitor every channel simultaneously, recording each transmission to its own audio file with full metadata.
+Substation is an SDR band scanner that detects, demodulates, and records radio transmissions automatically. Connect a USB SDR receiver, point it at a frequency band - Airband, PMR, Maritime, Amateur, or any conventional analogue band - and Substation monitors every radio channel simultaneously, recording each transmission to its own audio file with full metadata.
 
 The scanner is designed for unattended, long-running operation. It handles the entire signal processing chain from raw IQ samples through to clean, archive-ready audio files: signal detection, demodulation (NFM, AM, USB, LSB), noise reduction, carrier transient removal, soft limiting, and automatic file management. Three independent noise rejection stages ensure you get real transmissions, not hiss. Recordings include embedded metadata - frequency, timestamp, modulation, and detected CTCSS/DCS tone codes - so every file is self-documenting.
 
@@ -41,23 +41,23 @@ Substation's signal processing chain implements industry-standard DSP techniques
 
 ### Detection
 
-The scanner divides the SDR's bandwidth into channels and analyses each one five times per second using Welch's Power Spectral Density method. Welch averaging across multiple overlapping FFT segments reduces noise variance, producing stable SNR measurements that don't jitter between slices. The noise floor tracks slowly via an exponential moving average, so brief transmissions stand out clearly against a stable background. A warmup period at startup absorbs the transient spikes that SDR hardware produces while its PLL and AGC settle.
+The scanner divides the SDR's bandwidth into radio channels and analyses each one five times per second using Welch's Power Spectral Density method. Welch averaging across multiple overlapping FFT segments reduces noise variance, producing stable SNR measurements that don't jitter between slices. The noise floor tracks slowly via an exponential moving average, so brief transmissions stand out clearly against a stable background. A warmup period at startup absorbs the transient spikes that SDR hardware produces while its PLL and AGC settle.
 
-The center frequency is automatically shifted by half a channel spacing whenever a channel would fall on the DC spike - a common SDR artifact caused by LO leakage - so no channel is ever masked.
+The centre frequency is automatically shifted by half a radio channel spacing whenever a radio channel would fall on the DC spike - a common SDR artifact caused by LO leakage - so no radio channel is ever masked.
 
 ### Noise rejection
 
 High-sensitivity receivers often trigger on noise that crosses the SNR threshold. Substation applies three independent rejection stages to eliminate these false recordings:
 
-1. **RF power variance** - real signals (voice, data) fluctuate in power across the detection window; stationary noise does not. Channels with low variance are rejected before any demodulation occurs.
-2. **Spectral flatness** - when a channel first activates, the audio is speculatively demodulated and its spectral flatness (Wiener entropy) is measured. Noise has a flat spectrum; any real signal has a peaked one. Flat-spectrum activations are rejected before a recording starts.
+1. **RF power variance** - real signals (voice, data) fluctuate in power across the detection window; stationary noise does not. Radio channels with low variance are rejected before any demodulation occurs.
+2. **Spectral flatness** - when a radio channel first activates, the audio is speculatively demodulated and its spectral flatness (Wiener entropy) is measured. Noise has a flat spectrum; any real signal has a peaked one. Flat-spectrum activations are rejected before a recording starts.
 3. **Post-recording check** - after a recording finishes, the complete file is analysed for spectral flatness. Recordings that are predominantly noise (e.g. a brief signal followed by hold-timer padding) are discarded.
 
 ### Demodulation
 
 Each modulation type has a dedicated, stateful demodulator that maintains phase and filter continuity across processing blocks, eliminating the pops and glitches that occur at block boundaries in stateless designs.
 
-**NFM** - the most common mode for PMR, amateur, and public safety - runs through a complete processing chain: IF decimation, polar discriminator, Hampel impulse blanker (suppresses USB sample-drop glitches from devices like the AirSpy R2), 300µs de-emphasis, DC blocking, voice bandpass filter (300-3400 Hz), and CTCSS/DCS subaudible tone detection. The voice bandpass removes subaudible signalling tones from the recording while the Goertzel-based detector identifies them and embeds the detected tone code in the file's metadata. The same tone value is also delivered live on the scanner's `channel_state` event (as `ctcss_hz` / `dcs_code` kwargs) so OSC or dashboard consumers see the tone as a property of the activation — no file parsing required.
+**NFM** - the most common mode for PMR, amateur, and public safety - runs through a complete processing chain: IF decimation, polar discriminator, Hampel impulse blanker (suppresses glitches from IQ samples dropped over USB by devices like the AirSpy R2), 300µs de-emphasis, DC blocking, voice bandpass filter (300-3400 Hz), and CTCSS/DCS subaudible tone detection. The voice bandpass removes subaudible signalling tones from the recording while the Goertzel-based detector identifies them and embeds the detected tone code in the file's metadata. The same tone value is also delivered live on the scanner's `channel_state` event (as `ctcss_hz` / `dcs_code` kwargs) so OSC or dashboard consumers see the tone as a property of the activation, with no file parsing required.
 
 **AM** - used for civil and military airband - uses envelope detection with a smooth vectorised AGC (independent attack and release timings) that adapts to varying signal strength without pumping artifacts.
 
@@ -72,11 +72,11 @@ Recordings are not just raw demodulated audio dumped to disk. Each file passes t
 - **Half-cosine fades** at recording boundaries prevent clicks from sudden onset or cutoff.
 - **Soft limiting** via a tanh waveshaper with a 0.98 ceiling (-0.18 dBTP) prevents inter-sample true-peak overshoot, ensuring recordings never exceed 0 dBTP.
 - **Broadcast WAV metadata** (BEXT, EBU Tech 3285) embeds sample-accurate timestamps, frequency, modulation, and detected CTCSS/DCS codes directly in each file. Audio editors like Audacity, Reaper, and iZotope RX can place recordings on a timeline at their real capture time.
-- **FLAC output** (optional) provides lossless compression — typically 20–45% smaller than WAV, depending on band and signal content (measured on real PMR and airband archives) — with metadata stored as Vorbis comments. Compression level 6 was chosen after benchmarking every level on real PMR recordings on a Raspberry Pi: it produces essentially the same output size as level 8 but encodes in ~40% less CPU time.
+- **FLAC output** (optional) provides lossless compression, typically 20–45% smaller than WAV depending on band and signal content (measured on real PMR and airband archives), with metadata stored as Vorbis comments. Compression level 6 was chosen after benchmarking every level on real PMR recordings on a Raspberry Pi: it produces essentially the same output size as level 8 but encodes in ~40% less CPU time.
 
 ### Efficiency
 
-The scanner is designed for 24/7 operation on low-power hardware. All DSP runs through NumPy and SciPy's compiled backends. FFT segments use zero-copy memory stride tricks. Expensive per-channel analysis (segment PSD, demodulation) is performed lazily - only when a state transition is detected. Per-channel audio buffering uses a pre-allocated ring buffer with modulo wrap-around, avoiding per-flush memory allocation. IIR filter states use float64 precision to prevent rounding drift in long-running sessions.
+The scanner is designed for 24/7 operation on low-power hardware. All DSP runs through NumPy and SciPy's compiled backends. FFT segments use zero-copy memory stride tricks. Expensive per-radio-channel analysis (segment PSD, demodulation) is performed lazily - only when a state transition is detected. Audio buffering for each radio channel uses a pre-allocated ring buffer with modulo wrap-around, avoiding per-flush memory allocation. IIR filter states use float64 precision to prevent rounding drift in long-running sessions.
 
 ---
 
@@ -107,7 +107,7 @@ A high-quality, low-cost general-purpose receiver. The natural starting point fo
 | ADC resolution     | 8-bit                                                  |
 | Gain architecture  | Single stage                                           |
 | AGC                | Hardware AGC                                           |
-| Driver             | `pyrtlsdr` (>=0.3.0,<0.4.0) - Python binding           |
+| Driver             | `pyrtlsdr` - Python binding (version range in `pyproject.toml`) |
 | `--device-type`    | `rtl`, `rtlsdr`, `rtl-sdr`                             |
 | Best for           | General VHF/UHF scanning, low cost, easy setup         |
 
@@ -120,7 +120,7 @@ A high-quality, low-cost general-purpose receiver. The natural starting point fo
 - `sample_rate: 2.048e6` for most bands
 
 **Gotchas**
-- The Blog V4 needs the [rtl-sdr-blog fork](https://github.com/rtlsdrblog/rtl-sdr-blog) of librtlsdr. The standard distro `librtlsdr` is missing the `rtlsdr_set_dithering` symbol that newer pyrtlsdr versions need; this is why the project pins `pyrtlsdr<0.4.0`.
+- The Blog V4 needs the [rtl-sdr-blog fork](https://github.com/rtlsdrblog/rtl-sdr-blog) of librtlsdr. The standard distro `librtlsdr` is missing the `rtlsdr_set_dithering` symbol that newer pyrtlsdr releases need, which is why `pyproject.toml` holds pyrtlsdr below the release that requires it.
 - The default Linux DVB-T driver claims the device on insertion as a TV tuner - it must be blacklisted (INSTALL.md covers this).
 - The 8-bit ADC limits dynamic range. A strong adjacent station can desensitise weak ones in the same capture.
 - Manual gain values are typically 20-40 dB if you don't want AGC.
@@ -167,7 +167,7 @@ A wideband transceiver covering 1 MHz to 6 GHz with up to 20 MHz of instantaneou
 **Gotchas**
 - **No hardware AGC.** Setting `sdr_gain_db: auto` does not enable AGC - there isn't one. The wrapper logs a warning and sets sensible defaults (LNA=32, VGA=30) so the device still works.
 - A numeric `sdr_gain_db` is silently clamped and stepped to the LNA's 8 dB grid and the VGA's 2 dB grid. Asking for 35 dB gets you 32. Check the startup log if the actual values matter.
-- High sample rates (~16-20 MHz) require raising the kernel USB buffer limit; otherwise samples will be dropped. See [INSTALL.md](INSTALL.md#2-system-optimisation-usb-buffering).
+- High sample rates (~16-20 MHz) require raising the kernel USB buffer limit; otherwise IQ samples are dropped. See [INSTALL.md](INSTALL.md#2-system-optimisation-usb-buffering).
 - The 8-bit ADC has the same dynamic-range caveats as the RTL-SDR - wide captures including a strong station can desensitise weak ones.
 - Multiple Python bindings exist (`python_hackrf`, `hackrf`, `pyhackrf`) with different APIs; the wrapper auto-detects whichever is installed.
 
@@ -212,7 +212,7 @@ A high-dynamic-range VHF/UHF receiver with a 12-bit ADC (≈16-bit effective fro
 **Gotchas**
 - **Sample rates are discrete.** Asking for anything other than 2.5 MHz or 10 MHz silently snaps to the nearest supported rate and logs a warning. Always check the startup log to confirm the rate the device actually accepted.
 - **`sdr_gain_db: auto` is not real AGC.** SoapyAirspy reports `hasGainMode == True` but the underlying R2 hardware does not provide a working closed-loop AGC. Substation detects this and falls back to a fixed manual gain of `LNA=10, MIX=5, VGA=12` (27 dB total) - the same LNA-first values you would set by hand. This works well for typical PMR / VHF / UHF reception. If you want different values, set `sdr_gain_db` (numeric) or `sdr_gain_elements` (per-stage dict) explicitly in your band config.
-- For per-element tuning, **maximise LNA first**, set Mixer moderate, fine-tune with VGA (this is the LNA-first principle described in [Gain Tuning](#gain-tuning) below). The element names and ranges are logged at DEBUG level when the device starts up — enable debug logging when configuring a new device.
+- For per-element tuning, **maximise LNA first**, set Mixer moderate, fine-tune with VGA (this is the LNA-first principle described in [Gain Tuning](#gain-tuning) below). The element names and ranges are logged at DEBUG level when the device starts up, so enable debug logging when configuring a new device.
 - Requires a venv built with `--system-site-packages`.
 
 **Working example band** - PMR446 with per-element gain control:
@@ -261,15 +261,15 @@ A precision HF and lower-VHF receiver. Exceptional sensitivity and dynamic range
 **Recommended starting config**
 - `snr_threshold_db: 6` (essential - the device is sensitive enough that the RTL default 4.5 dB triggers on near-noise)
 - `sdr_gain_db: auto` (engages the well-tuned hardware multi-loop AGC)
-- `activation_variance_db: 3.0` (**also essential** - without it the high sensitivity surfaces stationary noise as false channel activations; see [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings))
+- `activation_variance_db: 3.0` (**also essential** - without it the high sensitivity surfaces stationary noise as false radio channel activations; see [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings))
 - `sample_rate: 0.912e6` for the widest capture
 
 **Gotchas**
 - **Sample rates are discrete.** The exact list depends on firmware - check the startup log for the rates your device actually reports. Asking for an unsupported rate silently snaps to the nearest and logs a warning.
 - **The RF gain element is an *attenuator*, not an amplifier.** Negative dB. `RF: 0` means *no* attenuation (maximum signal); `RF: -24` means 24 dB of attenuation. This is the opposite of every other device here.
 - The LNA is binary (0 or 6 dB) - there is no smooth manual control of the front end.
-- **CF32 samples are delivered well below the [-1, 1] range** that the demodulator expects. The wrapper auto-calibrates this on startup by measuring the median RMS of warmup blocks and applying a normalisation scale; you'll see an `IQ calibration: ...` line in the startup log. No user action required.
-- Front-end overload looks like duplicate signals on adjacent channels. If you see them, increase RF attenuation (`RF: -24` or lower).
+- **CF32 IQ samples are delivered well below the [-1, 1] range** that the demodulator expects. The wrapper auto-calibrates this on startup by measuring the median RMS of warmup blocks and applying a normalisation scale; you'll see an `IQ calibration: ...` line in the startup log. No user action required.
+- Front-end overload looks like duplicate signals on adjacent radio channels. If you see them, increase RF attenuation (`RF: -24` or lower).
 - Requires a venv built with `--system-site-packages`.
 
 **Working example band** - Bristol airband, as shipped in the default config. The HF+-specific tuning lives in a `device_overrides` section, so the same band works on an RTL-SDR (base values) and on the HF+ (override values) without duplicating the band:
@@ -318,7 +318,7 @@ The same `sdr_gain_db`, `sdr_gain_elements`, and `sdr_device_settings` config ke
 pip install substation                                    # from PyPI
 # or: pip install git+https://github.com/simonholliday/substation.git   # latest from GitHub
 ```
-3) Create a starter config in your working directory (optional — it runs on the built-in defaults without one):
+3) Create a starter config in your working directory (optional: it runs on the built-in defaults without one):
 ```bash
 substation --init          # writes ./config.yaml, the fully-commented defaults
 ```
@@ -368,20 +368,20 @@ import substation.scanner
 def my_state_handler (band: str, ch: int, active: bool, snr: float) -> None:
 	print (f"Channel {ch} is now {'ON' if active else 'OFF'} ({snr:.1f} dB)")
 
-# Recording Callback: Triggered when a file is finalized and closed
+# Recording Callback: Triggered when a file is finalised and closed
 def my_recording_handler (band: str, ch: int, file_path: str) -> None:
 	print (f"Recording finished: {file_path}")
 
 async def main () -> None:
 
 	"""
-	Initialize the scanner and respond to real-time events.
+	Initialise the scanner and respond to real-time events.
 	"""
 
 	# Load configuration
 	config_data = substation.config.load_config ()
 
-	# Initialize scanner instance
+	# Initialise scanner instance
 	scanner = substation.scanner.RadioScanner (
 		config=config_data,
 		band_name="pmr",
@@ -403,7 +403,7 @@ See [examples/scan_demo.py](https://github.com/simonholliday/substation/blob/mai
 
 ### OSC event forwarding
 
-Substation can forward channel state changes and saved recordings as OSC (Open Sound Control) messages, so downstream tools - MIDI sequencers, sample players, VJ software, lighting rigs - can react to radio activity in real time. Install the optional extra:
+Substation can forward radio channel state changes and saved recordings as OSC (Open Sound Control) messages, so downstream tools - MIDI sequencers, sample players, VJ software, lighting rigs - can react to radio activity in real time. Install the optional extra:
 
 ```bash
 pip install "substation[osc]"
@@ -426,7 +426,7 @@ The sender emits the following OSC messages:
 
 | Address | When | Arguments |
 | :--- | :--- | :--- |
-| `/radio/state` | Channel turns ON or OFF | `band_name:str, channel_index:int, is_active:int(0/1), snr_db:float, ctcss_hz:float, dcs_code:int` |
+| `/radio/state` | Radio channel turns ON or OFF | `band_name:str, channel_index:int, is_active:int(0/1), snr_db:float, ctcss_hz:float, dcs_code:int` |
 | `/radio/recording` | Recording finalised on disk | `band_name:str, channel_index:int, file_path:str, ctcss_hz:float, dcs_code:int` |
 | `/sample/import` | Recording finalised (only if `sampler_host` set) | `file_path:str` |
 
@@ -440,8 +440,8 @@ Options:
 - `--device-type`, `-t`: `rtlsdr`, `hackrf`, `airspy`, `airspyhf`, or `soapy:<driver>` (default `rtlsdr`).
 - `--device-index`, `-i`: device index (default `0`).
 - `--list-bands`: list available bands and exit.
-- `--iq-file`: path to a 2-channel IQ WAV file for offline playback (replaces live SDR).
-- `--center-freq`: center frequency of the IQ recording in Hz (required with `--iq-file`).
+- `--iq-file`: path to an IQ WAV file, with I and Q as its two audio channels, for offline playback (replaces live SDR).
+- `--center-freq`: centre frequency of the IQ recording in Hz (required with `--iq-file`).
 - `--start-time`: start time of the recording as `"YYYY-MM-DD HH:MM:SS"` (default: `2000-01-01 00:00:00`).
 
 ### IQ File Playback
@@ -455,13 +455,13 @@ substation --band pmr \
   --start-time "2025-03-16 16:13:20"
 ```
 
-The IQ file must be a WAV with 2 channels (I and Q) at any sample rate. The center frequency is the frequency the SDR was tuned to when recording. The file's sample rate is read from the WAV header. The band span must fit within the file's bandwidth - the center frequency doesn't need to match the band midpoint exactly.
+The IQ file must be a WAV with two audio channels (I and Q) at any sample rate. The centre frequency is the frequency the SDR was tuned to when recording. The file's sample rate is read from the WAV header. The band span must fit within the file's bandwidth - the centre frequency doesn't need to match the band midpoint exactly.
 
 ## Configuration
 
 Substation uses a two-layer configuration system:
 
-- **`config.yaml.default`** ships bundled inside the package and contains all known bands and sensible defaults. This file is always loaded first, so the scanner works out of the box with no config file at all.
+- **`config.yaml.default`** ships bundled inside the package and contains every setting at its default value, and all known bands. This file is always loaded first, so the scanner works out of the box with no config file at all.
 - **`config.yaml`** (optional) is your user override file. Put it in the working directory and specify only the settings you want to change - everything else inherits from the defaults. Run `substation --init` to drop a copy of the fully-commented defaults into the current directory as a starting point (it won't overwrite an existing `config.yaml`).
 
 For example, to override just the audio output directory:
@@ -491,10 +491,10 @@ scanner:
   stuck_channel_threshold_seconds: 60
 ```
 - `sdr_device_sample_size`: number of IQ samples per SDR callback. Higher values reduce callback overhead but increase latency.
-- `band_time_slice_ms`: time slice used for PSD/SNR detection. Must be a multiple of `sdr_device_sample_size` (rounded up internally).
-- `sample_queue_maxsize`: async queue depth. 100-200 is typical (each block can be several MB); higher tolerates bursts but uses more RAM, so use 50-100 on memory-constrained systems.
-- `calibration_frequency_hz`: optional known signal for PPM correction; set to `null` to disable. Requires a device with a PPM correction control — currently RTL-SDR only; other devices skip calibration automatically. If no strong, steady signal is found at that frequency, calibration is skipped with a warning and the receiver's correction is left as it was, so choose a station you can receive well.
-- `stuck_channel_threshold_seconds`: optional duration in seconds after which a constant signal will trigger a "Stuck Channel" warning. Useful for identifying interference or stuck transmitters. Set to `null` to disable.
+- `band_time_slice_ms`: time slice used for PSD/SNR detection, in milliseconds. Each slice is rounded up to a whole number of `sdr_device_sample_size` blocks.
+- `sample_queue_maxsize`: async queue depth, in blocks of `sdr_device_sample_size` IQ samples. 100-200 is typical; higher tolerates bursts but uses more RAM, so use 50-100 on memory-constrained systems.
+- `calibration_frequency_hz`: optional known signal for PPM correction; set to `null` to disable. Requires a device with a PPM correction control, which means RTL-SDR only; other devices skip calibration automatically. If no strong, steady signal is found at that frequency, calibration is skipped with a warning and the receiver's correction is left as it was, so choose a station you can receive well.
+- `stuck_channel_threshold_seconds`: optional duration in seconds after which a radio channel that stays active triggers a `STUCK CHANNEL WARNING` in the log. Useful for identifying interference or stuck transmitters. Set to `null` to disable.
 
 Recording
 ```
@@ -508,17 +508,17 @@ recording:
   fade_out_ms: 50
   soft_limit_drive: 1.25
 ```
-- `buffer_size_seconds`: max in-memory audio per channel before drops.
+- `buffer_size_seconds`: max in-memory audio per radio channel before drops.
 - `disk_flush_interval_seconds`: how often to flush to disk.
 - `audio_sample_rate`: output rate (Hz).
 - `audio_format`: `wav` (default) or `flac`. WAV embeds Broadcast WAV (BEXT) metadata with sample-accurate timestamps for timeline placement in audio editors. FLAC is lossless compressed (typically 20–45% smaller than WAV, depending on band and signal content) with text-based metadata tags (no timeline positioning support).
-- `fade_in_ms`/`fade_out_ms`: half-cosine fades applied to the padding region at channel start/stop (signal content is never attenuated).
-- `soft_limit_drive`: post-processing soft limiter drive. Typical range 1.5-3.0 (higher = stronger limiting).
+- `fade_in_ms`/`fade_out_ms`: half-cosine fades applied to the padding region at the start and end of each recording (signal content is never attenuated).
+- `soft_limit_drive`: post-processing soft limiter drive; higher values limit more strongly.
 - `noise_reduction_enabled`: toggle spectral subtraction noise reduction (default: true).
 - `recording_hold_time_ms`: duration in ms to continue recording after signal drops below threshold (default: 500).
 - `discard_empty_enabled`: automatically discard noise-only recordings using spectral flatness analysis (default: true). Applies at two points: before activation (rejects noise triggers without starting a recording) and after recording close (catches recordings that became mostly noise). See [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings).
 - `min_recording_seconds`: discard recordings shorter than this duration (default: 0.5). Catches brief transients (radar pulses, ignition noise) that pass the spectral checks but produce useless sub-second files. Set to `0` to disable.
-- `audio_silence_timeout_ms`: stop recording when demodulated audio has been silent for this duration (default: 3000). Catches AM carriers that persist after voice stops, where RF SNR stays above threshold but there is no useful content. Set to `0` to disable and rely on RF-only detection. Note: a carrier that stays keyed but silent can re-trigger and time out repeatedly (each cycle still has to pass the noise gates); if one channel does this persistently, add it to the band's `exclude_channel_indices`.
+- `audio_silence_timeout_ms`: stop recording when demodulated audio has been silent for this duration (default: 3000). Catches AM carriers that persist after voice stops, where RF SNR stays above threshold but there is no useful content. Set to `0` to disable and rely on RF-only detection. Note: a carrier that stays keyed but silent can re-trigger and time out repeatedly (each cycle still has to pass the noise gates); if one radio channel does this persistently, add it to the band's `exclude_channel_indices`.
 - `trim_carrier_transients`: remove the sharp key-on/key-off click transients that AM transmitters produce (default: false). Only trims transients bordered by silence - voice transients (consonants) are never affected. Recommended for AM airband listening.
 
 Band Defaults
@@ -551,12 +551,12 @@ Per-band keys:
 - `modulation`: `AM`, `NFM`, `USB`, or `LSB`. USB/LSB use a Weaver-method SSB demodulator and are the right choice for HF voice - amateur convention is LSB below 10 MHz, USB above 10 MHz; HFGCS, VOLMET, and marine HF are all USB.
 - `recording_enabled`: enable recording for this band. Optional, defaults to `false` (can also be set in `band_defaults`).
 - `snr_threshold_db`: detection threshold (dB above noise floor).
-- `hysteresis_db`: margin between ON and OFF thresholds (default 3.0). Channel turns OFF when SNR drops below `snr_threshold_db - hysteresis_db`. Lower values (e.g. 1.5) suit weak-signal scanning.
-- `activation_variance_db`: optional minimum power variance (dB) across the detection window required for a channel to be considered active. Filters out stationary-noise triggers. Applies to all bands regardless of recording state. See [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings) below. Defaults to `3.0`; set to `0` to disable.
+- `hysteresis_db`: margin between ON and OFF thresholds (default 3.0). A radio channel turns OFF when SNR drops below `snr_threshold_db - hysteresis_db`. Lower values (e.g. 1.5) suit weak-signal scanning.
+- `activation_variance_db`: optional minimum power variance (dB) across the detection window required for a radio channel to be considered active. Filters out stationary-noise triggers. Applies to all bands regardless of recording state. See [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings) below. When unset, the built-in threshold of `3.0` applies; set to `0` to disable.
 - `sdr_gain_db`: numeric or `auto`.
 - `sdr_gain_elements`: optional dict mapping gain element names to dB values for per-stage control (e.g., `{LNA: 10, MIX: 5, VGA: 12}`). Available elements are logged at startup. Takes priority over `sdr_gain_db`.
 - `sdr_device_settings`: optional dict of device-specific settings passed via SoapySDR (e.g., `{biastee: "true"}`). Available settings are logged at DEBUG level on startup.
-- `exclude_channel_indices`: 1-based channel numbers to skip (no analysis, no recording). These match the channel numbers shown in log output and filenames.
+- `exclude_channel_indices`: 1-based radio channel numbers to skip (no analysis, no recording). These match the radio channel numbers shown in log output and filenames.
 - `device_overrides`: per-device tuning - see [Device-Specific Overrides](#device-specific-overrides) below.
 
 ### Device-Specific Overrides
@@ -648,11 +648,11 @@ If you open a recording in a professional audio tool or a BWF viewer, you will s
 
 | Field | Example Value | Description |
 | :--- | :--- | :--- |
-| **Description** | `{"band":"pmr","channel_index":0,"channel_freq":446006250.0}` | Machine-readable JSON with channel details |
+| **Description** | `{"band":"pmr","channel_index":0,"channel_freq":446006250.0}` | Machine-readable JSON with radio channel details |
 | **Coding History** | `A=PCM,F=16000,W=16,M=mono,T=NFM;Frequency=446.00625MHz` | Technical signal chain (Algorithm, Rate, Modulation) |
 | **Originator** | `Substation` | The software that created the file |
 | **Origination Date** | `2026-01-27` | Date the recording started |
-| **Time Reference** | `1152000` | Sample count since midnight (for precise timing) |
+| **Time Reference** | `1152000` | Audio sample count since midnight (for precise timing) |
 
 
 ## Gain Tuning
@@ -690,7 +690,7 @@ The `snr_threshold_db` setting controls how far above the noise floor a signal m
 
 ### The problem
 
-SNR thresholds detect any signal that's louder than the noise floor - but they can't distinguish a *real* signal from a *noisy* one. With sensitive receivers like the AirSpy HF+ Discovery, you'll often see channels register 6-10 dB SNR yet contain only hissing static when played back. Raising `snr_threshold_db` doesn't help: the SNR is genuinely high, because the noise in that channel really is louder than the band-wide noise floor.
+SNR thresholds detect any signal that's louder than the noise floor - but they can't distinguish a *real* signal from a *noisy* one. With sensitive receivers like the AirSpy HF+ Discovery, you'll often see radio channels register 6-10 dB SNR yet contain only hissing static when played back. Raising `snr_threshold_db` doesn't help: the SNR is genuinely high, because the noise in that radio channel really is louder than the band-wide noise floor.
 
 What's needed is a way to tell **noise** apart from **real signals** - and a single check isn't enough, because noise comes in different flavours that fool different detectors.
 
@@ -702,7 +702,7 @@ The scanner applies three independent gates, each catching a different kind of f
 
 Real signals fluctuate over time: syllables, frame structure, burst patterns all produce 5-15 dB power swings within a 200 ms detection window. Stationary noise produces near-constant power (standard deviation ~1-2 dB).
 
-At the moment a channel turns ON, the scanner measures the standard deviation of the channel's power across the 8 Welch PSD segments. If the standard deviation falls below `activation_variance_db` (default 3.0 dB), the activation is suppressed - no ON event fires, no recording starts.
+At the moment a radio channel turns ON, the scanner measures the standard deviation of its power across the 8 Welch PSD segments. If the standard deviation falls below `activation_variance_db` (default 3.0 dB), the activation is suppressed - no ON event fires, no recording starts.
 
 This is the cheapest check (~0.1 ms, reuses already-computed PSD data). It catches broadband stationary noise that happens to sit a few dB above the noise floor.
 
@@ -735,7 +735,7 @@ After the WAV file is closed, the scanner reads it back and computes spectral fl
 
 ### Example
 
-Imagine a "noisy" channel with average power 9 dB above the noise floor and a real voice transmission also at 9 dB SNR:
+Imagine a "noisy" radio channel with average power 9 dB above the noise floor and a real voice transmission also at 9 dB SNR:
 
 | Source | Avg SNR | Per-segment power (dB above floor) | Std dev | Audio flatness |
 | :--- | :--- | :--- | :--- | :--- |
@@ -765,7 +765,7 @@ bands:
 
 | Setting | Relationship |
 | :--- | :--- |
-| `snr_threshold_db` | Runs first. Channels below the SNR threshold never reach the noise gates. |
+| `snr_threshold_db` | Runs first. Radio channels below the SNR threshold never reach the noise gates. |
 | `activation_variance_db` | Gate 1, only on turn-on transitions, only when the SNR check passed. |
 | `discard_empty_enabled` | Gates 2 and 3b. Gate 2 runs after Gate 1 passes. Gate 3b runs on recording close. |
 | `min_recording_seconds` | Gate 3a. Runs on recording close, before Gate 3b. Set to `0` to disable. |
@@ -805,16 +805,16 @@ Discarded empty recording: 2026-04-11_15-09-28_air_civil_bristol_airspyhf_59_6.0
 
 All three gates are modulation-agnostic:
 
-- Gate 1 operates on raw channel power from FFT bins - works for any signal type, including detection-only bands with no demodulator (TETRA)
-- Gates 2 and 3 operate on spectral flatness of demodulated audio - any non-noise signal (voice, data, tones, beacons) produces a peaked spectrum that passes the check. They apply to every band whose modulation has a demodulator, including detection-only bands (e.g. DMR, ACARS) where the demodulation is purely speculative - so channel activation events stay clean even when nothing is recorded
+- Gate 1 operates on raw radio channel power from FFT bins - works for any signal type, including detection-only bands with no demodulator (TETRA)
+- Gates 2 and 3 operate on spectral flatness of demodulated audio - any non-noise signal (voice, data, tones, beacons) produces a peaked spectrum that passes the check. They apply to every band whose modulation has a demodulator, including detection-only bands (e.g. DMR, ACARS) where the demodulation is purely speculative - so radio channel activation events stay clean even when nothing is recorded
 - No demodulator-specific tuning is needed
 
 ## Dynamics Curve (Experimental)
 
-An optional per-sample noise-reduction stage that runs during recording, after spectral subtraction and before the soft limiter. It applies a smooth nonlinear transfer curve in dBFS:
+An optional noise-reduction stage, applied to each audio sample, that runs during recording, after spectral subtraction and before the soft limiter. It applies a smooth nonlinear transfer curve in dBFS:
 
-- **Below the threshold** (the "cut" region), quiet samples are progressively reduced - a downward expander that suppresses background noise. The curve is a smoothstep S-curve with zero slope at both endpoints, so there is no audible kink at the threshold or the floor. Samples below the floor are hard-zeroed.
-- **Above the threshold** (the "boost" region), loud samples are gently boosted - an upward expander that gives voice presence. The curve is a sin² hump with zero boost at both endpoints (so 0 dBFS samples pass through unchanged).
+- **Below the threshold** (the "cut" region), quiet audio samples are progressively reduced - a downward expander that suppresses background noise. The curve is a smoothstep S-curve with zero slope at both endpoints, so there is no audible kink at the threshold or the floor. Audio samples below the floor are hard-zeroed.
+- **Above the threshold** (the "boost" region), loud audio samples are gently boosted - an upward expander that gives voice presence. The curve is a sin² hump with zero boost at both endpoints (so 0 dBFS audio samples pass through unchanged).
 
 Together the two regions widen the overall dynamic range. It works for any modulation type, has no envelope follower, and adds negligible CPU.
 
@@ -832,7 +832,7 @@ recording:
         boost_curve: 0.5        # 0..1; same skew control for the boost hump
 ```
 
-The function operates per-sample (no envelope follower, no attack/release), so very aggressive parameter values can introduce mild harmonic distortion on signals near the threshold. The defaults are conservative enough that this is benign on voice; if you hear an "edge" on the loudest syllables, lower `cut_db` and `boost_db`. If a recording sounds completely silent, you have probably set `floor_dbfs` too high - try `-60` or lower.
+The function operates on each audio sample (no envelope follower, no attack/release), so very aggressive parameter values can introduce mild harmonic distortion on signals near the threshold. The defaults are conservative enough that this is benign on voice; if you hear an "edge" on the loudest syllables, lower `cut_db` and `boost_db`. If a recording sounds completely silent, you have probably set `floor_dbfs` too high - try `-60` or lower.
 
 The function clamps its output to the ±1.0 range as belt-and-braces speaker protection. If your configuration would otherwise drive the boost region above 0 dBFS, a warning is logged at startup so you can dial it back before listening.
 
@@ -844,7 +844,7 @@ substation --band air_civil_bristol --device-type rtlsdr --device-index 0
 substation --band pmr --device-type rtlsdr --device-index 1
 ```
 
-If you need stricter real-time behavior, you can pin each scan to a CPU core:
+If you need stricter real-time behaviour, you can pin each scan to a CPU core:
 
 ```bash
 taskset -c 2 substation --band air_civil_bristol --device-index 0
@@ -857,7 +857,7 @@ taskset -c 3 substation --band pmr --device-index 1
 - **Noise reduction** runs during write/flush if enabled (default). It uses `apply_spectral_subtraction` which is efficient and receives the band-wide noise floor for improved frame classification. The alternative `apply_noisereduce` implementation exists in `substation/dsp/noise_reduction.py` for reference but is not used by default as it is significantly more CPU-intensive.
 - **Queue size** provides burst tolerance but uses RAM (each slice can be several MB).
 
-If you see repeated `Sample queue full` warnings, reduce the band's `sample_rate`, exclude channels, or increase `sample_queue_maxsize`.
+If you see repeated `Sample queue full` warnings, reduce the band's `sample_rate`, exclude radio channels, or increase `sample_queue_maxsize`.
 
 ## Limitations
 - Processing is slice-based; extremely wide bands or multiple high-rate scans can exceed real-time capacity on low-power CPUs.
