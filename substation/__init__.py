@@ -28,14 +28,10 @@ Features:
 - Unified event emitter (on / off / emit) — six events covering channel
   state, recording lifecycle, noise floor, and per-slice SNR snapshots;
   the channel_state event carries the detected CTCSS tone or DCS code
-  as a property of each activation; used by the OSC bridge and the
-  Supervisor dashboard integration
+  as a property of each activation; used by the OSC bridge
 - Optional OSC event forwarding to downstream tools (MIDI sequencer,
   sampler, VJ software, ...) via substation.osc_sender — install the
   optional extra with pip install "substation[osc]"
-- Optional real-time Supervisor dashboard — broadcasts scanner state
-  over WebSocket for a web UI — install the separate supervisor package
-  from GitHub (see INSTALL.md)
 
 Typical usage:
     substation --init                              # Write a starter config.yaml

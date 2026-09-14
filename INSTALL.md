@@ -228,24 +228,6 @@ substation --init          # writes ./config.yaml (the fully-commented defaults)
 pip install "substation[osc]"
 ```
 
-**Supervisor dashboard** (real-time WebSocket state broadcast) is a separate package installed from GitHub — it is *not* a PyPI extra, because PyPI does not permit direct-URL dependencies:
-
-```bash
-pip install git+https://github.com/simonholliday/supervisor.git
-```
-
-While the supervisor repository is private, this install uses SSH (`git+ssh://git@github.com/...`) and requires a GitHub SSH key on the machine — see [GitHub's SSH setup guide](https://docs.github.com/en/authentication/connecting-to-github-with-ssh). The scanner runs normally with the dashboard disabled if the package isn't present.
-
-After installing supervisor, enable the dashboard in `config.yaml`:
-
-```yaml
-supervisor:
-    enabled: true
-    port: 9004   # default
-```
-
-The scanner logs `Supervisor dashboard server started on ws://0.0.0.0:9004` when it starts. If the extra is not installed, a warning is logged and the scan proceeds without the dashboard.
-
 ---
 
 ## 6. Verification

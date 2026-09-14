@@ -1948,7 +1948,6 @@ class RadioScanner:
 						ctcss_hz=ctcss_hz, dcs_code=dcs_code)
 
 			# Emit per-channel SNR snapshot (every slice, after transitions).
-			# Fields match the Supervisor spec: frequency_mhz, duration_active_s.
 			self.emit('channel_snr', channels=[
 				{
 					"index": self.channel_original_indices.get(freq, -1),

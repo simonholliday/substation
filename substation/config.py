@@ -580,26 +580,6 @@ class BandConfig(pydantic.BaseModel):
 		return self
 
 
-class SupervisorConfig (pydantic.BaseModel):
-
-	"""
-	Supervisor dashboard integration.
-
-	When enabled, broadcasts scanner events over WebSocket for real-time
-	display in the Supervisor dashboard.  Requires the separate supervisor
-	package, installed from GitHub (it is not a PyPI extra of substation —
-	PyPI does not allow direct-URL dependencies):
-	`pip install git+https://github.com/simonholliday/supervisor.git`.
-	See INSTALL.md for details.  When the package is absent the scan runs
-	normally with the dashboard disabled.
-	"""
-
-	model_config = pydantic.ConfigDict(extra='forbid')
-
-	enabled: bool = False
-	port: int = pydantic.Field(default=9004, ge=1, le=65535)
-
-
 class AppConfig(pydantic.BaseModel):
 	"""
 	Top-level application configuration.
@@ -633,7 +613,6 @@ class AppConfig(pydantic.BaseModel):
 
 	scanner: ScannerConfig
 	recording: RecordingConfig = pydantic.Field(default_factory=RecordingConfig)
-	supervisor: SupervisorConfig = pydantic.Field(default_factory=SupervisorConfig)
 	band_defaults: dict[str, BandTypeConfig] = pydantic.Field(default_factory=dict)
 	bands: dict[str, BandConfig]
 

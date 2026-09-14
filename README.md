@@ -479,7 +479,7 @@ bands:
 
 Use `--config <path>` to specify a different user override file. Use `--list-bands` to see all available bands.
 
-The top-level keys are `scanner`, `recording`, `supervisor`, `band_defaults`, and `bands`.
+The top-level keys are `scanner`, `recording`, `band_defaults`, and `bands`.
 
 Scanner
 ```
@@ -862,10 +862,6 @@ If you see repeated `Sample queue full` warnings, reduce the band's `sample_rate
 ## Limitations
 - Processing is slice-based; extremely wide bands or multiple high-rate scans can exceed real-time capacity on low-power CPUs.
 - If you enable `apply_noisereduce` (requires code change), it is CPU-intensive for long chunks; on constrained devices, stick with the default `apply_spectral_subtraction` or reduce `disk_flush_interval_seconds`.
-
-## Roadmap
-
-- **Supervisor dashboard** (in progress) — a real-time browser dashboard that displays scanner state (active channels, SNR levels, noise floor, recordings) via WebSocket. The scanner emits structured events which the [Supervisor](https://github.com/simonholliday/supervisor) server relays to connected clients. Install it separately with `pip install git+https://github.com/simonholliday/supervisor.git` (it's a standalone package, not a PyPI extra) and enable it in `config.yaml`.
 
 ## Author
 Written by Simon Holliday ([https://simonholliday.com/](https://simonholliday.com/))

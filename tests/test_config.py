@@ -42,8 +42,14 @@ class TestYamlLoading:
 		with pytest.raises(ValueError):
 			substation.config._load_raw_config(path)
 
-	def test_load_config_defaults_only (self):
-		"""load_config() with no user config loads config.yaml.default."""
+	def test_load_config_defaults_only (self, tmp_path, monkeypatch):
+		"""load_config() with no user config loads config.yaml.default.
+
+		Runs from an empty directory, because load_config() also reads a
+		config.yaml in the working directory, and a developer's own one would
+		otherwise decide whether this test passes.
+		"""
+		monkeypatch.chdir(tmp_path)
 		config = substation.config.load_config()
 		assert len(config.bands) > 0
 
@@ -70,6 +76,21 @@ class TestYamlLoading:
 		}))
 		config = substation.config.load_config(str(user_cfg))
 		assert config.recording.audio_output_dir == "/tmp/str_path_override"
+
+	def test_removed_supervisor_section_is_rejected (self, tmp_path):
+		"""A user config still carrying the removed supervisor section fails, and the error names the key.
+
+		The Supervisor dashboard integration was removed outright, with no
+		alias or deprecation period, so the failure message is the only
+		pointer a user gets to the line they need to delete.
+		"""
+		user_cfg = tmp_path / "config.yaml"
+		user_cfg.write_text(yaml.dump({
+			"supervisor": {"enabled": True, "port": 9004},
+		}))
+
+		with pytest.raises(pydantic.ValidationError, match="supervisor"):
+			substation.config.load_config(user_cfg)
 
 
 # ---------------------------------------------------------------------------

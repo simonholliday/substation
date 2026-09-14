@@ -66,15 +66,6 @@ osc = [
     "python-osc>=1.8",
 ]
 
-# Note: the Supervisor dashboard is NOT an extra here.  Its package is only
-# distributed from GitHub, and PyPI rejects any distribution whose
-# dependencies (including extras) are direct URLs — so a `supervisor` extra
-# pointing at git+https would block publishing substation to PyPI.  The
-# scanner lazy-imports supervisor and warns if it is absent, so it stays an
-# optional add-on you install separately:
-#     pip install git+https://github.com/simonholliday/supervisor.git
-# See INSTALL.md and the README "Supervisor dashboard" section.
-
 [project.urls]
 Repository = "https://github.com/simonholliday/substation"
 Issues = "https://github.com/simonholliday/substation/issues"
@@ -122,9 +113,6 @@ module = [
     "mutagen",
     "noisereduce",
     "soundfile",
-    "supervisor",
-    "supervisor.app",
-    "supervisor.app.substation",
     # python-osc is an optional [osc] extra, so it may legitimately be
     # absent when type-checking the base package.
     "pythonosc",

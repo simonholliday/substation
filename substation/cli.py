@@ -18,7 +18,6 @@ import datetime
 import logging
 import pathlib
 import sys
-import typing
 
 import substation
 import substation.config
@@ -154,17 +153,7 @@ async def run_scanner (config_path: pathlib.Path | None, band_name: str, device_
 			device_index=device_index
 		)
 
-		sv = None
-		if config_data.supervisor.enabled:
-			sv = _start_supervisor(scan, config_data.supervisor.port)
-			if sv:
-				await sv.start()
-
-		try:
-			await scan.scan ()
-		finally:
-			if sv:
-				await sv.stop()
+		await scan.scan ()
 
 	except Exception as e:
 		logger.error(f"Error running scanner: {e}", exc_info=True)
@@ -220,36 +209,11 @@ async def run_scanner_file (config_path: pathlib.Path | None, band_name: str, iq
 			f"start {start_time.strftime('%Y-%m-%d %H:%M:%S')}"
 		)
 
-		sv = None
-		if config_data.supervisor.enabled:
-			sv = _start_supervisor(scan, config_data.supervisor.port)
-			if sv:
-				await sv.start()
-
-		try:
-			await scan.scan()
-		finally:
-			if sv:
-				await sv.stop()
+		await scan.scan()
 
 	except Exception as e:
 		logger.error(f"Error processing IQ file: {e}", exc_info=True)
 		sys.exit(1)
-
-
-def _start_supervisor (scanner: typing.Any, port: int) -> typing.Any | None:
-
-	"""Create a SubstationSupervisor if dependencies are installed, else warn."""
-
-	try:
-		import supervisor.app.substation as _sv_mod
-		return _sv_mod.SubstationSupervisor(scanner, port=port)
-	except ImportError as exc:
-		logger.warning(
-			f"Supervisor enabled but missing dependency ({exc}). "
-			f"Install it with: pip install git+https://github.com/simonholliday/supervisor.git"
-		)
-		return None
 
 
 def main () -> int:
