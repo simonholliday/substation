@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/audio/
 .mypy_cache/
 config.yaml
+.subroutine
 *.egg-info/
 audio/
 examples/audio/
