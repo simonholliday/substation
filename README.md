@@ -1,39 +1,12 @@
 # Substation
 
-## Overview
+**An SDR band scanner that detects, demodulates, and records radio transmissions automatically.**
 
-Substation is an SDR band scanner that detects, demodulates, and records radio transmissions automatically. Connect a USB SDR receiver, point it at a frequency band - Airband, PMR, Maritime, Amateur, or any conventional analogue band - and Substation monitors every radio channel simultaneously, recording each transmission to its own audio file with full metadata.
+Connect a USB SDR receiver, point it at a frequency band - Airband, PMR, Maritime, Amateur, or any conventional analogue band - and Substation monitors every radio channel simultaneously, recording each transmission to its own audio file with full metadata.
 
 The scanner is designed for unattended, long-running operation. It handles the entire signal processing chain from raw IQ samples through to clean, archive-ready audio files: signal detection, demodulation (NFM, AM, USB, LSB), noise reduction, carrier transient removal, soft limiting, and automatic file management. Three independent noise rejection stages ensure you get real transmissions, not hiss. Recordings include embedded metadata - frequency, timestamp, modulation, and detected CTCSS/DCS tone codes - so every file is self-documenting.
 
 Substation runs comfortably on a Raspberry Pi for 24/7 monitoring, and works equally well as a command-line tool or as a Python module integrated into your own applications.
-
-## Contents
-
-- [Signal Processing](#signal-processing)
-- [Supported Devices](#supported-devices)
-    - [Quick Reference](#quick-reference)
-    - [RTL-SDR Blog V4 / V3](#rtl-sdr-blog-v4-v3)
-    - [HackRF One](#hackrf-one)
-    - [AirSpy R2](#airspy-r2)
-    - [AirSpy HF+ Discovery](#airspy-hf-discovery)
-    - [Other SoapySDR Devices](#other-soapysdr-devices)
-- [Quick Start](#quick-start)
-- [Utility scripts](#utility-scripts)
-- [Command Line](#command-line)
-- [Python Module Usage](#python-module-usage)
-    - [OSC event forwarding](#osc-event-forwarding)
-- [Configuration](#configuration)
-- [SoapySDR Installation](#soapysdr-installation-airspy-and-other-devices)
-- [Recording Metadata](#recording-metadata)
-- [Gain Tuning](#gain-tuning)
-- [Rejecting Empty/Noise Recordings](#rejecting-emptynoise-recordings)
-- [Dynamics Curve (Experimental)](#dynamics-curve-experimental)
-- [Parallel Scans](#parallel-scans-multiple-devices)
-- [Resource and Performance Notes](#resource-and-performance-notes)
-- [Limitations](#limitations)
-- [Author](#author)
-- [License](#license)
 
 ## Signal Processing
 
