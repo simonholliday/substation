@@ -1,6 +1,8 @@
 """Tests for ChannelRecorder: ring buffer, WAV/FLAC output, BEXT metadata."""
 
 import asyncio
+import datetime
+import os
 import struct
 import threading
 import tracemalloc
@@ -228,6 +230,40 @@ class TestWavOutput:
 		data, _ = soundfile.read(rec.filepath)
 		# Soft limiter should keep output within [-1, 1]
 		assert numpy.max(numpy.abs(data)) <= 1.0
+
+
+class TestRecorderRobustness:
+
+	def test_recordings_started_in_the_same_second_get_their_own_files (self, tmp_path):
+		"""Regression: a re-key within the same second reused the path, and the old recording's discard deleted the new file."""
+		start = datetime.datetime(2026, 9, 19, 12, 0, 0)
+		first = substation.recording.ChannelRecorder(446.00625e6, 1, "pmr", 16000, 5.0, 999, str(tmp_path), "NFM", filename_suffix="12.0dB", start_time=start)
+		second = substation.recording.ChannelRecorder(446.00625e6, 1, "pmr", 16000, 5.0, 999, str(tmp_path), "NFM", filename_suffix="12.0dB", start_time=start)
+
+		assert first.filepath != second.filepath
+		assert second.filepath.endswith("_2.wav")
+
+		first.audio_file.close()
+		second.audio_file.close()
+		os.remove(first.filepath)
+		assert os.path.exists(second.filepath)
+
+	def test_file_is_closed_when_close_is_cancelled (self, tmp_path):
+		"""Regression: a cancel during close() skipped closing the file, leaving a WAV whose header claims no audio."""
+		rec = _make_recorder(tmp_path)
+		rec.append_audio(numpy.full(1600, 0.3, dtype=numpy.float32))
+		asyncio.run(rec._flush_buffer_to_disk())
+
+		async def cancelled_flush ():
+			raise asyncio.CancelledError()
+
+		rec._flush_buffer_to_disk = cancelled_flush
+
+		with pytest.raises(asyncio.CancelledError):
+			asyncio.run(rec.close())
+
+		assert rec.audio_file.closed
+		assert soundfile.info(rec.filepath).frames == 1600
 
 
 class TestTailHold:

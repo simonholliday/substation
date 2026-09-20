@@ -481,6 +481,16 @@ class ChannelRecorder:
 				# if stat() hasn't updated its cache yet. We ignore this safely.
 				pass
 
+		# Filenames have one-second resolution, so a radio channel that turns
+		# off and on again within a second, with the same SNR, would reuse the
+		# path while the earlier recording is still closing, and that
+		# recording's discard could then delete this one.  Number it instead.
+		base_path, extension = os.path.splitext(self.filepath)
+		number = 2
+		while os.path.exists(self.filepath):
+			self.filepath = f"{base_path}_{number}{extension}"
+			number += 1
+
 		# Open audio file for writing using soundfile library.
 		# PCM_16 = 16-bit signed integer audio, used for both WAV and FLAC.
 		# For FLAC we set compression_level=0.75 (= FLAC level 6).  This
@@ -912,14 +922,19 @@ class ChannelRecorder:
 
 		# Final flush of any remaining samples.  A failure (e.g. disk full)
 		# must not prevent the file being closed and metadata written for
-		# whatever audio did make it to disk.
+		# whatever audio did make it to disk.  The file is closed even if the
+		# flush is cancelled or fails some other way, because closing is what
+		# writes the header's length: an unclosed WAV claims no audio at all.
 		try:
-			await self._flush_buffer_to_disk()
-		except (OSError, RuntimeError, ValueError) as exc:
-			logger.error(f"Final flush failed for {self.filepath}: {exc}")
+			try:
+				await self._flush_buffer_to_disk()
+			except (OSError, RuntimeError, ValueError) as exc:
+				logger.error(f"Final flush failed for {self.filepath}: {exc}")
 
-		# Close audio file (this writes headers)
-		self.audio_file.close()
+		finally:
+			# The write lock waits out a write still running in the executor.
+			with self._write_lock:
+				self.audio_file.close()
 
 		# Write metadata after the file is closed
 		if self.bext_metadata:
