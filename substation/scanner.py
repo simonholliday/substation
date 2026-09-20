@@ -1603,6 +1603,13 @@ class RadioScanner:
 		in _stop_channel_recording.
 		"""
 
+		# A file's last block holds whatever was left over, which can be less
+		# than one FFT segment and too short to measure.  It is a fraction of
+		# a slice, so it is skipped rather than failing the scan.
+		if len(samples) < self.fft_size:
+			logger.debug(f"Skipping a final block of {len(samples)} IQ samples, shorter than one FFT segment ({self.fft_size})")
+			return
+
 		# Advance the virtual clock by the number of samples in this slice.
 		# This keeps timestamps accurate for file playback mode.
 		if self.clock:

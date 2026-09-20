@@ -25,6 +25,29 @@ class _FakeSdr:
 		self.iq_scale = iq_scale
 
 
+class TestShortFinalBlock:
+
+	def test_block_shorter_than_one_fft_segment_is_skipped (self, scanner_instance):
+		"""Regression: a file's last block, shorter than one FFT segment, raised and ended playback with an error.
+
+		FileDevice passes on whatever is left at the end of the file, and about
+		one IQ file in eight ends with less than one FFT segment.
+		"""
+		scanner_instance.sdr = _FakeSdr()
+		short = numpy.zeros(scanner_instance.fft_size - 1, dtype=numpy.complex64)
+
+		scanner_instance._process_samples(short, loop=None)
+
+	def test_block_of_one_fft_segment_is_still_measured (self, scanner_instance):
+		"""A short block that holds at least one FFT segment is processed as usual."""
+		scanner_instance.sdr = _FakeSdr()
+		block = iq_generators.generate_noise_iq(scanner_instance.sample_rate, scanner_instance.fft_size / scanner_instance.sample_rate, power_db=-60.0)
+
+		scanner_instance._process_samples(block, loop=None)
+
+		assert scanner_instance._warmup_remaining == substation.constants.NOISE_FLOOR_WARMUP_SLICES - 1
+
+
 class TestPSDCalculation:
 
 	def test_noise_flat_psd (self, scanner_instance):
