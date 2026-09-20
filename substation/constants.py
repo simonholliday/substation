@@ -181,6 +181,15 @@ CALIBRATION_MIN_SIGNAL_DB = 10.0
 CALIBRATION_MAX_CORRECTION_PPM = 200
 
 # ==============================================================================
+# Event Constants
+# ==============================================================================
+
+# How long the end of a scan waits for async event handlers still running,
+# in seconds, so that consumers see the last events without a slow handler
+# holding the shutdown.
+EVENT_HANDLER_DRAIN_TIMEOUT_SECONDS = 5.0
+
+# ==============================================================================
 # Sample-Level Transition Trimming Constants
 # ==============================================================================
 

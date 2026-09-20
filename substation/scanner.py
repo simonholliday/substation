@@ -1,9 +1,11 @@
 import asyncio
+import concurrent.futures
 import datetime
 import inspect
 import logging
 import os
 import pathlib
+import threading
 import time
 import typing
 
@@ -250,6 +252,12 @@ class RadioScanner:
 		# failure is logged at WARNING and its later ones at DEBUG.
 		self._failed_handlers: set[tuple[str, int]] = set()
 
+		# Async handlers scheduled and not yet finished.  The end of a scan
+		# waits for them, so a consumer sees the last events before scan()
+		# returns.  Added to from the processing thread, hence the lock.
+		self._handler_futures: set[concurrent.futures.Future] = set()
+		self._handler_futures_lock = threading.Lock()
+
 		# SDR device (typed as Any because scanner accesses device-specific
 		# attributes like read_samples and freq_correction beyond BaseDevice)
 		self.sdr: typing.Any | None = None
@@ -379,6 +387,23 @@ class RadioScanner:
 			noise_floor         — (noise_floor_db, warmup_complete)
 			channel_snr         — (channels: list[dict])
 
+		Every value is a plain Python type (bool, int, float, str, or None),
+		so a payload can go straight to json.dumps.
+
+		When they fire:
+		- channel_state fires when a radio channel turns ON or OFF.  On a
+		  recording band, recording_started for the same activation comes
+		  first, because channel_state waits for the demodulator so that it
+		  can carry the detected tone.  Radio channels still ON when a scan
+		  ends get their OFF during the scan's cleanup.
+		- recording_saved or recording_discarded follows each recording's
+		  close, after that activation's channel_state OFF.
+		- noise_floor fires for every processed slice, warmup included.
+		- channel_snr fires for each slice that measures every radio
+		  channel: not during warmup, not for a slice dropped for ADC
+		  saturation, and not while the whole band is quiet with no radio
+		  channel ON.
+
 		ctcss_hz / dcs_code on channel_state are populated on ON
 		transitions where demod produced tone info; otherwise both are
 		None.  OFF transitions always carry both as None.  On
@@ -386,12 +411,12 @@ class RadioScanner:
 		during the activation (persisted across the recording), again
 		None if no tone was detected.
 
-		Handlers may be sync or async. How they dispatch depends on the
-		emit() call — events fired with `loop=` are marshalled onto the
-		event loop via call_soon_threadsafe / run_coroutine_threadsafe;
-		events fired without `loop=` are called directly on the caller's
-		thread (which may be an executor thread for the per-slice events
-		`noise_floor` and `channel_snr`).  See emit() for details.
+		Handlers may be sync or async.  Async handlers always run on the
+		scanner's event loop, and the end of a scan waits for them.  Sync
+		handlers run on the event loop for channel_state and
+		recording_started, and on the thread that emits the event for the
+		others: the processing thread for noise_floor and channel_snr.  See
+		emit() for details.
 		"""
 
 		self._event_handlers.setdefault(event, []).append(handler)
@@ -413,17 +438,15 @@ class RadioScanner:
 
 		Dispatch rules, by handler type and whether `loop` is supplied:
 
-		- async handler + loop given → scheduled via
-		  asyncio.run_coroutine_threadsafe(), and awaited there.
+		- async handler → scheduled via asyncio.run_coroutine_threadsafe()
+		  on `loop`, or on the scanner's own loop when none is given, and
+		  awaited there.  With neither, as before a scan has started, it is
+		  skipped, because emit() is sync and cannot await.
 		- sync handler + loop given → dispatched via
 		  loop.call_soon_threadsafe().
 		- sync handler, no loop → called directly on the caller's
 		  thread (used when emit() is itself called from the event loop,
 		  e.g. inside an async coroutine).
-		- async handler, no loop → silently skipped.  There is no running
-		  event loop to schedule the coroutine on, and emit() is sync so it
-		  cannot await.  Callers that want to support async consumers for
-		  an event must supply `loop=`.
 
 		A handler's exception is caught wherever the handler runs, and logged
 		at WARNING with its traceback the first time that handler fails, then
@@ -437,8 +460,12 @@ class RadioScanner:
 		for handler in handlers:
 			try:
 				if inspect.iscoroutinefunction(handler):
-					if loop:
-						asyncio.run_coroutine_threadsafe(self._await_handler(event, handler, kwargs), loop)
+					target_loop = loop or self.loop
+					if target_loop is not None and not target_loop.is_closed():
+						future = asyncio.run_coroutine_threadsafe(self._await_handler(event, handler, kwargs), target_loop)
+						with self._handler_futures_lock:
+							self._handler_futures.add(future)
+						future.add_done_callback(self._forget_handler_future)
 				elif loop:
 					loop.call_soon_threadsafe(self._call_handler, event, handler, kwargs)
 				else:
@@ -446,6 +473,36 @@ class RadioScanner:
 			except Exception:
 				# Scheduling failed, for instance on a loop that has closed.
 				logger.debug(f"Could not dispatch '{event}' to {handler!r}", exc_info=True)
+
+	def _forget_handler_future (self, future: concurrent.futures.Future) -> None:
+
+		"""Done-callback: stop tracking an async handler that has finished."""
+
+		with self._handler_futures_lock:
+			self._handler_futures.discard(future)
+
+	async def _wait_for_handlers (self) -> None:
+
+		"""
+		Wait for async event handlers still running, up to a limit.
+
+		Called at the end of a scan, so that handlers for its last events,
+		such as the final channel_state OFF, run before scan() returns.
+		"""
+
+		with self._handler_futures_lock:
+			pending = list(self._handler_futures)
+
+		if not pending:
+			return
+
+		_, still_running = await asyncio.wait(
+			[asyncio.wrap_future(future) for future in pending],
+			timeout=substation.constants.EVENT_HANDLER_DRAIN_TIMEOUT_SECONDS,
+		)
+
+		if still_running:
+			logger.warning(f"{len(still_running)} async event handler(s) still running when the scan ended")
 
 	def _call_handler (self, event: str, handler: typing.Callable, kwargs: dict[str, typing.Any]) -> None:
 
@@ -1018,6 +1075,17 @@ class RadioScanner:
 
 		"""Clean up SDR resources and close any active recordings"""
 
+		# Radio channels still ON get their OFF, so a consumer following
+		# channel_state is not left showing them active after the scan.  As
+		# during a scan, the OFF comes before the recording's saved event.
+		for channel_freq in self.channels:
+			if self.channel_states.get(channel_freq):
+				self.channel_states[channel_freq] = False
+				self.emit('channel_state',
+					band=self.band_name, index=int(self.channel_original_indices.get(channel_freq, -1)), freq=float(channel_freq),
+					is_active=False, snr_db=float(self.channel_snr.get(channel_freq, 0.0)),
+					ctcss_hz=None, dcs_code=None)
+
 		# Close all active recordings first
 		for channel_freq in list(self.channel_recorders.keys()):
 
@@ -1033,6 +1101,10 @@ class RadioScanner:
 				logger.info("SDR device closed")
 			except Exception as e:
 				logger.warning(f"Error closing SDR device (this is normal on interrupt): {e}")
+
+		# Let async event handlers finish, the ones for the events above
+		# included, before scan() returns and the loop closes.
+		await self._wait_for_handlers()
 
 	def _safe_queue_put (self, samples: numpy.typing.NDArray[numpy.complex64]) -> None:
 
@@ -1550,7 +1622,7 @@ class RadioScanner:
 		self.channel_recorders[channel_freq] = channel_recorder
 
 		self.emit('recording_started', loop=loop,
-			band=self.band_name, index=channel_index, freq=channel_freq)
+			band=self.band_name, index=int(channel_index), freq=float(channel_freq))
 
 	@staticmethod
 	def _log_future_error (future: typing.Any) -> None:
@@ -1611,7 +1683,7 @@ class RadioScanner:
 			os.remove(filepath)
 			logger.info(f"Discarded short recording ({duration:.2f}s < {min_dur:.1f}s): {os.path.basename(filepath)}")
 			self.emit('recording_discarded',
-				band=self.band_name, index=ch_idx, freq=channel_freq)
+				band=self.band_name, index=int(ch_idx), freq=float(channel_freq))
 			return
 
 		# Gate 3b (post-recording spectral flatness): discard if the
@@ -1627,13 +1699,13 @@ class RadioScanner:
 					os.remove(filepath)
 					logger.info(f"Discarded empty recording: {os.path.basename(filepath)}")
 					self.emit('recording_discarded',
-						band=self.band_name, index=ch_idx, freq=channel_freq)
+						band=self.band_name, index=int(ch_idx), freq=float(channel_freq))
 					return
 			except (OSError, ValueError) as exc:
 				logger.debug(f"Empty-check failed for {filepath}: {exc}")
 
 		self.emit('recording_saved',
-			band=self.band_name, index=ch_idx, freq=channel_freq, file_path=filepath,
+			band=self.band_name, index=int(ch_idx), freq=float(channel_freq), file_path=str(filepath),
 			ctcss_hz=tone['ctcss_hz'], dcs_code=tone['dcs_code'])
 
 	def _process_samples (self, samples: numpy.typing.NDArray[numpy.complex64], loop: asyncio.AbstractEventLoop) -> None:
@@ -1736,8 +1808,8 @@ class RadioScanner:
 
 			# Emit noise floor event (every slice).
 			self.emit('noise_floor',
-				noise_floor_db=round(noise_floor_db, 1),
-				warmup_complete=self._warmup_remaining <= 0)
+				noise_floor_db=round(float(noise_floor_db), 1),
+				warmup_complete=bool(self._warmup_remaining <= 0))
 
 			# Warmup: absorb SDR startup transients before enabling detection.
 			if self._warmup_remaining > 0:
@@ -2011,21 +2083,23 @@ class RadioScanner:
 						dcs_code = new_state.get('detected_dcs')
 
 					self.emit('channel_state', loop=loop,
-						band=self.band_name, index=idx, freq=channel_freq,
-						is_active=is_active, snr_db=snr_db,
+						band=self.band_name, index=int(idx), freq=float(channel_freq),
+						is_active=bool(is_active), snr_db=float(snr_db),
 						ctcss_hz=ctcss_hz, dcs_code=dcs_code)
 
-			# Emit per-channel SNR snapshot (every slice, after transitions).
-			self.emit('channel_snr', channels=[
-				{
-					"index": self.channel_original_indices.get(freq, -1),
-					"frequency_mhz": round(freq / 1e6, 6),
-					"snr_db": round(self.channel_snr.get(freq, 0.0), 1),
-					"is_active": self.channel_states.get(freq, False),
-					"duration_active_s": round(now - self.channel_start_times[freq], 1) if self.channel_states.get(freq) and freq in self.channel_start_times else 0.0,
-				}
-				for freq in self.channels
-			])
+			# Emit the per-channel SNR snapshot, after transitions.  Building it
+			# costs a dict per radio channel, so only when someone listens.
+			if self._event_handlers.get('channel_snr'):
+				self.emit('channel_snr', channels=[
+					{
+						"index": int(self.channel_original_indices.get(freq, -1)),
+						"frequency_mhz": round(float(freq) / 1e6, 6),
+						"snr_db": round(float(self.channel_snr.get(freq, 0.0)), 1),
+						"is_active": bool(self.channel_states.get(freq, False)),
+						"duration_active_s": round(float(now - self.channel_start_times[freq]), 1) if self.channel_states.get(freq) and freq in self.channel_start_times else 0.0,
+					}
+					for freq in self.channels
+				])
 
 			# Update sample counter for continuous phase tracking
 			self.sample_counter += len(samples)

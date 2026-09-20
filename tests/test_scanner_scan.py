@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime
+import json
 import threading
 import unittest.mock
 
@@ -15,6 +16,10 @@ import substation.config
 import substation.devices
 import substation.devices.base
 import substation.scanner
+
+import iq_generators
+
+EVENTS = ('channel_state', 'recording_started', 'recording_saved', 'recording_discarded', 'noise_floor', 'channel_snr')
 
 
 class FakeLiveDevice (substation.devices.base.BaseDevice):
@@ -181,3 +186,110 @@ class TestCliExitStatus:
 				substation.cli.main()
 
 		assert exc_info.value.code == 1
+
+
+def _play_transmissions (config_dict, tmp_path, seconds, transmissions, handlers=(), sample_rate=256e3):
+
+	"""
+	Play weak noise with bursty FM transmissions on chosen radio channels through a real scan.
+
+	transmissions holds (position in scanner.channels, start seconds, stop
+	seconds) for each one.  handlers holds (event, handler) pairs registered
+	before the scan starts.  Returns the scanner once scan() has returned.
+	"""
+
+	config_dict["bands"]["test_nfm"]["sample_rate"] = sample_rate
+	config = substation.config.validate_config(config_dict)
+	probe = substation.scanner.RadioScanner(config=config, band_name="test_nfm", device_type="file")
+
+	n = int(sample_rate * seconds)
+	rng = numpy.random.default_rng(3)
+	iq = (0.001 * (rng.standard_normal(n) + 1j * rng.standard_normal(n))).astype(numpy.complex64)
+
+	for position, start_s, stop_s in transmissions:
+		first, last = int(start_s * sample_rate), int(stop_s * sample_rate)
+		offset = probe.channels[position] - probe.center_freq
+		iq[first:last] += iq_generators.generate_bursty_fm_iq(offset, sample_rate, last - first, start_index=first)
+
+	path = tmp_path / "playback.wav"
+	iq_generators.write_iq_wav(path, iq, sample_rate)
+
+	scanner = substation.scanner.RadioScanner(
+		config=config,
+		band_name="test_nfm",
+		device_type="file",
+		clock=substation.scanner.VirtualClock(datetime.datetime(2000, 1, 1), sample_rate),
+		device_kwargs={"file_path": str(path), "center_freq": probe.center_freq},
+	)
+
+	for event, handler in handlers:
+		scanner.on(event, handler)
+
+	asyncio.run(scanner.scan())
+	return scanner
+
+
+def _recorder (events):
+
+	"""Handlers that append (event, payload) to events, one per event name."""
+
+	return [(name, lambda _name=name, **payload: events.append((_name, payload))) for name in EVENTS]
+
+
+class TestEventsDuringAScan:
+
+	def test_payloads_are_plain_python_types (self, minimal_config_dict, tmp_path):
+		"""Regression: is_active was a numpy bool on ON events, so json.dumps of a payload raised."""
+		events = []
+		_play_transmissions(minimal_config_dict, tmp_path, 6.0, [(3, 1.5, 4.0)], handlers=_recorder(events))
+
+		states = [payload for name, payload in events if name == 'channel_state']
+		assert [payload['is_active'] for payload in states] == [True, False]
+
+		for name, payload in events:
+			json.dumps(payload)
+
+			if name == 'channel_state':
+				assert type(payload['is_active']) is bool
+				assert type(payload['snr_db']) is float
+
+	def test_activation_events_arrive_in_the_documented_order (self, minimal_config_dict, tmp_path):
+		"""One transmission gives recording_started, channel_state ON, channel_state OFF, then recording_saved."""
+		events = []
+		_play_transmissions(minimal_config_dict, tmp_path, 6.0, [(3, 1.5, 4.0)], handlers=_recorder(events))
+
+		sequence = [
+			name if name != 'channel_state' else ('ON' if payload['is_active'] else 'OFF')
+			for name, payload in events
+			if name not in ('noise_floor', 'channel_snr')
+		]
+		assert sequence == ['recording_started', 'ON', 'OFF', 'recording_saved']
+
+	def test_async_handler_receives_events_emitted_without_a_loop (self, minimal_config_dict, tmp_path):
+		"""Regression: async handlers on recording_saved, noise_floor and channel_snr were silently dropped."""
+		received = []
+
+		async def on_saved (**payload):
+			received.append(payload['file_path'])
+
+		async def on_noise_floor (**payload):
+			received.append('noise_floor')
+
+		_play_transmissions(minimal_config_dict, tmp_path, 6.0, [(3, 1.5, 4.0)], handlers=[('recording_saved', on_saved), ('noise_floor', on_noise_floor)])
+
+		assert received.count('noise_floor') > 0
+		assert [path for path in received if path != 'noise_floor'][0].endswith('.wav')
+
+	def test_radio_channel_on_when_the_scan_ends_gets_its_off (self, minimal_config_dict, tmp_path):
+		"""Regression: a radio channel still ON at the end of a scan never got an OFF, so OSC consumers showed it active."""
+		events = []
+		async_states = []
+
+		async def on_state (**payload):
+			async_states.append(payload['is_active'])
+
+		_play_transmissions(minimal_config_dict, tmp_path, 5.0, [(3, 2.0, 5.0)], handlers=_recorder(events) + [('channel_state', on_state)])
+
+		states = [payload['is_active'] for name, payload in events if name == 'channel_state']
+		assert states == [True, False]
+		assert async_states == [True, False]
