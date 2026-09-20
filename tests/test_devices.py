@@ -380,6 +380,17 @@ class TestPyrtlsdrImport:
 		assert module.rtlsdr.__version__ == "0.3.0"
 		assert sys.modules["pkg_resources"] is real
 
+	def test_a_registered_module_without_a_spec_is_used_as_it_is (self, import_rtlsdr_device_module):
+		"""Regression: a pkg_resources stub registered without a __spec__ made find_spec raise ValueError."""
+		stub = types.ModuleType("pkg_resources")
+		stub.__spec__ = None
+		sys.modules["pkg_resources"] = stub
+
+		module = import_rtlsdr_device_module()
+
+		assert module.rtlsdr.__version__ == "unknown"
+		assert sys.modules["pkg_resources"] is stub
+
 	@pytest.mark.skipif(
 		importlib.util.find_spec("rtlsdr") is None or ctypes.util.find_library("rtlsdr") is None,
 		reason="needs pyrtlsdr and librtlsdr installed",

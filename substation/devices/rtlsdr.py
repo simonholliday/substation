@@ -45,7 +45,10 @@ def _import_pyrtlsdr () -> types.ModuleType:
 
 	stand_in = None
 
-	if importlib.util.find_spec("pkg_resources") is None:
+	# A module already registered under the name serves pyrtlsdr as it is.
+	# Checking first also spares find_spec, which raises ValueError for a
+	# registered module that has no __spec__.
+	if "pkg_resources" not in sys.modules and importlib.util.find_spec("pkg_resources") is None:
 		stand_in = types.ModuleType("pkg_resources")
 		sys.modules["pkg_resources"] = stand_in
 
