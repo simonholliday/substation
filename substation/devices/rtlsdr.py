@@ -64,6 +64,13 @@ class RtlSdrDevice (substation.devices.base.BaseDevice):
 	Wrapper for RTL-SDR devices
 
 	Provides a unified interface for RTL-SDR hardware.
+
+	pyrtlsdr closes the device before it raises from any failed call, and
+	closing frees librtlsdr's handle to it.  None of pyrtlsdr's methods check
+	for that, so a later call would reach freed memory.  This wrapper checks
+	first: once the device is closed, by close() or by pyrtlsdr after a
+	failure, settings and reads raise OSError, and cancelling or closing
+	again does nothing.
 	"""
 
 	def __init__ (self, device_index: int = 0) -> None:
@@ -81,35 +88,49 @@ class RtlSdrDevice (substation.devices.base.BaseDevice):
 		# any negative correction as an error code and closes the device.
 		self._freq_correction = 0
 
+	def _driver (self) -> typing.Any:
+
+		"""
+		Return the pyrtlsdr device, or raise OSError if it has been closed.
+
+		Every call that reaches librtlsdr goes through here, so none can reach
+		a handle that pyrtlsdr has already freed.
+		"""
+
+		if not getattr(self._device, 'device_opened', False):
+			raise OSError("The RTL-SDR device is closed: an earlier call to it failed, or it was closed deliberately")
+
+		return self._device
+
 	@property
 	def sample_rate (self) -> float:
 		"""Get the current sample rate in Hz"""
-		return self._device.sample_rate
+		return self._driver().sample_rate
 
 	@sample_rate.setter
 	def sample_rate (self, value: float) -> None:
 		"""Set the sample rate in Hz"""
-		self._device.sample_rate = value
+		self._driver().sample_rate = value
 
 	@property
 	def center_freq (self) -> float:
 		"""Get the current center frequency in Hz"""
-		return self._device.center_freq
+		return self._driver().center_freq
 
 	@center_freq.setter
 	def center_freq (self, value: float) -> None:
 		"""Set the center frequency in Hz"""
-		self._device.center_freq = value
+		self._driver().center_freq = value
 
 	@property
 	def gain (self) -> float | str | None:
 		"""Get the current gain setting (dB, 'auto', or None)"""
-		return self._device.gain
+		return self._driver().gain
 
 	@gain.setter
 	def gain (self, value: float | str | None) -> None:
 		"""Set the gain (dB, 'auto', or None)"""
-		self._device.gain = value
+		self._driver().gain = value
 
 	@property
 	def freq_correction (self) -> int:
@@ -140,7 +161,7 @@ class RtlSdrDevice (substation.devices.base.BaseDevice):
 		if value == self._freq_correction:
 			return
 
-		self._device.freq_correction = value
+		self._driver().freq_correction = value
 		self._freq_correction = value
 
 	@property
@@ -193,7 +214,7 @@ class RtlSdrDevice (substation.devices.base.BaseDevice):
 			Complex IQ samples as numpy array
 		"""
 
-		return self._device.read_samples(num_samples)
+		return self._driver().read_samples(num_samples)
 
 	def read_samples_async (self, callback: typing.Callable, num_samples: int) -> None:
 
@@ -205,10 +226,20 @@ class RtlSdrDevice (substation.devices.base.BaseDevice):
 			num_samples: Number of samples to read per callback
 		"""
 
-		self._device.read_samples_async(callback, num_samples)
+		self._driver().read_samples_async(callback, num_samples)
 
 	def cancel_read_async (self) -> None:
-		"""Cancel asynchronous sample reading"""
+
+		"""
+		Cancel asynchronous sample reading.
+
+		Does nothing once the device is closed: streaming has already stopped,
+		and librtlsdr's handle may have been freed.
+		"""
+
+		if not getattr(self._device, 'device_opened', False):
+			return
+
 		self._device.cancel_read_async()
 
 	def close (self) -> None:

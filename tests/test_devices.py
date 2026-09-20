@@ -76,14 +76,89 @@ class TestCreateDevice:
 
 class FakePyRtlSdr:
 
-	"""Stands in for pyrtlsdr's RtlSdr, with the two correction quirks seen on a real RTL-SDR Blog V4."""
+	"""Stands in for pyrtlsdr 0.3.0's RtlSdr, with the quirks it and a real RTL-SDR Blog V4 show.
+
+	Like pyrtlsdr, it closes the device before raising from a failed call, and
+	closing frees librtlsdr's handle.  Every call that would reach librtlsdr is
+	recorded, and marked when it arrives after the close, where the real one
+	would use freed memory.
+	"""
 
 	def __init__ (self, device_index: int) -> None:
 
 		"""Open with no correction, as librtlsdr does."""
 
+		self.device_opened = True
 		self.correction = 0
 		self.corrections_sent: list[int] = []
+		self.calls: list[str] = []
+		self.fail_reads = False
+		self._center_freq = 100e6
+		self._sample_rate = 2.048e6
+
+	def _call (self, name: str) -> None:
+
+		"""Record a call into librtlsdr, marking any that would use a freed handle."""
+
+		self.calls.append(name if self.device_opened else f"{name} after close")
+
+	def close (self) -> None:
+
+		"""Free the handle, as rtlsdr_close does.  Closing again does nothing."""
+
+		if self.device_opened:
+			self.calls.append("close")
+			self.device_opened = False
+
+	def read_samples (self, num_samples: int) -> numpy.ndarray:
+
+		"""Return silence, or close the device and raise, as pyrtlsdr does on a short read."""
+
+		self._call("read_samples")
+
+		if self.fail_reads:
+			self.close()
+			raise OSError(f"Short read, requested {2 * num_samples} bytes, received 0")
+
+		return numpy.zeros(num_samples, dtype=numpy.complex128)
+
+	def cancel_read_async (self) -> None:
+
+		"""Record the cancel."""
+
+		self._call("cancel_read_async")
+
+	@property
+	def center_freq (self) -> float:
+
+		"""Read the tuning back."""
+
+		self._call("get_center_freq")
+		return self._center_freq
+
+	@center_freq.setter
+	def center_freq (self, value: float) -> None:
+
+		"""Tune."""
+
+		self._call("set_center_freq")
+		self._center_freq = value
+
+	@property
+	def sample_rate (self) -> float:
+
+		"""Read the sample rate back."""
+
+		self._call("get_sample_rate")
+		return self._sample_rate
+
+	@sample_rate.setter
+	def sample_rate (self, value: float) -> None:
+
+		"""Set the sample rate."""
+
+		self._call("set_sample_rate")
+		self._sample_rate = value
 
 	@property
 	def freq_correction (self) -> int:
@@ -99,6 +174,8 @@ class FakePyRtlSdr:
 	def freq_correction (self, value: int) -> None:
 
 		"""Like librtlsdr, reject setting the correction the device already holds."""
+
+		self._call("set_freq_correction")
 
 		if value == self.correction:
 			raise OSError(f"Could not set freq. offset to {value} ppm")
@@ -146,6 +223,43 @@ class TestRtlSdrFreqCorrection:
 
 		assert device.freq_correction == 5
 		assert device._device.corrections_sent == [5]
+
+
+class TestRtlSdrClosedDevice:
+
+	def test_nothing_reaches_the_driver_after_a_failed_read (self, rtlsdr_device_class):
+		"""Regression: after pyrtlsdr closed the device on a failed read, the wrapper still called librtlsdr.
+
+		Calibration's restore and the scan's shutdown both touched the device
+		after the failed read, on a handle rtlsdr_close had freed.
+		"""
+		device = rtlsdr_device_class(0)
+		device._device.fail_reads = True
+
+		with pytest.raises(OSError, match="Short read"):
+			device.read_samples(1024)
+
+		for setting, value in (("center_freq", 446.1e6), ("sample_rate", 2.4e6), ("gain", 30), ("freq_correction", 5)):
+			with pytest.raises(OSError, match="closed"):
+				setattr(device, setting, value)
+
+		with pytest.raises(OSError, match="closed"):
+			device.read_samples(1024)
+
+		device.cancel_read_async()
+		device.close()
+
+		assert device._device.calls == ["read_samples", "close"]
+
+	def test_cancel_and_close_are_safe_once_closed (self, rtlsdr_device_class):
+		"""The scan's shutdown cancels and closes unconditionally, so both must be harmless on a closed device."""
+		device = rtlsdr_device_class(0)
+
+		device.close()
+		device.cancel_read_async()
+		device.close()
+
+		assert device._device.calls == ["close"]
 
 
 # pyrtlsdr 0.3.0's __init__.py, reduced to the part that matters here: it

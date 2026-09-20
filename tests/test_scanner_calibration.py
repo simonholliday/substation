@@ -20,27 +20,74 @@ class FakeCalibrationSdr:
 	correction moves the station one PPM further in the same direction.
 	Without a station the samples are noise only, standing in for a
 	calibration frequency with nothing on it.
+
+	With closes_on_error set, a failed read closes the receiver, as an RTL-SDR
+	does, and it then refuses every setting as the RTL-SDR wrapper does.
 	"""
 
-	def __init__ (self, seed: int, station_offset_ppm: float | None = None, fail_after_reads: int | None = None) -> None:
+	def __init__ (self, seed: int, station_offset_ppm: float | None = None, fail_after_reads: int | None = None, closes_on_error: bool = False) -> None:
 
 		"""Set the starting tuning and choose what the receiver will deliver."""
 
-		self.center_freq = 446.1e6
-		self.sample_rate = 2.4e6
+		self.closed = False
+		self._center_freq = 446.1e6
+		self._sample_rate = 2.4e6
 		self.freq_correction = 0
 
 		self._rng = numpy.random.default_rng(seed)
 		self._station_offset_ppm = station_offset_ppm
 		self._fail_after_reads = fail_after_reads
+		self._closes_on_error = closes_on_error
 		self._reads = 0
 		self._sample_index = 0
+
+	def _check_open (self) -> None:
+
+		"""Refuse to touch a closed receiver."""
+
+		if self.closed:
+			raise OSError("The RTL-SDR device is closed")
+
+	@property
+	def center_freq (self) -> float:
+
+		"""The current tuning."""
+
+		self._check_open()
+		return self._center_freq
+
+	@center_freq.setter
+	def center_freq (self, value: float) -> None:
+
+		"""Tune the receiver."""
+
+		self._check_open()
+		self._center_freq = value
+
+	@property
+	def sample_rate (self) -> float:
+
+		"""The current sample rate."""
+
+		self._check_open()
+		return self._sample_rate
+
+	@sample_rate.setter
+	def sample_rate (self, value: float) -> None:
+
+		"""Set the sample rate."""
+
+		self._check_open()
+		self._sample_rate = value
 
 	def read_samples (self, n: int) -> numpy.ndarray:
 
 		"""Return n IQ samples of noise, plus the carrier when one is configured."""
 
+		self._check_open()
+
 		if self._fail_after_reads is not None and self._reads >= self._fail_after_reads:
+			self.closed = self._closes_on_error
 			raise OSError("USB read failed")
 
 		self._reads += 1
@@ -198,3 +245,16 @@ class TestCalibrateSdr:
 		assert sdr.center_freq == 446.1e6
 		assert sdr.sample_rate == 2.4e6
 		assert sdr.freq_correction == 0
+
+	def test_read_failure_that_closes_the_receiver_reports_the_read_error (self):
+		"""Regression: after an RTL-SDR closed itself on a failed read, calibration retuned the freed device.
+
+		The wrapper now refuses any call to a closed device.  That refusal must
+		not take the place of the read error, which is what went wrong.
+		"""
+		sdr = FakeCalibrationSdr(seed=0, fail_after_reads=5, closes_on_error=True)
+
+		with pytest.raises(OSError, match="USB read failed"):
+			_calibrate(sdr)
+
+		assert sdr.closed

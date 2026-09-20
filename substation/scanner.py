@@ -707,7 +707,8 @@ class RadioScanner:
 		applies the opposite of that offset as a PPM correction, but only when the
 		measurements can be trusted (see _evaluate_calibration).  Otherwise the device's existing
 		correction is left unchanged and a warning says why.  The device's centre
-		frequency and sample rate are always restored, even if a read fails.
+		frequency and sample rate are restored afterwards, and after a failed
+		read too, if the device is still open.
 
 		Args:
 			known_freq: Known signal frequency in Hz (e.g., 93.7 MHz for WFM broadcast)
@@ -781,12 +782,24 @@ class RadioScanner:
 				# Settling delay between measurements
 				time.sleep(0.2)
 
-		finally:
+		except BaseException:
 
-			# Restore original settings, including when a read fails part way, so
-			# the scan never starts tuned to the calibration station
-			self.sdr.center_freq = initial_center_freq
-			self.sdr.sample_rate = initial_sample_rate
+			# Put the scan tuning back if the receiver still accepts it.  The
+			# error that stopped calibration is the one to report: an RTL-SDR
+			# closes itself when a read fails, and then refuses the restore, so
+			# a failure here is only logged.
+			try:
+				self.sdr.center_freq = initial_center_freq
+				self.sdr.sample_rate = initial_sample_rate
+			except Exception as restore_exc:
+				logger.debug(f"Could not restore the scan tuning after calibration failed: {restore_exc}")
+
+			raise
+
+		# Restore the scan tuning, so the scan never starts tuned to the
+		# calibration station
+		self.sdr.center_freq = initial_center_freq
+		self.sdr.sample_rate = initial_sample_rate
 
 		# Signal strength: strongest peak against the noise floor of the last spectrum
 		if magnitude_db is not None and peak_magnitudes:
