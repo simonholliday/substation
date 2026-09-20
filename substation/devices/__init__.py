@@ -11,34 +11,13 @@ by accepting a device type string and returning the appropriate instance.
 
 import typing
 
+import substation.device_families
 import substation.devices.base
 
 
-_DEVICE_FAMILIES: dict[str, str] = {
-	'rtl': 'rtlsdr', 'rtlsdr': 'rtlsdr', 'rtl-sdr': 'rtlsdr',
-	'hackrf': 'hackrf', 'hackrf-one': 'hackrf', 'hackrfone': 'hackrf',
-	'airspy': 'airspy', 'airspy-r2': 'airspy', 'airspyr2': 'airspy',
-	'airspyhf': 'airspyhf', 'airspy-hf': 'airspyhf', 'airspyhf+': 'airspyhf',
-	'file': 'file',
-}
-
-
-def normalize_device_family (device_type: str) -> str:
-	"""Return the canonical device family name for a CLI device type string.
-
-	Maps all aliases to a canonical name (e.g. 'rtl', 'rtl-sdr' → 'rtlsdr').
-	For 'soapy:<driver>' strings, returns the driver name.
-	"""
-
-	key = device_type.lower()
-
-	if key in _DEVICE_FAMILIES:
-		return _DEVICE_FAMILIES[key]
-
-	if key.startswith('soapy:'):
-		return key.split(':', 1)[1]
-
-	return key
+# Kept here for existing callers; the table and the logic live in
+# substation.device_families, which the configuration can import.
+normalize_device_family = substation.device_families.normalize_device_family
 
 
 def create_device (device_type: str, device_index: int = 0, **kwargs: typing.Any) -> 'substation.devices.base.BaseDevice':

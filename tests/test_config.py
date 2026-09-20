@@ -335,6 +335,49 @@ class TestBandDefaults:
 		assert "UNKNOWN_TYPE" in caplog.text
 
 
+class TestDeviceOverrideKeys:
+
+	@pytest.mark.parametrize("key", ["AirSpy", "airspy-r2", " AIRSPYR2 "])
+	def test_any_spelling_of_a_family_is_its_key (self, minimal_config_dict, key):
+		"""Regression: an override keyed by another spelling of a device type was silently never applied."""
+		minimal_config_dict["bands"]["test_nfm"]["device_overrides"] = {key: {"sample_rate": 2.5e6}}
+
+		config = substation.config.validate_config(minimal_config_dict)
+
+		assert config.bands["test_nfm"].device_overrides == {"airspy": substation.config.DeviceOverrideConfig(sample_rate=2.5e6)}
+
+	def test_unknown_key_is_warned_about (self, minimal_config_dict, caplog):
+		"""A key that names no device type is kept, as it may be a SoapySDR driver, but a typo gets a warning."""
+		minimal_config_dict["bands"]["test_nfm"]["device_overrides"] = {"airpsy": {"sample_rate": 2.5e6}}
+
+		with caplog.at_level(logging.WARNING):
+			config = substation.config.validate_config(minimal_config_dict)
+
+		assert "airpsy" in config.bands["test_nfm"].device_overrides
+		assert "'airpsy' names no device type" in caplog.text
+
+	def test_soapy_prefix_marks_a_driver_on_purpose (self, minimal_config_dict, caplog):
+		"""Written as soapy:<driver>, a SoapySDR driver's key is accepted quietly, under the driver's name."""
+		minimal_config_dict["bands"]["test_nfm"]["device_overrides"] = {"soapy:lime": {"sample_rate": 2.5e6}}
+
+		with caplog.at_level(logging.WARNING):
+			config = substation.config.validate_config(minimal_config_dict)
+
+		assert list(config.bands["test_nfm"].device_overrides) == ["lime"]
+		assert "names no device type" not in caplog.text
+
+	def test_two_spellings_of_one_family_are_merged (self, minimal_config_dict):
+		"""Keys for the same family combine, the later one winning where both set a value."""
+		minimal_config_dict["bands"]["test_nfm"]["device_overrides"] = {
+			"rtlsdr": {"sample_rate": 2.4e6, "snr_threshold_db": 9.0},
+			"RTL-SDR": {"snr_threshold_db": 7.0},
+		}
+
+		override = substation.config.validate_config(minimal_config_dict).bands["test_nfm"].device_overrides["rtlsdr"]
+
+		assert (override.sample_rate, override.snr_threshold_db) == (2.4e6, 7.0)
+
+
 class TestRequiredBandwidth:
 
 	def test_span_plus_one_channel_and_edge_margins (self, app_config):

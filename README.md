@@ -562,7 +562,7 @@ With this configuration:
 - `--band pmr --device-type rtlsdr` → uses base config (sample_rate 1.024 MHz, default gain)
 - `--band pmr --device-type airspy` → applies the override (sample_rate 2.5 MHz, per-element gain)
 
-**Override keys** are canonical device family names:
+**Override keys** name a device family. Any `--device-type` spelling of a family works as its key, in any letter case:
 
 | `--device-type` aliases | Override key |
 | :--- | :--- |
@@ -571,6 +571,8 @@ With this configuration:
 | `airspy`, `airspy-r2`, `airspyr2` | `airspy` |
 | `airspyhf`, `airspy-hf`, `airspyhf+` | `airspyhf` |
 | `soapy:<driver>` | the driver name (e.g. `lime`) |
+
+A key that names no device family the scanner knows logs a warning at startup, in case it is a typo. For a SoapySDR driver, write the key as `soapy:<driver>` to say it is intended.
 
 **Supported override fields:** `sample_rate`, `sdr_gain_db`, `sdr_gain_elements`, `sdr_device_settings`, `snr_threshold_db`, `activation_variance_db`.
 

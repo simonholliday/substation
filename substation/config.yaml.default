@@ -298,8 +298,11 @@ recording:
 #   device_overrides: null
 #     Settings that replace this band's own on one family of SDR device, keyed
 #     by family: `rtlsdr`, `hackrf`, `airspy`, `airspyhf`, or a SoapySDR driver
-#     name. When the scanner runs with a matching `--device-type`, it merges
-#     those settings onto the band's.
+#     name. A key can use any `--device-type` spelling of its family, in any
+#     letter case. When the scanner runs with a matching `--device-type`, it
+#     merges those settings onto the band's. A key that names no family the
+#     scanner knows logs a warning, unless it is written as `soapy:` followed
+#     by a SoapySDR driver name.
 #     Example: {airspy: {sample_rate: 2.5e+6, sdr_gain_elements: {LNA: 14, MIX: 5, VGA: 12}}}
 #
 # Settings for each device family in a band's `device_overrides`

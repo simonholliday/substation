@@ -27,6 +27,7 @@ import pydantic
 import yaml
 
 import substation.constants
+import substation.device_families
 
 logger = logging.getLogger(__name__)
 
@@ -631,8 +632,11 @@ class BandConfig(pydantic.BaseModel):
 	"""
 	Settings that replace this band's own on one family of SDR device, keyed by
 	family: `rtlsdr`, `hackrf`, `airspy`, `airspyhf`, or a SoapySDR driver name.
-	When the scanner runs with a matching `--device-type`, it merges those
-	settings onto the band's.
+	A key can use any `--device-type` spelling of its family, in any letter
+	case. When the scanner runs with a matching `--device-type`, it merges
+	those settings onto the band's. A key that names no family the scanner
+	knows logs a warning, unless it is written as `soapy:` followed by a
+	SoapySDR driver name.
 	"""
 
 	@pydantic.field_validator('modulation', 'type', mode='before')
@@ -640,6 +644,48 @@ class BandConfig(pydantic.BaseModel):
 	def _validate_label (cls, value: typing.Any) -> typing.Any:
 		"""Normalize labels to uppercase for case-insensitive matching."""
 		return _normalize_label(value)
+
+	@pydantic.field_validator('device_overrides', mode='before')
+	@classmethod
+	def _normalize_override_keys (cls, value: typing.Any) -> typing.Any:
+
+		"""
+		Key each device override by its device family.
+
+		The scanner looks overrides up by family, so a key written as another
+		spelling (`AirSpy`, `rtl-sdr`, `airspy-hf`) was silently never used.
+		Keys that name the same family are merged in the order they appear.
+		A key naming no known family is kept, since it may be a SoapySDR
+		driver, but warned about unless its `soapy:` prefix says so.
+		"""
+
+		if not isinstance(value, dict):
+			return value
+
+		normalized: dict[typing.Any, typing.Any] = {}
+
+		for key, settings in value.items():
+
+			if not isinstance(key, str):
+				normalized[key] = settings
+				continue
+
+			family = substation.device_families.normalize_device_family(key)
+			written_as_soapy = key.strip().lower().startswith(substation.device_families.SOAPY_PREFIX)
+
+			if family not in substation.device_families.KNOWN_DEVICE_FAMILIES and not written_as_soapy:
+				logger.warning(
+					f"device_overrides key '{key}' names no device type the scanner knows, so it applies only with "
+					f"--device-type soapy:{family}. If that is intended, write the key as 'soapy:{family}'."
+				)
+
+			existing = normalized.get(family)
+			if isinstance(existing, dict) and isinstance(settings, dict):
+				normalized[family] = _deep_merge(existing, settings)
+			else:
+				normalized[family] = settings
+
+		return normalized
 
 	@pydantic.field_validator('exclude_channel_indices', mode='before')
 	@classmethod
