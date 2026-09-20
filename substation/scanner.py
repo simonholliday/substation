@@ -315,6 +315,7 @@ class RadioScanner:
 		# EMA-smoothed noise floor (dB) and warmup counter.
 		# Smoothing eliminates per-slice jitter; warmup absorbs SDR startup transients.
 		self._noise_floor_ema: float | None = None
+		self._last_noise_floor_db: float | None = None
 		self._warmup_remaining: int = substation.constants.NOISE_FLOOR_WARMUP_SLICES
 
 		# Channels for which the variance check has already produced a
@@ -1767,10 +1768,6 @@ class RadioScanner:
 
 		filename_suffix = f"{snr_db:.1f}" + "dB_" + self.device_type + "_" + str(self.device_index)
 
-		# Find the initial noise floor to provide a stable reference for noise reduction
-		# This is better than letting the recorder guess from short audio chunks.
-		initial_noise_floor = getattr(self, '_last_noise_floor_db', None)
-
 		channel_recorder = substation.recording.ChannelRecorder(
 			channel_freq=channel_freq,
 			channel_index=channel_index,
@@ -1792,9 +1789,12 @@ class RadioScanner:
 			audio_format=self.audio_format,
 		)
 
-		# Pass the band-wide noise floor if we have it
-		if initial_noise_floor is not None:
-			channel_recorder.initial_noise_floor_db = initial_noise_floor
+		# Once the scan has a band-wide noise floor, the recorder's noise
+		# reduction estimates noise from the frames within 3 dB of the
+		# quietest, which suits recordings that are mostly signal.  Only
+		# whether a noise floor exists matters; its value is not used.
+		if self._last_noise_floor_db is not None:
+			channel_recorder.initial_noise_floor_db = self._last_noise_floor_db
 
 		# Start the async flush task using the provided event loop.  The
 		# done-callback surfaces flush failures (e.g. a full disk) that

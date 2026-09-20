@@ -2,6 +2,7 @@
 
 import numpy
 import pytest
+import scipy.signal
 
 import substation.dsp.noise_reduction
 
@@ -337,3 +338,25 @@ class TestDynamicsCurve:
 			substation.dsp.noise_reduction.apply_dynamics_curve(
 				samples, threshold_dbfs=-20.0, cut_curve=1.5,
 			)
+
+
+class TestNoiseEstimateIgnoresTheEdges:
+
+	@pytest.mark.parametrize("samples", [16000, 16100, 40000])
+	def test_steady_noise_is_estimated_at_its_level (self, samples):
+		"""Regression: the zero-padded frames at a block's edges read quietest, and pulled the noise estimate low.
+
+		The adaptive estimator takes the frames within 3 dB of the quietest.
+		With some block lengths both edge frames qualified, so the estimate
+		came from half-empty frames; a recording's noise reduction, estimated
+		once from its first audio, then stayed too weak throughout.
+		"""
+		sr = 16000
+		audio = (numpy.random.default_rng(0).standard_normal(samples) * 0.01).astype(numpy.float32)
+
+		_, noise_mag = substation.dsp.noise_reduction.apply_spectral_subtraction(audio, sr, adaptive_noise_estimation=True)
+		_, _, zxx = scipy.signal.stft(audio, fs=sr, window="hann", nperseg=512, noverlap=256, boundary="zeros", padded=True)
+		typical = numpy.median(numpy.abs(zxx[:, 1:-1]), axis=1)
+
+		level_db = 20 * numpy.log10(numpy.mean(noise_mag[:, 0]) / numpy.mean(typical))
+		assert abs(level_db) < 1.5

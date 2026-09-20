@@ -40,7 +40,7 @@ Each modulation type has a dedicated, stateful demodulator that maintains phase 
 
 Recordings are not just raw demodulated audio dumped to disk. Each file passes through several stages designed to produce clean, ready-to-use output:
 
-- **Spectral subtraction** noise reduction, guided by the band-wide noise floor estimate, reduces background hiss while preserving voice clarity. A 2D gain-mask smoothing kernel minimises musical noise artifacts.
+- **Spectral subtraction** noise reduction estimates the background hiss from the quietest moments of each recording's first audio, and reduces it while preserving voice clarity. A 2D gain-mask smoothing kernel minimises musical noise artifacts.
 - **Carrier transient trimming** (optional) detects and removes the sharp clicks that AM transmitters produce at key-on and key-off, using shape-based detection that distinguishes carrier transients from voice plosives.
 - **Half-cosine fades** at recording boundaries prevent clicks from sudden onset or cutoff.
 - **Soft limiting** via a tanh waveshaper with a 0.98 ceiling (-0.18 dBTP) prevents inter-sample true-peak overshoot, ensuring recordings never exceed 0 dBTP.
@@ -833,7 +833,7 @@ taskset -c 3 substation --band pmr --device-index 1
 ## Resource and Performance Notes
 - **Sample rate dominates CPU**. Large bands at high sample rates increase FFT/PSD load.
 - **Overrun warnings** indicate the processing of a slice exceeded its real-time window. This can lead to dropped IQ blocks (`Sample queue full`).
-- **Noise reduction** runs during write/flush if enabled (default). It uses `apply_spectral_subtraction` which is efficient and receives the band-wide noise floor for improved frame classification. The alternative `apply_noisereduce` implementation exists in `substation/dsp/noise_reduction.py` for reference but is not used by default as it is significantly more CPU-intensive. It needs the `noisereduce` library, installed with `pip install "substation[noisereduce]"`.
+- **Noise reduction** runs during write/flush if enabled (default). It uses `apply_spectral_subtraction`, which is efficient, and estimates the noise once per recording, from the quietest frames of the first audio written. The alternative `apply_noisereduce` implementation exists in `substation/dsp/noise_reduction.py` for reference but is not used by default as it is significantly more CPU-intensive. It needs the `noisereduce` library, installed with `pip install "substation[noisereduce]"`.
 - **Queue size** provides burst tolerance but uses memory: each queued slice holds every IQ sample in it.
 - **RTL-SDR USB buffers**: librtlsdr keeps 15 USB transfers of one slice each in flight, and Linux allows 16 MB of USB transfers by default. A slice of more than about 559,000 IQ samples, about 233 ms at 2.4 MHz once rounded up to whole blocks, therefore fails to stream with `Failed to submit transfer` until that limit is raised (see [INSTALL.md](INSTALL.md#2-system-optimisation-usb-buffering)).
 

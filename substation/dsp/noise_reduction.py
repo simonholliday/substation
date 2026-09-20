@@ -240,8 +240,14 @@ def apply_spectral_subtraction (
 	# Use provided noise profile or estimate from quietest frames in current block
 	if noise_mag is None or noise_mag.shape[0] != magnitude.shape[0]:
 
+		# The first and last frames overlap the zero padding the STFT adds at
+		# the block's edges, so they read several dB quieter than any audio.
+		# As the quietest frames they would set the noise estimate, about
+		# 10 dB too low, so the estimate leaves them out.
+		candidates = magnitude[:, 1:-1] if magnitude.shape[1] > 2 else magnitude
+
 		# Calculate total energy per frame (sum across all frequencies)
-		frame_energy = numpy.mean(magnitude * magnitude, axis=0)
+		frame_energy = numpy.mean(candidates * candidates, axis=0)
 
 		if adaptive_noise_estimation and frame_energy.size > 1:
 			# Select frames within 3 dB of the minimum energy as noise.
@@ -251,14 +257,14 @@ def apply_spectral_subtraction (
 			# 3 dB above the quietest frame — captures noise variation
 			# without including speech frames.
 			energy_threshold = min_energy * 2.0  # +3 dB in linear power
-			noise_frames = magnitude[:, frame_energy <= energy_threshold]
+			noise_frames = candidates[:, frame_energy <= energy_threshold]
 			# Fall back to percentile if that selects too few frames
 			if noise_frames.shape[1] < 2:
 				energy_threshold = numpy.percentile(frame_energy, 20.0)
-				noise_frames = magnitude[:, frame_energy <= energy_threshold]
+				noise_frames = candidates[:, frame_energy <= energy_threshold]
 		else:
 			energy_threshold = numpy.percentile(frame_energy, 20.0)
-			noise_frames = magnitude[:, frame_energy <= energy_threshold]
+			noise_frames = candidates[:, frame_energy <= energy_threshold]
 
 		# Average the quiet frames to get noise spectrum estimate
 		if noise_frames.size == 0:
