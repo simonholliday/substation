@@ -267,6 +267,7 @@ class RadioScanner:
 		self._futures_lock = threading.Lock()
 		self._processing_executor: concurrent.futures.ThreadPoolExecutor | None = None
 		self._processing_future: concurrent.futures.Future | None = None
+		self._setup_future: concurrent.futures.Future | None = None
 
 		# Radio channels whose current activation has no recording because
 		# its file could not be created, so their audio is dropped quietly.
@@ -362,8 +363,17 @@ class RadioScanner:
 
 
 	def _now (self) -> float:
-		"""Current time as a float epoch — uses virtual clock if set."""
-		return self.clock.time() if self.clock else time.time()
+
+		"""
+		Current time in seconds, for measuring intervals such as hold times.
+
+		The virtual clock during file playback.  Live, a monotonic clock, so
+		that a step in the system clock, such as an NTP correction, cannot
+		stretch or cut a hold or a silence timeout.  Only differences between
+		these values mean anything.
+		"""
+
+		return self.clock.time() if self.clock else time.monotonic()
 
 
 	def _calculate_channels (self) -> list[float]:
@@ -868,6 +878,7 @@ class RadioScanner:
 
 			for _ in range(3):
 
+				self._raise_if_stopping()
 				self.sdr.read_samples(sample_size)
 				time.sleep(0.1)
 
@@ -876,6 +887,7 @@ class RadioScanner:
 			for iteration in range(iterations, 0, -1):
 
 				logger.debug(f"Calibration measurement {iterations - iteration + 1}/{iterations}...")
+				self._raise_if_stopping()
 
 				# Read samples
 				samples = self.sdr.read_samples(sample_size)
@@ -954,6 +966,13 @@ class RadioScanner:
 		total_correction_ppm = self.sdr.freq_correction + freq_correction_ppm
 		self.sdr.freq_correction = total_correction_ppm
 		logger.info(f"SDR calibrated with frequency correction: {total_correction_ppm} PPM (signal: {signal_strength_db:.1f} dB SNR)")
+
+	def _raise_if_stopping (self) -> None:
+
+		"""Raise RuntimeError once the scan is stopping, so a calibration in progress ends early."""
+
+		if self._stopping:
+			raise RuntimeError("Calibration stopped because the scan is stopping")
 
 	@staticmethod
 	def _evaluate_calibration (ppm_measurements: list[float], signal_strength_db: float) -> tuple[int | None, str]:
@@ -1140,7 +1159,16 @@ class RadioScanner:
 
 	async def _close_recordings (self) -> None:
 
-		"""Finish the slice in flight, then end every activation and close every recording."""
+		"""Finish the setup or slice in flight, then end every activation and close every recording."""
+
+		setup = self._setup_future
+
+		if setup is not None and not setup.done():
+			logger.info("Waiting for device setup to stop")
+			try:
+				await asyncio.wrap_future(setup)
+			except Exception as exc:
+				logger.debug(f"Device setup ended with: {exc}")
 
 		processing = self._processing_future
 
@@ -1487,6 +1515,42 @@ class RadioScanner:
 			# detected from the first demodulated audio block.
 
 		return trim_start, trim_end, sample_offset, turning_on, turning_off
+
+	def _is_channel_active (self, channel_freq: float, above_threshold: bool, current_state: bool, now: float) -> bool:
+
+		"""
+		Decide whether a radio channel is active on this slice, from its SNR, its hold time, and its audio.
+
+		A radio channel is active while its SNR is above the threshold, and
+		for the hold time after, so a brief fade does not split a
+		transmission.
+
+		Audio silence override: if the channel is recording but demodulated
+		audio has been silent for longer than the audio silence timeout, it
+		is forced OFF.  This catches AM carriers that persist after voice
+		stops, where RF SNR stays above threshold but there is no useful
+		content.  The hold is cleared too, so that the hold alone, with the
+		SNR below the threshold, cannot turn it straight back ON.
+
+		Deliberate behaviour: after the forced OFF, a carrier still above
+		the SNR threshold may turn the channel ON again on a later slice (if
+		it also passes the noise gates) and time out again.  A persistently
+		keyed-but-silent carrier therefore cycles rather than being latched
+		off; the intended remedy for a channel that does this all day is to
+		add it to the band's exclude_channel_indices.
+		"""
+
+		if above_threshold:
+			self.channel_last_active_time[channel_freq] = now
+
+		is_active = above_threshold or (now - self.channel_last_active_time.get(channel_freq, 0) < self.hold_time_seconds)
+
+		if is_active and current_state and self.audio_silence_timeout > 0 and channel_freq in self.channel_recorders:
+			if now - self.channel_audio_last_active.get(channel_freq, 0) >= self.audio_silence_timeout:
+				self.channel_last_active_time[channel_freq] = 0.0
+				is_active = False
+
+		return bool(is_active)
 
 	def _get_channel_power (self, psd_db: numpy.typing.NDArray[numpy.float64], channel_freq: float) -> float:
 
@@ -1984,31 +2048,7 @@ class RadioScanner:
 				# Snapshot for potential rollback if the variance check rejects this turn-ON
 				prior_last_active_time = self.channel_last_active_time.get(channel_freq)
 
-				# Update last active time if signal is strong
-				if above_threshold:
-					self.channel_last_active_time[channel_freq] = now
-				
-				# Channel is "active" if signal is strong OR we are within the hold time window
-				is_active = above_threshold or (now - self.channel_last_active_time.get(channel_freq, 0) < self.hold_time_seconds)
-
-				# Audio silence override: if the channel is recording but
-				# demodulated audio has been silent for longer than the
-				# audio silence timeout, force it OFF.  This catches AM
-				# carriers that persist after voice stops, where RF SNR
-				# stays above threshold but there is no useful content.
-				#
-				# Deliberate behaviour: after the forced OFF, the carrier is
-				# still above the SNR threshold, so the channel may turn ON
-				# again on a later slice (if it also passes the noise gates)
-				# and time out again.  A persistently keyed-but-silent
-				# carrier therefore cycles rather than being latched off —
-				# the intended remedy for a channel that does this all day
-				# is to add it to the band's exclude_channel_indices.
-				if is_active and current_state and self.audio_silence_timeout > 0:
-					if channel_freq in self.channel_recorders:
-						audio_last = self.channel_audio_last_active.get(channel_freq, 0)
-						if now - audio_last >= self.audio_silence_timeout:
-							is_active = False
+				is_active = self._is_channel_active(channel_freq, above_threshold, current_state, now)
 
 				# Compute segment PSDs lazily only when a transition is detected.
 				# These are needed for both fine-grained transition localization
@@ -2246,7 +2286,11 @@ class RadioScanner:
 		self._processing_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="substation-slice")
 
 		try:
-			self._setup_sdr()
+			# Device setup, calibration included, blocks for seconds at a time,
+			# so it runs off the event loop and a program embedding the scanner
+			# keeps running.  Cleanup waits for it before closing the device.
+			self._setup_future = self._processing_executor.submit(self._setup_sdr)
+			await asyncio.wrap_future(self._setup_future)
 
 			# _setup_sdr() always assigns self.sdr — narrow the Optional
 			# here so the nested closure and the processing loop below can

@@ -514,3 +514,66 @@ class TestGainAndSettingsReachTheDevice:
 		assert device.device_settings == {"biastee": "true"}
 		assert "SDR Gain: per-element (LNA=10, VGA=12)" in caplog.text
 		assert "no per-element gain" not in caplog.text
+
+
+class SlowSetupDevice (FakeLiveDevice):
+
+	"""A live receiver whose tuning takes half a second, as a calibration's reads do."""
+
+	@FakeLiveDevice.sample_rate.setter
+	def sample_rate (self, value: float) -> None:
+		"""Set the sample rate, slowly."""
+		time.sleep(0.5)
+		self._sample_rate = value
+
+
+class TestTiming:
+
+	def test_device_setup_does_not_block_the_event_loop (self, app_config, monkeypatch):
+		"""Regression: device setup, calibration's reads and sleeps included, froze the event loop of a program embedding the scanner."""
+		device = SlowSetupDevice(blocks=1, error=OSError("stop here"))
+		monkeypatch.setattr(substation.devices, "create_device", lambda *args, **kwargs: device)
+		scanner = substation.scanner.RadioScanner(config=app_config, band_name="test_nfm", device_type="rtlsdr")
+		ticks = []
+
+		async def ticker ():
+			while True:
+				ticks.append(time.monotonic())
+				await asyncio.sleep(0.05)
+
+		async def run ():
+			tick_task = asyncio.create_task(ticker())
+			try:
+				await scanner.scan()
+			finally:
+				tick_task.cancel()
+
+		with pytest.raises(OSError, match="stop here"):
+			asyncio.run(run())
+
+		assert len(ticks) >= 5
+
+	def test_live_intervals_use_a_monotonic_clock (self, scanner_instance, monkeypatch):
+		"""Regression: live hold and silence timers used time.time(), so a clock step back held a radio channel ON."""
+		monkeypatch.setattr(time, "monotonic", lambda: 1234.5)
+		monkeypatch.setattr(time, "time", lambda: 9.0)
+
+		assert scanner_instance._now() == 1234.5
+
+	def test_hold_does_not_turn_a_silenced_channel_back_on (self, scanner_instance):
+		"""Regression: after the audio silence timeout forced a radio channel OFF, the hold alone turned it ON again.
+
+		With the SNR below the threshold, only the hold time was left, and it
+		is meant to bridge fades within a transmission, not to restart one.
+		"""
+		channel = scanner_instance.channels[0]
+		scanner_instance.channel_recorders[channel] = object()
+		scanner_instance.channel_audio_last_active[channel] = 0.0
+		now = 1000.0
+
+		forced_off = scanner_instance._is_channel_active(channel, above_threshold=True, current_state=True, now=now)
+		del scanner_instance.channel_recorders[channel]
+		next_slice = scanner_instance._is_channel_active(channel, above_threshold=False, current_state=False, now=now + 0.1)
+
+		assert forced_off is False
+		assert next_slice is False

@@ -110,6 +110,7 @@ def _calibrate (sdr: FakeCalibrationSdr, known_freq: float = 93.7e6) -> None:
 
 	scanner = substation.scanner.RadioScanner.__new__(substation.scanner.RadioScanner)
 	scanner.sdr = sdr
+	scanner._stopping = False
 
 	with unittest.mock.patch.object(time, "sleep"):
 		scanner._calibrate_sdr(known_freq)
@@ -258,3 +259,27 @@ class TestCalibrateSdr:
 			_calibrate(sdr)
 
 		assert sdr.closed
+
+
+class TestCalibrationStops:
+
+	def test_calibration_ends_early_when_the_scan_stops (self):
+		"""Calibration runs off the event loop now, so a stopping scan must be able to end it between reads."""
+		sdr = FakeCalibrationSdr(seed=0, station_offset_ppm=30.0)
+		scanner = substation.scanner.RadioScanner.__new__(substation.scanner.RadioScanner)
+		scanner.sdr = sdr
+		scanner._stopping = False
+		real_read = sdr.read_samples
+
+		def read_then_stop (n):
+			scanner._stopping = True
+			return real_read(n)
+
+		sdr.read_samples = read_then_stop
+
+		with unittest.mock.patch.object(time, "sleep"):
+			with pytest.raises(RuntimeError, match="scan is stopping"):
+				scanner._calibrate_sdr(93.7e6)
+
+		assert sdr._reads == 1
+		assert sdr.center_freq == 446.1e6
