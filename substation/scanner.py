@@ -2070,7 +2070,7 @@ class RadioScanner:
 					loop
 				)
 
-				# Yield to other async tasks (WebSocket broadcast, etc.) so
+				# Yield to other async tasks (recording flushes, async event handlers) so
 				# they don't starve when slices arrive back-to-back.
 				await asyncio.sleep(0)
 
