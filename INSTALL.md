@@ -10,7 +10,7 @@ Tested on:
 
 ## 1. RTL-SDR Blog V4 Driver
 
-The RTL-SDR Blog V4 requires the rtlsdrblog fork — the standard osmocom drivers are missing required symbols (e.g. `rtlsdr_set_dithering`).
+The RTL-SDR Blog V4 needs the RTL-SDR Blog fork of librtlsdr, which supports the V4's R828D tuner and its built-in HF upconverter; most distribution packages of the standard osmocom driver do not. Substation's pinned pyrtlsdr works with either library.
 
 ### Debian / Ubuntu / Raspberry Pi OS
 
@@ -77,7 +77,7 @@ cd ../..
 
 High sample rates (e.g. HackRF at 20 MHz) require more USB buffer memory than the kernel default. So do long slices on an RTL-SDR: librtlsdr keeps 15 USB transfers of one slice each in flight, so a slice of more than about 559,000 IQ samples (about 233 ms at 2.4 MHz, once rounded up to whole `sdr_device_sample_size` blocks) fails with `Failed to submit transfer` until the limit is raised.
 
-### Debian / Ubuntu / Raspberry Pi OS
+### Raspberry Pi OS
 
 ```bash
 # Edit the kernel command line
@@ -87,6 +87,18 @@ sudo nano /boot/firmware/cmdline.txt
 usbcore.usbfs_memory_mb=1000
 
 # Reboot for the change to take effect
+sudo reboot
+```
+
+### Debian / Ubuntu (PC)
+
+```bash
+# Add usbcore.usbfs_memory_mb=1000 inside the quotes of the
+# GRUB_CMDLINE_LINUX_DEFAULT line
+sudo nano /etc/default/grub
+
+# Rebuild the boot configuration, then reboot
+sudo update-grub
 sudo reboot
 ```
 
@@ -101,6 +113,12 @@ sudo reboot
 
 # After reboot, verify the parameter is active
 cat /proc/cmdline | grep usbfs_memory_mb
+```
+
+### Any Linux, until the next reboot
+
+```bash
+echo 1000 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
 ```
 
 ---

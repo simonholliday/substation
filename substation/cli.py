@@ -238,11 +238,6 @@ def main () -> int:
 		Exit code: 0 for success, 1 for error
 	"""
 
-	logging.basicConfig(
-		level=logging.INFO,
-		format='%(asctime)s - %(levelname)s - %(message)s'
-	)
-
 	parser = argparse.ArgumentParser(
 		description='Substation - Software-defined radio band scanner',
 		formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -319,7 +314,22 @@ Examples:
 		help='Start time of the recording as "YYYY-MM-DD HH:MM:SS" (default: 2000-01-01 00:00:00)'
 	)
 
+	# How much the scanner logs; DEBUG adds what each device reports about
+	# itself at startup, such as its gain elements
+	parser.add_argument(
+		'--log-level',
+		default='INFO',
+		choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+		type=str.upper,
+		help='How much to log: DEBUG, INFO, WARNING, or ERROR (default: INFO)'
+	)
+
 	args = parser.parse_args()
+
+	logging.basicConfig(
+		level=getattr(logging, args.log_level),
+		format='%(asctime)s - %(levelname)s - %(message)s'
+	)
 
 	config_path = pathlib.Path(args.config) if args.config else None
 

@@ -14,7 +14,7 @@ Substation's signal processing chain implements industry-standard DSP techniques
 
 ### Detection
 
-The scanner divides the SDR's bandwidth into radio channels and analyses each one five times per second using Welch's Power Spectral Density method. Welch averaging across multiple overlapping FFT segments reduces noise variance, producing stable SNR measurements that don't jitter between slices. The noise floor tracks slowly via an exponential moving average, so brief transmissions stand out clearly against a stable background. A warmup period at startup absorbs the transient spikes that SDR hardware produces while its PLL and AGC settle.
+The scanner divides the SDR's bandwidth into radio channels and analyses each one several times a second using Welch's Power Spectral Density method. Welch averaging across multiple overlapping FFT segments reduces noise variance, producing stable SNR measurements that don't jitter between slices. The noise floor tracks slowly via an exponential moving average, so brief transmissions stand out clearly against a stable background. A warmup period at startup absorbs the transient spikes that SDR hardware produces while its PLL and AGC settle.
 
 The centre frequency is automatically shifted by half a radio channel spacing whenever a radio channel would fall on the DC spike - a common SDR artifact caused by LO leakage - so no radio channel is ever masked.
 
@@ -43,7 +43,7 @@ Recordings are not just raw demodulated audio dumped to disk. Each file passes t
 - **Spectral subtraction** noise reduction estimates the background hiss from the quietest moments of each recording's first audio, and reduces it while preserving voice clarity. A 2D gain-mask smoothing kernel minimises musical noise artifacts.
 - **Carrier transient trimming** (optional) detects and removes the sharp clicks that AM transmitters produce at key-on and key-off, using shape-based detection that distinguishes carrier transients from voice plosives.
 - **Half-cosine fades** at recording boundaries prevent clicks from sudden onset or cutoff.
-- **Soft limiting** via a tanh waveshaper with a 0.98 ceiling (-0.18 dBTP) prevents inter-sample true-peak overshoot, ensuring recordings never exceed 0 dBTP.
+- **Soft limiting** via a tanh waveshaper holds every sample below 0.98 of full scale (-0.18 dBFS), leaving headroom for the small overshoot between samples that voice-band audio produces.
 - **Broadcast WAV metadata** (BEXT, EBU Tech 3285) embeds each recording's start time, frequency, modulation, and detected CTCSS/DCS codes directly in each file. Audio editors like Audacity, Reaper, and iZotope RX can place recordings on a timeline at their real capture time.
 - **FLAC output** (optional) provides lossless compression, typically 20–45% smaller than WAV depending on band and signal content (measured on real PMR and airband archives), with metadata stored as Vorbis comments. Compression level 6 was chosen after benchmarking every level on real PMR recordings on a Raspberry Pi: it produces essentially the same output size as level 8 but encodes in ~40% less CPU time.
 
@@ -139,7 +139,7 @@ A wideband transceiver covering 1 MHz to 6 GHz with up to 20 MHz of instantaneou
 
 **Gotchas**
 - **No hardware AGC.** Setting `sdr_gain_db: auto` does not enable AGC - there isn't one. The wrapper logs a warning and sets sensible defaults (LNA=32, VGA=30) so the device still works.
-- A numeric `sdr_gain_db` is silently clamped and stepped to the LNA's 8 dB grid and the VGA's 2 dB grid. Asking for 35 dB gets you 32. Check the startup log if the actual values matter.
+- A numeric `sdr_gain_db` sets both the LNA and the VGA, each clamped and stepped to its own grid: asking for 35 dB sets the LNA to 32 dB (8 dB steps) and the VGA to 34 dB (2 dB steps). The startup log shows the values applied.
 - High sample rates (~16-20 MHz) require raising the kernel USB buffer limit; otherwise IQ samples are dropped. See [INSTALL.md](INSTALL.md#2-system-optimisation-usb-buffering).
 - The 8-bit ADC has the same dynamic-range caveats as the RTL-SDR - wide captures including a strong station can desensitise weak ones.
 - Multiple Python bindings exist (`python_hackrf`, `hackrf`, `pyhackrf`) with different APIs; the wrapper auto-detects whichever is installed.
@@ -185,7 +185,7 @@ A high-dynamic-range VHF/UHF receiver with a 12-bit ADC (≈16-bit effective fro
 **Gotchas**
 - **Sample rates are discrete.** Asking for anything other than 2.5 MHz or 10 MHz silently snaps to the nearest supported rate and logs a warning. Always check the startup log to confirm the rate the device actually accepted.
 - **`sdr_gain_db: auto` is not real AGC.** SoapyAirspy reports `hasGainMode == True` but the underlying R2 hardware does not provide a working closed-loop AGC. Substation detects this and falls back to a fixed manual gain of `LNA=10, MIX=5, VGA=12` (27 dB total) - the same LNA-first values you would set by hand. This works well for typical PMR / VHF / UHF reception. If you want different values, set `sdr_gain_db` (numeric) or `sdr_gain_elements` (per-stage dict) explicitly in your band config.
-- For per-element tuning, **maximise LNA first**, set Mixer moderate, fine-tune with VGA (this is the LNA-first principle described in [Gain Tuning](#gain-tuning) below). The element names and ranges are logged at DEBUG level when the device starts up, so enable debug logging when configuring a new device.
+- For per-element tuning, **maximise LNA first**, set Mixer moderate, fine-tune with VGA (this is the LNA-first principle described in [Gain Tuning](#gain-tuning) below). The element names and ranges are logged at DEBUG level when the device starts up, so run with `--log-level DEBUG` when configuring a new device.
 - Requires a venv built with `--system-site-packages`.
 
 **Working example band** - PMR446 with per-element gain control:
@@ -280,7 +280,7 @@ Any device with a SoapySDR driver module installed can be used via `--device-typ
 SoapySDRUtil --find
 ```
 
-The same `sdr_gain_db`, `sdr_gain_elements`, and `sdr_device_settings` config keys apply. The wrapper logs the available gain elements, sample rates, antennas, and device-specific settings reported by the driver at DEBUG level on startup - enable debug logging when configuring a new device and use that capability dump to guide your configuration in the same way as the AirSpy cards above.
+The same `sdr_gain_db`, `sdr_gain_elements`, and `sdr_device_settings` config keys apply. The wrapper logs the available gain elements, sample rates, antennas, and device-specific settings reported by the driver at DEBUG level on startup - run with `--log-level DEBUG` when configuring a new device and use that capability dump to guide your configuration in the same way as the AirSpy cards above.
 
 **Reference:** [SoapySDR project](https://github.com/pothosware/SoapySDR)
 
@@ -329,6 +329,18 @@ substation --list-bands
 ```
 
 `substation` exits with status 1 when a scan stops because of an error, such as a receiver that fails or is unplugged, so a service manager can restart it. Stopping it with Ctrl+C exits with status 0.
+
+Options:
+- `--config`, `-c`: path to user config override file (default: `config.yaml` in CWD if it exists).
+- `--band`, `-b`: band name to scan (required unless `--list-bands`).
+- `--device-type`, `-t`: `rtlsdr`, `hackrf`, `airspy`, `airspyhf`, or `soapy:<driver>` (default `rtlsdr`).
+- `--device-index`, `-i`: device index (default `0`).
+- `--list-bands`: list available bands and exit.
+- `--init`: write the default configuration to `config.yaml` in the current directory, as a starting point, and exit.
+- `--log-level`: how much to log: `DEBUG`, `INFO`, `WARNING`, or `ERROR` (default `INFO`). `DEBUG` adds what each device reports about itself at startup, such as its gain elements.
+- `--iq-file`: path to an IQ WAV file, with I and Q as its two audio channels in 16-bit PCM, for offline playback (replaces live SDR).
+- `--center-freq`: centre frequency of the IQ recording in Hz (required with `--iq-file`).
+- `--start-time`: start time of the recording as `"YYYY-MM-DD HH:MM:SS"` (default: `2000-01-01 00:00:00`).
 
 ## Python Module Usage
 You can also use the scanner as a library in your own code. This allows you to respond to radio events programmatically.
@@ -407,19 +419,9 @@ The sender emits the following OSC messages:
 | `/radio/recording` | Recording finalised on disk | `band_name:str, channel_index:int, file_path:str, ctcss_hz:float, dcs_code:int` |
 | `/sample/import` | Recording finalised (only if `sampler_host` set) | `file_path:str` |
 
-`ctcss_hz` and `dcs_code` carry any subaudible tone detected on the activation. OSC has no native null, so `0.0` / `0` mean "no tone detected" (valid CTCSS tones start at 67 Hz, and DCS codes are always nonzero, so these sentinels are unambiguous).
+`ctcss_hz` and `dcs_code` carry any subaudible tone detected on the activation. OSC has no native null, so `0.0` / `0` mean "no tone detected" (valid CTCSS tones start at 67 Hz, and DCS codes are always nonzero, so these sentinels are unambiguous). DCS codes are octal, and `dcs_code` is the code's integer value, so DCS 023 arrives as 19; format it in octal to show it as a radio does.
 
 Sends are non-blocking UDP (fire-and-forget); transient socket errors are logged as warnings and never raised back into the scanner. See [examples/scan_osc.py](https://github.com/simonholliday/substation/blob/main/examples/scan_osc.py) for a working script (in the source repository).
-
-Options:
-- `--config`, `-c`: path to user config override file (default: `config.yaml` in CWD if it exists).
-- `--band`, `-b`: band name to scan (required unless `--list-bands`).
-- `--device-type`, `-t`: `rtlsdr`, `hackrf`, `airspy`, `airspyhf`, or `soapy:<driver>` (default `rtlsdr`).
-- `--device-index`, `-i`: device index (default `0`).
-- `--list-bands`: list available bands and exit.
-- `--iq-file`: path to an IQ WAV file, with I and Q as its two audio channels in 16-bit PCM, for offline playback (replaces live SDR).
-- `--center-freq`: centre frequency of the IQ recording in Hz (required with `--iq-file`).
-- `--start-time`: start time of the recording as `"YYYY-MM-DD HH:MM:SS"` (default: `2000-01-01 00:00:00`).
 
 ### IQ File Playback
 
@@ -612,7 +614,7 @@ SoapySDRUtil --find
 The Python virtual environment **must** be created with `--system-site-packages` to access the system-installed SoapySDR bindings:
 
 ```bash
-python3 -m venv --system-site-packages /home/si/venvs/substation
+python3 -m venv --system-site-packages venv
 ```
 
 ## Recording Metadata
@@ -627,7 +629,7 @@ If you open a recording in a professional audio tool or a BWF viewer, you will s
 
 | Field | Example Value | Description |
 | :--- | :--- | :--- |
-| **Description** | `{"band":"pmr","channel_index":0,"channel_freq":446006250.0}` | Machine-readable JSON with radio channel details |
+| **Description** | `{"band":"pmr","channel_index":1,"channel_freq":446006250.0}` | Machine-readable JSON with radio channel details |
 | **Coding History** | `A=PCM,F=16000,W=16,M=mono,T=NFM;Frequency=446.00625MHz` | Technical signal chain (Algorithm, Rate, Modulation) |
 | **Originator** | `Substation` | The software that created the file |
 | **Origination Date** | `2026-01-27` | Date the recording started |
@@ -661,7 +663,7 @@ The `snr_threshold_db` setting controls how far above the noise floor a signal m
 - The OFF threshold is `snr_threshold_db - hysteresis_db` (default 3 dB below ON) to prevent rapid toggling. Set `hysteresis_db` lower for weak-signal scanning.
 
 **General tips**:
-- Available gain element names and their valid ranges are logged at DEBUG level on startup. Enable debug logging and check these before setting values (the *active* values are logged at INFO once applied).
+- Available gain element names and their valid ranges are logged at DEBUG level on startup. Run with `--log-level DEBUG` and check these before setting values (the *active* values are logged at INFO once applied).
 - Optimal values depend on your antenna, band, and local RF environment - a rooftop antenna in a city needs different gain from a small whip in a rural area.
 - Airband (AM, 118-137 MHz) typically needs less gain than PMR (NFM, 446 MHz) because aircraft transmitters are more powerful (5-25W) than PMR handhelds (0.5W).
 

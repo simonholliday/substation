@@ -15,7 +15,6 @@ Key concepts:
 import asyncio
 import logging
 import sys
-import typing
 
 import substation.config
 import substation.scanner
@@ -53,7 +52,8 @@ def my_recording_event_handler (band: str, channel_index: int, file_path: str) -
 	Args:
 		band: The name of the band
 		channel_index: The numerical index of the channel
-		file_path: The absolute path to the saved .wav file
+		file_path: The absolute path to the saved recording (.wav, or .flac
+			if audio_format is flac)
 	"""
 
 	print(f"\n>>> Recording Finished: {file_path}")
@@ -77,12 +77,12 @@ async def run_custom_scanner () -> None:
 		scanner = substation.scanner.RadioScanner(
 			config=config_data,
 			band_name='pmr',      # Must match a band in your config.yaml
-			device_type='rtlsdr', # 'rtlsdr' or 'hackrf'
+			device_type='rtlsdr', # Or 'hackrf', 'airspy', 'airspyhf', 'soapy:<driver>'
 			device_index=0
 		)
 
 		# 3. Register a callback function
-		# Registration is high-performance and threads-safe
+		# Callbacks can be registered before or during the scan
 		scanner.add_state_callback(my_channel_event_handler)
 		scanner.add_recording_callback(my_recording_event_handler)
 
@@ -93,8 +93,6 @@ async def run_custom_scanner () -> None:
 		# This will run until the program is interrupted
 		await scanner.scan()
 
-	except KeyboardInterrupt:
-		print("\nStopping scanner...")
 	except FileNotFoundError as exc:
 		print(f"Error: configuration file not found: {exc}")
 		sys.exit(1)
@@ -103,5 +101,11 @@ async def run_custom_scanner () -> None:
 		sys.exit(1)
 
 if __name__ == "__main__":
-	# The scanner uses asyncio for high-performance non-blocking I/O
-	asyncio.run(run_custom_scanner())
+	# The scanner uses asyncio for high-performance non-blocking I/O.
+	# Ctrl+C cancels the scan, which closes its recordings and the device,
+	# and asyncio.run() then raises KeyboardInterrupt here, not inside the
+	# coroutine.
+	try:
+		asyncio.run(run_custom_scanner())
+	except KeyboardInterrupt:
+		print("\nScanner stopped.")

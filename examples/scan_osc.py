@@ -85,9 +85,6 @@ async def run_scanner_with_osc () -> None:
 
 		await scanner.scan()
 
-	except KeyboardInterrupt:
-		print("\nStopping scanner...")
-
 	except FileNotFoundError as exc:
 		print(f"Error: configuration file not found: {exc}")
 		sys.exit(1)
@@ -98,4 +95,10 @@ async def run_scanner_with_osc () -> None:
 
 
 if __name__ == "__main__":
-	asyncio.run(run_scanner_with_osc())
+	# Ctrl+C cancels the scan, which closes its recordings and the device,
+	# and asyncio.run() then raises KeyboardInterrupt here, not inside the
+	# coroutine.
+	try:
+		asyncio.run(run_scanner_with_osc())
+	except KeyboardInterrupt:
+		print("\nScanner stopped.")

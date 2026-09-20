@@ -88,3 +88,21 @@ class TestMainArgParsing:
 			]):
 				substation.cli.main()
 		assert exc_info.value.code != 0
+
+
+class TestLogLevel:
+
+	def test_log_level_option_sets_the_level (self, tmp_path, minimal_config_dict, monkeypatch):
+		"""The README tells users to enable debug logging, which --log-level DEBUG now does."""
+		cfg_path = tmp_path / "config.yaml"
+		cfg_path.write_text(yaml.dump(minimal_config_dict))
+		levels = []
+		monkeypatch.setattr(substation.cli.logging, "basicConfig", lambda **kwargs: levels.append(kwargs["level"]))
+
+		with unittest.mock.patch("sys.argv", ["substation", "--list-bands", "-c", str(cfg_path), "--log-level", "debug"]):
+			try:
+				substation.cli.main()
+			except SystemExit as exc:
+				assert exc.code in (0, None)
+
+		assert levels == [substation.cli.logging.DEBUG]
