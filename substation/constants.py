@@ -47,17 +47,17 @@ AM_IF_OVERSAMPLE = 4.0
 # Prevents excessive amplification of noise when signal is very weak
 AM_AGC_FLOOR = 0.02  # 2% minimum gain
 
-# AGC attack time: how quickly gain decreases when signal gets stronger
-# Fast attack prevents distortion from sudden loud signals
-AM_AGC_ATTACK_MS = 10.0  # 10 milliseconds
+# The AGC's attack is instant: its level rises at once to any new peak, so
+# the output never overshoots.
 
-# AGC release time: how quickly gain increases when signal gets weaker
-# Slow release sounds more natural (avoids "pumping" artifacts)
+# AGC release time constant: how quickly gain increases when signal gets
+# weaker.  Slow release sounds more natural (avoids "pumping" artifacts)
 AM_AGC_RELEASE_MS = 200.0  # 200 milliseconds
 
-# Post-AGC output gain scaling
-# AM demodulation can produce peaks, so we scale down to prevent clipping
-AM_OUTPUT_GAIN = 0.5  # 50% (-6 dB)
+# Post-AGC output gain scaling.  The AGC's level follows the audio's peaks,
+# so its output peaks at this value and never clips.  0.7 keeps speech at
+# about the loudness of the earlier, averaging AGC, whose peaks clipped.
+AM_OUTPUT_GAIN = 0.7  # 70% (-3.1 dB)
 
 # ==============================================================================
 # SSB (Single Sideband) Demodulation Constants

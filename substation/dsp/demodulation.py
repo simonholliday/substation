@@ -123,11 +123,21 @@ def _apply_voice_agc (
 	"""
 	Vectorised AGC for voice-band audio.
 
-	Smooths a peak-following envelope into a slow level estimate, then
-	divides the audio by it.  The level estimate has a fast attack
-	(catches transients) and slow release (avoids "pumping").  Cross-block
-	continuity is preserved by blending the previous block's final level
-	into the start of the current block over `attack_samples` samples.
+	Divides the audio by a level that follows its peaks: the level rises at
+	once to any new peak, so the output never overshoots, and otherwise
+	decays exponentially with the release time constant, so the gain comes
+	back up slowly after a loud passage without pumping.
+
+	The level is causal and carried across blocks in state, so processing
+	the audio in blocks gives exactly what one pass would.  The previous
+	version smoothed with centred windows recomputed per block, so the gain
+	stepped by several dB at every block join, pumping several times a
+	second on AM and SSB, and dipped ahead of loud onsets.
+
+	The follower, level[n] = max(level[n-1] * r, |audio[n]|), has a closed
+	form: level[n] = r^n * max(previous level * r, max over k <= n of
+	|audio[k]| * r^-k), which in logs is a cumulative maximum, so it runs
+	without a per-sample Python loop.
 
 	Shared between the AM and SSB demodulators because both produce a
 	real audio envelope with similar amplitude variation characteristics.
@@ -138,29 +148,27 @@ def _apply_voice_agc (
 	if len(audio) == 0:
 		return audio
 
-	env = numpy.abs(audio)
-	attack_ms = substation.constants.AM_AGC_ATTACK_MS
-	release_ms = substation.constants.AM_AGC_RELEASE_MS
 	floor = substation.constants.AM_AGC_FLOOR
+	release_samples = max(1.0, audio_sample_rate * substation.constants.AM_AGC_RELEASE_MS / 1000.0)
 
-	attack_samples = max(1, int(audio_sample_rate * (attack_ms / 1000.0)))
-	release_samples = max(1, int(audio_sample_rate * (release_ms / 1000.0)))
-
-	peak_env = scipy.ndimage.maximum_filter1d(env, size=attack_samples, mode='nearest')
-	smooth_env = scipy.ndimage.uniform_filter1d(peak_env, size=release_samples, mode='nearest')
-	level_arr = numpy.maximum(smooth_env, floor)
+	# Log of the per-sample decay factor r = exp(-1 / release_samples)
+	log_decay = -1.0 / release_samples
 
 	level_key = state_prefix + 'agc_level'
-	prev_level = state.get(level_key)
+	prev_level = max(float(state.get(level_key, floor)), floor)
 
-	if prev_level is not None and len(level_arr) > 0:
-		blend_len = min(attack_samples, len(level_arr))
-		blend = numpy.linspace(0.0, 1.0, blend_len, dtype=numpy.float32)
-		level_arr[:blend_len] = prev_level * (1.0 - blend) + level_arr[:blend_len] * blend
+	index = numpy.arange(len(audio), dtype=numpy.float64)
+
+	with numpy.errstate(divide='ignore'):
+		log_env = numpy.log(numpy.abs(audio).astype(numpy.float64))
+
+	running = numpy.maximum.accumulate(log_env - index * log_decay)
+	running = numpy.maximum(running, numpy.log(prev_level) + log_decay)
+	level_arr = numpy.maximum(numpy.exp(index * log_decay + running), floor)
+
+	state[level_key] = float(level_arr[-1])
 
 	output = (audio / level_arr).astype(numpy.float32)
-	state[level_key] = float(level_arr[-1]) if len(level_arr) > 0 else floor
-
 	output *= substation.constants.AM_OUTPUT_GAIN
 	return numpy.clip(output, -1.0, 1.0).astype(numpy.float32, copy=False)
 

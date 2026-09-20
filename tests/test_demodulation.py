@@ -748,6 +748,54 @@ class TestDCSDetection:
 		assert substation.dsp.demodulation.detect_dcs(dcs_audio(0o340), 16000) == 0o023
 
 
+class TestVoiceAgc:
+
+	@staticmethod
+	def _syllabic_audio (seconds: float = 3.0, sr: int = 16000) -> numpy.typing.NDArray[numpy.float32]:
+		"""Band-limited noise with a 4 Hz syllable envelope, the case that showed the old AGC's steps."""
+		rng = numpy.random.default_rng(5)
+		n = int(seconds * sr)
+		noise = scipy.signal.sosfilt(scipy.signal.butter(4, [300, 3000], btype='bandpass', fs=sr, output='sos'), rng.standard_normal(n))
+		envelope = 0.55 + 0.45 * numpy.sin(2 * numpy.pi * 4 * numpy.arange(n) / sr)
+		return (0.2 * noise * envelope).astype(numpy.float32)
+
+	def test_blocks_give_what_one_pass_gives (self):
+		"""Regression: the AGC recomputed centred windows per block, so its gain stepped by 2-8 dB at every block join.
+
+		Processed in 256 ms blocks, as the scanner hands them over, the
+		output must equal processing the whole recording at once.
+		"""
+		audio = self._syllabic_audio()
+		whole = substation.dsp.demodulation._apply_voice_agc(audio.copy(), 16000, {}, 'test_')
+
+		state: dict = {}
+		block = 4096
+		pieces = [substation.dsp.demodulation._apply_voice_agc(audio[i:i + block].copy(), 16000, state, 'test_') for i in range(0, len(audio), block)]
+
+		numpy.testing.assert_allclose(numpy.concatenate(pieces), whole, rtol=1e-5, atol=1e-7)
+
+	def test_gain_does_not_drop_ahead_of_a_loud_onset (self):
+		"""Regression: the centred windows looked ahead, so the gain ducked before a loud onset."""
+		sr = 16000
+		quiet = (0.01 * numpy.sin(2 * numpy.pi * 500 * numpy.arange(sr) / sr)).astype(numpy.float32)
+		with_onset = quiet.copy()
+		with_onset[sr // 2:] *= 50.0
+
+		before = substation.dsp.demodulation._apply_voice_agc(quiet.copy(), sr, {}, 'test_')
+		after = substation.dsp.demodulation._apply_voice_agc(with_onset.copy(), sr, {}, 'test_')
+
+		numpy.testing.assert_allclose(after[:sr // 2], before[:sr // 2], rtol=1e-6)
+
+	def test_output_never_exceeds_the_output_gain (self):
+		"""The level rises at once to every new peak, so the output cannot overshoot."""
+		audio = self._syllabic_audio()
+		audio[20000:20100] *= 20.0
+
+		out = substation.dsp.demodulation._apply_voice_agc(audio, 16000, {}, 'test_')
+
+		assert numpy.max(numpy.abs(out)) <= substation.constants.AM_OUTPUT_GAIN + 1e-6
+
+
 class TestVoiceBandpass:
 
 	def test_ctcss_tone_removed (self):

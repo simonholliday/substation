@@ -32,7 +32,7 @@ Each modulation type has a dedicated, stateful demodulator that maintains phase 
 
 **NFM** - the most common mode for PMR, amateur, and public safety - runs through a complete processing chain: IF decimation, polar discriminator, Hampel impulse blanker (suppresses glitches from IQ samples dropped over USB by devices like the AirSpy R2), 300µs de-emphasis, DC blocking, voice bandpass filter (300-3400 Hz), and CTCSS/DCS subaudible tone detection. The voice bandpass removes subaudible signalling tones from the recording while the Goertzel-based detector identifies them and embeds the detected tone code in the file's metadata. The same tone value is also delivered live on the scanner's `channel_state` event (as `ctcss_hz` / `dcs_code` kwargs) so OSC or dashboard consumers see the tone as a property of the activation, with no file parsing required.
 
-**AM** - used for civil and military airband - uses envelope detection with a smooth vectorised AGC (independent attack and release timings) that adapts to varying signal strength without pumping artifacts.
+**AM** - used for civil and military airband - uses envelope detection with an AGC that follows the audio's peaks, rising at once and releasing slowly, so it adapts to varying signal strength without pumping or clipping.
 
 **SSB** (USB and LSB) - used for HF amateur and maritime - implements the Weaver method for clean sideband separation with real-valued Butterworth filters on I and Q, followed by voice AGC.
 

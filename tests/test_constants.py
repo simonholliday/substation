@@ -30,7 +30,6 @@ def test_nfm_constants_types ():
 
 
 def test_am_constants ():
-	assert substation.constants.AM_AGC_ATTACK_MS > 0
-	assert substation.constants.AM_AGC_RELEASE_MS > substation.constants.AM_AGC_ATTACK_MS
+	assert substation.constants.AM_AGC_RELEASE_MS > 0
 	assert 0.0 < substation.constants.AM_OUTPUT_GAIN <= 1.0
 	assert substation.constants.AM_IF_OVERSAMPLE >= 2.0
