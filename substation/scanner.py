@@ -298,6 +298,10 @@ class RadioScanner:
 		self.sample_queue: asyncio.Queue | None = None
 		self.loop: asyncio.AbstractEventLoop | None = None
 
+		# The error that ended the device's stream, if one did.  scan()
+		# raises it once the processing loop has drained the queue.
+		self._stream_error: BaseException | None = None
+
 		logger.info(f"Initialized scanner for band '{band_name}'")
 		logger.info(f"Frequency range: {self.freq_start/1e6:.5f} - {self.freq_end/1e6:.5f} MHz")
 		logger.info(f"Number of channels: {self.num_channels}")
@@ -1999,9 +2003,17 @@ class RadioScanner:
 		Sets up the SDR and async pipeline, streams IQ slices in the background,
 		and offloads CPU-heavy processing to the executor to keep the event loop
 		responsive.
+
+		Returns when an IQ file has been played to its end, or when the scan
+		is cancelled (Ctrl+C).  Anything that stops the scan early is raised
+		once recordings and the device have been closed: an error opening or
+		configuring the device, an error processing a slice, or a live
+		device that stops streaming, which raises the error it failed with,
+		or RuntimeError when it gave none.
 		"""
 
 		logger.info("Starting scan...")
+		self._stream_error = None
 
 		try:
 			self._setup_sdr()
@@ -2034,8 +2046,10 @@ class RadioScanner:
 					# A blocking backend (RTL-SDR, file playback) died —
 					# e.g. the USB device was unplugged mid-scan.  Queue the
 					# sentinel so the processing loop shuts down cleanly
-					# instead of waiting for samples that will never come.
-					logger.error(f"SDR streaming failed: {exc}", exc_info=exc)
+					# instead of waiting for samples that will never come,
+					# and keep the error for scan() to raise.
+					logger.error(f"SDR streaming failed: {exc}")
+					self._stream_error = exc
 					self._signal_stream_end()
 				else:
 					# Normal return.  Backends fall into two shapes:
@@ -2061,7 +2075,9 @@ class RadioScanner:
 				# sure the processing loop still gets woken up.
 				exc = task.exception() if not task.cancelled() else None
 				if exc:
-					logger.error(f"SDR streaming task failed: {exc}", exc_info=exc)
+					logger.error(f"SDR streaming task failed: {exc}")
+					if self._stream_error is None:
+						self._stream_error = exc
 					self._signal_stream_end()
 
 			streaming_task.add_done_callback(_on_streaming_done)
@@ -2081,10 +2097,17 @@ class RadioScanner:
 				# they don't starve when slices arrive back-to-back.
 				await asyncio.sleep(0)
 
+			# The loop ends when the stream does.  For file playback that is
+			# the end of the file; a live device streams until the scan
+			# cancels it, so a stream that ends first means the device failed.
+			if self._stream_error is not None:
+				raise self._stream_error
+
+			if self.clock is None:
+				raise RuntimeError("The SDR stopped streaming IQ samples, so the scan cannot continue")
+
 		except KeyboardInterrupt:
 			logger.info("Scan interrupted by user")
-		except Exception as e:
-			logger.error(f"Error during scan: {e}", exc_info=True)
 		finally:
 			# Cancel async streaming
 			if self.sdr:

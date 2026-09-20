@@ -131,7 +131,8 @@ async def run_scanner (config_path: pathlib.Path | None, band_name: str, device_
 		device_index: Device index for multi-device setups (0 for first device)
 
 	Exits:
-		Exits with code 1 if configuration is invalid or band doesn't exist
+		Exits with code 1 if configuration is invalid, the band doesn't exist,
+		or the scan stops because of an error
 	"""
 
 	try:
@@ -175,6 +176,10 @@ async def run_scanner_file (config_path: pathlib.Path | None, band_name: str, iq
 		iq_file: Path to 2-channel IQ WAV file
 		center_freq: Center frequency of the recording in Hz
 		start_time: Start datetime for the recording (used for output timestamps)
+
+	Exits:
+		Exits with code 1 if configuration is invalid, the band doesn't exist,
+		or playback stops because of an error
 	"""
 
 	try:

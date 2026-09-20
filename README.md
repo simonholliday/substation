@@ -328,6 +328,8 @@ substation --band <band> [--config <path>] [--device-type rtlsdr|hackrf|airspy|a
 substation --list-bands
 ```
 
+`substation` exits with status 1 when a scan stops because of an error, such as a receiver that fails or is unplugged, so a service manager can restart it. Stopping it with Ctrl+C exits with status 0.
+
 ## Python Module Usage
 You can also use the scanner as a library in your own code. This allows you to respond to radio events programmatically.
 
@@ -371,6 +373,8 @@ async def main () -> None:
 if __name__ == "__main__":
 	asyncio.run (main ())
 ```
+
+`scan()` runs until it is cancelled or, for IQ file playback, until the file ends. Anything that stops it early is raised once the recordings and the device are closed.
 
 See [examples/scan_demo.py](https://github.com/simonholliday/substation/blob/main/examples/scan_demo.py) for a more detailed implementation (in the source repository).
 
