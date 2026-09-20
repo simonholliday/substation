@@ -221,12 +221,16 @@ class DynamicsCurveConfig(pydantic.BaseModel):
 	"""
 	Where the cut S-curve is steepest. 0.5 is symmetric; lower values move the
 	steepest part towards `threshold_dbfs`, and higher values towards
-	`floor_dbfs`.
+	`floor_dbfs`. Below about 0.33 the curve no longer meets
+	`threshold_dbfs` smoothly: the cut begins with a sharp kink there, which
+	becomes a step of several dB near 0.
 	"""
 
 	boost_curve: float = pydantic.Field(default=0.5, ge=0.0, le=1.0)
 	"""
 	Skew of the boost hump, on the same scale as `cut_curve`. 0.5 is symmetric.
+	Near 1 the hump falls steeply just below full scale, and with a
+	`boost_db` of a few dB a louder input there comes out quieter.
 	"""
 
 	@pydantic.model_validator(mode='after')

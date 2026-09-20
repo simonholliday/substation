@@ -327,9 +327,12 @@ def apply_dynamics_curve (
 	  whose magnitude falls between ``floor_dbfs`` and ``threshold_dbfs``
 	  are progressively reduced.  The reduction follows a smoothstep
 	  S-curve in dB space, reaching exactly ``cut_db`` at the curve's
-	  midpoint and ``2 * cut_db`` at the floor.  The curve has zero slope
-	  at both endpoints, so there is no audible kink at the threshold or
-	  the floor.  Below ``floor_dbfs`` the output is hard-zeroed (true
+	  midpoint and ``2 * cut_db`` at the floor.  With ``cut_curve`` from
+	  about 0.33 up, the curve has zero slope at both endpoints, so there
+	  is no audible kink at the threshold or the floor.  Lower values skew
+	  it through t**p with p below 0.5, whose slope at t = 0 is infinite,
+	  so the cut starts with a kink at the threshold, a step of about
+	  3 dB at 0.  Below ``floor_dbfs`` the output is hard-zeroed (true
 	  digital silence).
 
 	- **Above the threshold (boost region — upward expansion).**  Samples
@@ -338,7 +341,10 @@ def apply_dynamics_curve (
 	  zero boost at both ends.  The shape is ``sin²(π·t)`` so the curve
 	  is tangent to unity at both the threshold and full scale, and there
 	  is no clipping introduced *for any sensible configuration* (see the
-	  defensive clamp below).
+	  defensive clamp below).  A ``boost_curve`` near 1 crowds the hump
+	  towards full scale, where its falling side can drop faster than the
+	  level rises: at 1.0 with ``boost_db=3`` the output falls by 0.7 dB
+	  for each dB the input rises near -1 dBFS.
 
 	The two regions together widen the overall dynamic range — quiet
 	noise gets quieter, loud voice gets louder — making this useful as a
