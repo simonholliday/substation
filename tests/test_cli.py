@@ -67,14 +67,11 @@ class TestInitConfig:
 class TestMainArgParsing:
 
 	def test_list_bands_flag (self, tmp_path, minimal_config_dict, capsys):
-		"""--list-bands should list bands and exit cleanly (code 0 or None)."""
+		"""--list-bands should list bands and return exit status 0."""
 		cfg_path = tmp_path / "config.yaml"
 		cfg_path.write_text(yaml.dump(minimal_config_dict))
-		try:
-			with unittest.mock.patch("sys.argv", ["substation", "--list-bands", "-c", str(cfg_path)]):
-				substation.cli.main()
-		except SystemExit as exc:
-			assert exc.code in (0, None)
+		with unittest.mock.patch("sys.argv", ["substation", "--list-bands", "-c", str(cfg_path)]):
+			assert substation.cli.main() == 0
 		captured = capsys.readouterr()
 		assert "test_nfm" in captured.out
 
@@ -100,9 +97,6 @@ class TestLogLevel:
 		monkeypatch.setattr(substation.cli.logging, "basicConfig", lambda **kwargs: levels.append(kwargs["level"]))
 
 		with unittest.mock.patch("sys.argv", ["substation", "--list-bands", "-c", str(cfg_path), "--log-level", "debug"]):
-			try:
-				substation.cli.main()
-			except SystemExit as exc:
-				assert exc.code in (0, None)
+			assert substation.cli.main() == 0
 
 		assert levels == [substation.cli.logging.DEBUG]

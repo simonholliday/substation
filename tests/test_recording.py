@@ -218,18 +218,24 @@ class TestWavOutput:
 		assert sr == 16000
 		assert len(data) > 0
 
-	def test_soft_limiter (self, tmp_path):
+	def test_soft_limiter (self, tmp_path, monkeypatch):
+		"""The limiter maps full scale to its 0.98 ceiling, gives quiet audio drive x 0.98 / tanh(drive), and rises monotonically.
+
+		Checked on what the recorder hands to the file, since libsndfile
+		clips to full scale on its own and would hide a missing limiter.
+		"""
 		rec = _make_recorder(tmp_path, max_seconds=1.0)
-		# Input with values > 1 to test soft limiting
-		loud = numpy.ones(1600, dtype=numpy.float32) * 2.0
-		rec.append_audio(loud)
-		loop = asyncio.new_event_loop()
-		loop.run_until_complete(rec._flush_buffer_to_disk())
-		loop.run_until_complete(rec.close())
-		loop.close()
-		data, _ = soundfile.read(rec.filepath)
-		# Soft limiter should keep output within [-1, 1]
-		assert numpy.max(numpy.abs(data)) <= 1.0
+		written = []
+		monkeypatch.setattr(rec.audio_file, "write", lambda samples: written.append(numpy.array(samples)))
+		levels = numpy.linspace(0.0, 1.0, 101, dtype=numpy.float32)
+
+		rec._write_samples_to_wav(levels.copy())
+
+		out = written[0]
+		drive = rec.soft_limit_drive
+		assert out[-1] == pytest.approx(0.98, abs=1e-4)
+		assert out[1] / levels[1] == pytest.approx(drive * 0.98 / numpy.tanh(drive), rel=1e-3)
+		assert numpy.all(numpy.diff(out) > 0)
 
 
 class TestRecorderRobustness:

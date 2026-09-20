@@ -77,25 +77,29 @@ class TestChannelExtraction:
 		assert power > 0.01
 
 	def test_phase_continuity (self, scanner_instance):
-		"""Extracting the same channel across two blocks should have no phase jump."""
+		"""Extracting the same channel across two blocks should have no phase jump.
+
+		The blocks split at 12345 IQ samples, where the channel's oscillator
+		has not completed a whole number of cycles, so an oscillator that
+		restarted with each block would show a jump.  At a slice boundary it
+		would not: every channel completes whole cycles there.
+		"""
 		sc = scanner_instance
 		ch_freq = sc.channels[0]
 		offset_hz = ch_freq - sc.center_freq
-		n = sc.samples_per_slice * 2
-		tone = iq_generators.generate_tone_iq(offset_hz, sc.sample_rate, n / sc.sample_rate, amplitude=0.5)
-		block1 = tone[:sc.samples_per_slice].astype(numpy.complex64)
-		block2 = tone[sc.samples_per_slice:n].astype(numpy.complex64)
+		split = 12345
+		assert abs(offset_hz * split / sc.sample_rate - round(offset_hz * split / sc.sample_rate)) > 0.1
 
-		ext1 = sc._extract_channel_iq(block1, ch_freq, sample_offset=0)
-		sc.sample_counter += sc.samples_per_slice
-		ext2 = sc._extract_channel_iq(block2, ch_freq, sample_offset=0)
+		tone = iq_generators.generate_tone_iq(offset_hz, sc.sample_rate, 2 * split / sc.sample_rate, amplitude=0.5)
+		ext1 = sc._extract_channel_iq(tone[:split], ch_freq, sample_offset=0)
+		ext2 = sc._extract_channel_iq(tone[split:], ch_freq, sample_offset=split)
 
-		if len(ext1) > 0 and len(ext2) > 0:
-			# Phase at boundary should be continuous
-			phase_jump = numpy.abs(numpy.angle(ext2[0]) - numpy.angle(ext1[-1]))
-			# Wrap to [-pi, pi]
-			phase_jump = min(phase_jump, 2 * numpy.pi - phase_jump)
-			assert phase_jump < 0.5  # radians — small jump
+		# A tone at the channel's centre comes out as a steady phasor.  The
+		# channel filter carries its memory across the join, so compare
+		# where each block has settled, at its end.
+		phase_jump = numpy.abs(numpy.angle(ext2[-1]) - numpy.angle(ext1[-1]))
+		phase_jump = min(phase_jump, 2 * numpy.pi - phase_jump)
+		assert phase_jump < 0.05
 
 
 class TestDcOffset:

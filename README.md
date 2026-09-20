@@ -43,7 +43,7 @@ Recordings are not just raw demodulated audio dumped to disk. Each file passes t
 - **Spectral subtraction** noise reduction estimates the background hiss from the quietest moments of each recording's first audio, and reduces it while preserving voice clarity. A 2D gain-mask smoothing kernel minimises musical noise artifacts.
 - **Carrier transient trimming** (optional) detects and removes the sharp clicks that AM transmitters produce at key-on and key-off, using shape-based detection that distinguishes carrier transients from voice plosives.
 - **Half-cosine fades** at recording boundaries prevent clicks from sudden onset or cutoff.
-- **Soft limiting** via a tanh waveshaper holds every sample below 0.98 of full scale (-0.18 dBFS), leaving headroom for the small overshoot between samples that voice-band audio produces.
+- **Soft limiting** via a tanh waveshaper rounds off peaks as they near full scale: audio up to full scale comes out at no more than 0.98 of it (-0.18 dBFS), leaving headroom for the small overshoot between samples that voice-band audio produces.
 - **Broadcast WAV metadata** (BEXT, EBU Tech 3285) embeds each recording's start time, frequency, modulation, and detected CTCSS/DCS codes directly in each file. Audio editors like Audacity, Reaper, and iZotope RX can place recordings on a timeline at their real capture time.
 - **FLAC output** (optional) provides lossless compression, typically 20–45% smaller than WAV depending on band and signal content (measured on real PMR and airband archives), with metadata stored as Vorbis comments. Compression level 6 was chosen after benchmarking every level on real PMR recordings on a Raspberry Pi: it produces essentially the same output size as level 8 but encodes in ~40% less CPU time.
 

@@ -751,26 +751,25 @@ class TestDCSDetection:
 class TestVoiceBandpass:
 
 	def test_ctcss_tone_removed (self):
-		"""The voice bandpass should remove a CTCSS tone from NFM audio."""
-		sr = 16000
-		t = numpy.arange(int(sr * 0.5)) / sr
-		# 88.5 Hz CTCSS + 1 kHz voice
-		audio = (
-			numpy.sin(2 * numpy.pi * 88.5 * t) * 0.1 +
-			numpy.sin(2 * numpy.pi * 1000 * t) * 0.3
-		).astype(numpy.float32)
+		"""NFM demodulation removes a low CTCSS tone from the audio it returns, through its own voice band-pass."""
+		if_rate = 256000
+		audio_rate = 16000
+		block = if_rate // 2
+		t = numpy.arange(3 * block) / if_rate
+		message = 0.3 * numpy.sin(2 * numpy.pi * 1000 * t) + 0.1 * numpy.sin(2 * numpy.pi * 88.5 * t)
+		phase = 2 * numpy.pi * (2500.0 / 0.4) * numpy.cumsum(message) / if_rate
+		iq = numpy.exp(1j * phase).astype(numpy.complex64)
 
-		# Apply bandpass via sosfilt (same as demodulator step 9)
-		sos = scipy.signal.butter(
-			2,
-			[300, 3400],
-			btype='bandpass', fs=sr, output='sos'
-		)
-		filtered = scipy.signal.sosfilt(sos, audio)
+		state = None
+		blocks = []
+		for start in range(0, 3 * block, block):
+			audio, state = substation.dsp.demodulation.demodulate_nfm(iq[start:start + block], if_rate, audio_rate, state)
+			blocks.append(audio)
 
-		# Check: 88.5 Hz should be strongly attenuated
-		spectrum = numpy.abs(scipy.fft.rfft(filtered))
-		freqs = scipy.fft.rfftfreq(len(filtered), d=1.0/sr)
+		# The first block is where tones are detected, before the band-pass settles
+		filtered = numpy.concatenate(blocks[1:])
+		spectrum = numpy.abs(scipy.fft.rfft(filtered * numpy.hanning(len(filtered))))
+		freqs = scipy.fft.rfftfreq(len(filtered), d=1.0 / audio_rate)
 		ctcss_bin = numpy.argmin(numpy.abs(freqs - 88.5))
 		voice_bin = numpy.argmin(numpy.abs(freqs - 1000))
 
