@@ -124,6 +124,8 @@ bands:
                 activation_variance_db: 3.0
 
     # UK Military Airband
+    # This is the whole allocation, which is far wider than any receiver can
+    # hear at once: scanning it needs a copy narrowed to the part you want.
     air_military_uhf:
         type: AIR
         freq_start: 225.0e+6
@@ -297,6 +299,8 @@ bands:
         sample_rate: 2.4e+6
 
     # London-only Emergency Services Extensions
+    # Wider than its own sample rate covers: scanning it needs a copy split
+    # into parts, or a higher sample rate on a receiver that reaches one.
 
     tetra_london_extension:
         type: TETRA
