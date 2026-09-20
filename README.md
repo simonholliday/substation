@@ -8,7 +8,7 @@ The scanner is designed for unattended, long-running operation. It handles the e
 
 Substation runs comfortably on a Raspberry Pi for 24/7 monitoring, and works equally well as a command-line tool or as a Python module integrated into your own applications.
 
-## Signal Processing
+## Signal processing
 
 Substation's signal processing chain implements industry-standard DSP techniques - the same algorithms used in professional SDR receivers - in Python with NumPy and SciPy for accessibility without sacrificing quality.
 
@@ -43,7 +43,7 @@ Recordings are not just raw demodulated audio dumped to disk. Each file passes t
 - **Spectral subtraction** noise reduction estimates the background hiss from the quietest moments of each recording's first audio, and reduces it while preserving voice clarity. A 2D gain-mask smoothing kernel minimises musical noise artifacts.
 - **Carrier transient trimming** (optional) detects and removes the sharp clicks that AM transmitters produce at key-on and key-off, using shape-based detection that distinguishes carrier transients from voice plosives.
 - **Half-cosine fades** at recording boundaries prevent clicks from sudden onset or cutoff.
-- **Soft limiting** via a tanh waveshaper rounds off peaks as they near full scale: audio up to full scale comes out at no more than 0.98 of it (-0.18 dBFS), leaving headroom for the small overshoot between samples that voice-band audio produces.
+- **Soft limiting** via a tanh waveshaper rounds off peaks as they near full scale: audio up to full scale comes out at no more than 0.98 of it (-0.18 dBFS), leaving headroom for the small overshoot between audio samples that voice-band audio produces.
 - **Broadcast WAV metadata** (BEXT, EBU Tech 3285) embeds each recording's start time, frequency, modulation, and detected CTCSS/DCS codes directly in each file. Audio editors like Audacity, Reaper, and iZotope RX can place recordings on a timeline at their real capture time.
 - **FLAC output** (optional) provides lossless compression, typically 20–45% smaller than WAV depending on band and signal content (measured on real PMR and airband archives), with metadata stored as Vorbis comments. Compression level 6 was chosen after benchmarking every level on real PMR recordings on a Raspberry Pi: it produces essentially the same output size as level 8 but encodes in ~40% less CPU time.
 
@@ -53,11 +53,11 @@ The scanner is designed for 24/7 operation on low-power hardware. All DSP runs t
 
 ---
 
-## Supported Devices
+## Supported devices
 
 To use this software, a compatible Software Defined Radio (SDR) USB device is required. Each supported device below has a self-contained card with its specifications, recommended starting configuration, common gotchas, and a copy-pasteable example band so you can get a working scan in a few minutes. Different SDR devices have very different capabilities - settings that work well on one device may need adjusting on another, and the cards capture the differences that actually matter in practice.
 
-### Quick Reference
+### Quick reference
 
 | Device                  | Frequency range                | Max BW   | ADC    | Best for                  |
 | :---------------------- | :----------------------------- | :------- | :----- | :------------------------ |
@@ -272,7 +272,7 @@ substation --band air_civil_bristol --device-type airspyhf --device-index 0
 - SoapySDR driver: [https://github.com/pothosware/SoapyAirspyHF](https://github.com/pothosware/SoapyAirspyHF)
 - SoapySDR project: [https://github.com/pothosware/SoapySDR](https://github.com/pothosware/SoapySDR)
 
-### Other SoapySDR Devices
+### Other SoapySDR devices
 
 Any device with a SoapySDR driver module installed can be used via `--device-type soapy:<driver>` (for example, `soapy:lime` or `soapy:plutosdr`). To discover what's connected and what driver name to use, run:
 
@@ -284,7 +284,7 @@ The same `sdr_gain_db`, `sdr_gain_elements`, and `sdr_device_settings` config ke
 
 **Reference:** [SoapySDR project](https://github.com/pothosware/SoapySDR)
 
-## Quick Start
+## Quick start
 1) Install the SDR drivers and platform dependencies (see [INSTALL.md](INSTALL.md)).
 2) Install substation:
 ```bash
@@ -322,7 +322,7 @@ substation-antenna --list                 # list all configured bands
 
 For HF bands wider than ±2% of their centre frequency the report also shows the dipole's natural SWR window and the antenna lengths at the band edges, so you can decide whether to cut for the centre, an edge, or use a tuner. Lengths are reported in metres for HF/VHF and centimetres for UHF.
 
-## Command Line
+## Command line
 ```bash
 substation --band <band> [--config <path>] [--device-type rtlsdr|hackrf|airspy|airspyhf|soapy:<driver>] [--device-index N]
 substation --list-bands
@@ -342,7 +342,7 @@ Options:
 - `--center-freq`: centre frequency of the IQ recording in Hz (required with `--iq-file`).
 - `--start-time`: start time of the recording as `"YYYY-MM-DD HH:MM:SS"` (default: `2000-01-01 00:00:00`).
 
-## Python Module Usage
+## Python module usage
 You can also use the scanner as a library in your own code. This allows you to respond to radio events programmatically.
 
 ```python
@@ -423,7 +423,7 @@ The sender emits the following OSC messages:
 
 Sends are non-blocking UDP (fire-and-forget); transient socket errors are logged as warnings and never raised back into the scanner. See [examples/scan_osc.py](https://github.com/simonholliday/substation/blob/main/examples/scan_osc.py) for a working script (in the source repository).
 
-### IQ File Playback
+### IQ file playback
 
 You can process a previously captured IQ file through the scanner pipeline instead of a live SDR device. The file is streamed at full speed (not real-time) with a virtual clock providing accurate timestamps for output recordings.
 
@@ -538,7 +538,7 @@ Per-band keys:
 - `exclude_channel_indices`: 1-based radio channel numbers to skip (no analysis, no recording). These match the radio channel numbers shown in log output and filenames.
 - `device_overrides`: per-device tuning - see [Device-Specific Overrides](#device-specific-overrides) below.
 
-### Device-Specific Overrides
+### Device-specific overrides
 
 Different SDR devices have different sample rates, gain architectures, and sensitivity characteristics. Rather than creating a separate band definition for each device (e.g. `pmr_rtlsdr`, `pmr_airspy`, `pmr_hackrf`), you can define a band once and provide per-device tuning with `device_overrides`.
 
@@ -590,7 +590,7 @@ bands:
         sdr_gain_elements: {LNA: 14, MIX: 5, VGA: 12}
 ```
 
-## SoapySDR Installation (AirSpy and other devices)
+## SoapySDR installation (AirSpy and other devices)
 
 AirSpy devices (and any other `soapy:<driver>` device) require SoapySDR, which is installed at the system level:
 
@@ -617,17 +617,17 @@ The Python virtual environment **must** be created with `--system-site-packages`
 python3 -m venv --system-site-packages venv
 ```
 
-## Recording Metadata
+## Recording metadata
 Each recording embeds metadata directly in the audio file.
 
 **WAV format** (default): Industry-standard Broadcast WAV (BWF/BEXT, EBU Tech 3285) with the time each recording starts, at the transmission's onset. Audio editors like Audacity, Reaper, and iZotope RX can place recordings on a timeline at their real capture time. These are standard `.wav` files that play in any audio player.
 
 **FLAC format**: Vorbis comment tags store the same fields (band, frequency, date, time, modulation) as text. FLAC files are typically 20–45% smaller than WAV, depending on band and signal content, and audio editors cannot use their `time_reference` tag for timeline placement, which they read only from a BEXT chunk.
 
-### Metadata Example
+### Metadata example
 If you open a recording in a professional audio tool or a BWF viewer, you will see fields like these:
 
-| Field | Example Value | Description |
+| Field | Example value | Description |
 | :--- | :--- | :--- |
 | **Description** | `{"band":"pmr","channel_index":1,"channel_freq":446006250.0}` | Machine-readable JSON with radio channel details |
 | **Coding History** | `A=PCM,F=16000,W=16,M=mono,T=NFM;Frequency=446.00625MHz` | Technical signal chain (Algorithm, Rate, Modulation) |
@@ -636,7 +636,7 @@ If you open a recording in a professional audio tool or a BWF viewer, you will s
 | **Time Reference** | `1152000` | Audio sample count since midnight (for precise timing) |
 
 
-## Gain Tuning
+## Gain tuning
 
 Each device card above carries the gain settings that work as a starting point for that specific device. This section explains the *why* behind those settings - the principles that apply to any SDR with multiple gain stages, so you can reason about adjustments when the defaults aren't quite right.
 
@@ -681,13 +681,13 @@ The scanner applies three independent gates, each catching a different kind of f
 
 #### Gate 1 - RF power variance (`activation_variance_db`)
 
-Real signals fluctuate over time: syllables, frame structure, burst patterns all produce 5-15 dB power swings within a 200 ms detection window. Stationary noise produces near-constant power (standard deviation ~1-2 dB).
+Real signals fluctuate over time: syllables, frame structure, and bursts all produce 5-15 dB power swings within a 200 ms detection window. Stationary noise produces near-constant power (standard deviation ~1-2 dB).
 
 At the moment a radio channel turns ON, the scanner measures the standard deviation of its power across the 8 Welch PSD segments. If the standard deviation falls below `activation_variance_db` (default 3.0 dB), the activation is suppressed - no ON event fires, no recording starts.
 
 This is the cheapest check (~0.1 ms, reuses already-computed PSD data). It catches broadband stationary noise that happens to sit a few dB above the noise floor.
 
-#### Gate 2 - Audio spectral flatness (`discard_empty_enabled`)
+#### Gate 2 - audio spectral flatness (`discard_empty_enabled`)
 
 Some noise passes Gate 1 - for example, narrowband interference with enough temporal variance to look "active" in the RF domain, but no actual signal content when demodulated. Gate 2 catches this by speculatively demodulating the first IQ block and computing the **spectral flatness** (Wiener entropy) of the resulting audio.
 
@@ -697,7 +697,7 @@ If the flatness exceeds 0.15, the activation is suppressed - same as Gate 1. The
 
 This check is more expensive (~10-20 ms, requires demodulation + FFT) so it only runs after Gate 1 passes. Controlled by `discard_empty_enabled` (default: true).
 
-#### Gate 3 - Post-recording spectral flatness (`discard_empty_enabled`)
+#### Gate 3 - post-recording spectral flatness (`discard_empty_enabled`)
 
 Gates 1 and 2 both operate at turn-ON time. Gate 3 operates at turn-OFF time, on the finished recording.
 
@@ -790,7 +790,7 @@ All three gates are modulation-agnostic:
 - Gates 2 and 3 operate on spectral flatness of demodulated audio - any non-noise signal (voice, data, tones, beacons) produces a peaked spectrum that passes the check. They apply to every band whose modulation has a demodulator, including detection-only bands (e.g. DMR, ACARS) where the demodulation is purely speculative - so radio channel activation events stay clean even when nothing is recorded
 - No demodulator-specific tuning is needed
 
-## Dynamics Curve (Experimental)
+## Dynamics curve (experimental)
 
 An optional noise-reduction stage, applied to each audio sample, that runs during recording, after spectral subtraction and before the soft limiter. It applies a smooth nonlinear transfer curve in dBFS:
 
@@ -817,7 +817,7 @@ The function operates on each audio sample (no envelope follower, no attack/rele
 
 The function clamps its output to the ±1.0 range as belt-and-braces speaker protection. If your configuration would otherwise drive the boost region above 0 dBFS, a warning is logged at startup so you can dial it back before listening.
 
-## Parallel Scans (Multiple Devices)
+## Parallel scans (multiple devices)
 Run one process per device:
 
 ```bash
@@ -832,7 +832,7 @@ taskset -c 2 substation --band air_civil_bristol --device-index 0
 taskset -c 3 substation --band pmr --device-index 1
 ```
 
-## Resource and Performance Notes
+## Resource and performance notes
 - **Sample rate dominates CPU**. Large bands at high sample rates increase FFT/PSD load.
 - **Overrun warnings** indicate the processing of a slice exceeded its real-time window. This can lead to dropped IQ blocks (`Sample queue full`).
 - **Noise reduction** runs during write/flush if enabled (default). It uses `apply_spectral_subtraction`, which is efficient, and estimates the noise once per recording, from the quietest frames of the first audio written. The alternative `apply_noisereduce` implementation exists in `substation/dsp/noise_reduction.py` for reference but is not used by default as it is significantly more CPU-intensive. It needs the `noisereduce` library, installed with `pip install "substation[noisereduce]"`.
