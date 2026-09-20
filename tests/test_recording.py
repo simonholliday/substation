@@ -266,6 +266,31 @@ class TestRecorderRobustness:
 		assert soundfile.info(rec.filepath).frames == 1600
 
 
+class TestStartTrimMovesTheTimestamp:
+
+	def test_move_start_moves_the_time_reference (self, tmp_path):
+		"""Audio trimmed from the start moves the recorded start with it."""
+		rec = _make_recorder(tmp_path)
+		before = rec.time_reference
+
+		rec.move_start(160)
+
+		assert rec.time_reference == before + 160
+		assert rec.bext_metadata['time_reference'] == before + 160
+
+	def test_key_on_transient_trim_moves_the_time_reference (self, tmp_path, monkeypatch):
+		"""Regression: trimming the key-ON transient cut audio from the start but left the TimeReference where it was."""
+		rec = _make_recorder(tmp_path)
+		rec.trim_carrier_transients = True
+		before = rec.time_reference
+		monkeypatch.setattr(substation.recording, "_trim_carrier_transient_start", lambda audio, sample_rate: audio[100:])
+
+		rec.append_audio(numpy.full(1600, 0.3, dtype=numpy.float32))
+		asyncio.run(rec._flush_buffer_to_disk())
+
+		assert rec.time_reference == before + 100
+
+
 class TestTailHold:
 
 	def test_periodic_flush_keeps_the_tail_for_the_final_flush (self, tmp_path):

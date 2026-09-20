@@ -577,3 +577,65 @@ class TestTiming:
 
 		assert forced_off is False
 		assert next_slice is False
+
+
+def _bext_time_reference (path) -> int:
+
+	"""The TimeReference, in audio samples since midnight, from a WAV file's BEXT chunk."""
+
+	data = pathlib.Path(path).read_bytes()
+	position = 12
+
+	while position + 8 <= len(data):
+		size = int.from_bytes(data[position + 4:position + 8], "little")
+		if data[position:position + 4] == b"bext":
+			body = data[position + 8:position + 8 + size]
+			return int.from_bytes(body[338:346], "little")
+		position += 8 + size + (size % 2)
+
+	raise AssertionError("no bext chunk")
+
+
+class TestTimestamps:
+
+	def test_playback_recording_is_stamped_at_the_onset (self, minimal_config_dict, tmp_path):
+		"""Regression: in playback a recording was stamped with the end of the slice its transmission began in.
+
+		The virtual clock advanced before the slice was processed.  The
+		transmission here begins 1.93 s into a file that starts at midnight,
+		late in a 128 ms slice.
+		"""
+		events = []
+		_play_transmissions(minimal_config_dict, tmp_path, 5.0, [(3, 1.93, 4.0)], handlers=_recorder(events))
+
+		saved = [payload['file_path'] for name, payload in events if name == 'recording_saved']
+		assert len(saved) == 1
+		assert _bext_time_reference(saved[0]) / 16000 == pytest.approx(1.93, abs=0.03)
+
+	def test_live_recording_starts_at_its_slice_start_plus_the_onset (self, scanner_instance, tmp_path):
+		"""Live, the slice start comes from when the device delivered the slice, and the onset is added to it."""
+		scanner_instance._slice_start_time = datetime.datetime(2026, 9, 19, 12, 0, 0)
+		onset_samples = int(0.25 * scanner_instance.sample_rate)
+
+		async def scenario ():
+			scanner_instance._start_channel_recording(scanner_instance.channels[0], 1, 12.0, asyncio.get_running_loop(), onset_samples=onset_samples)
+			recorder = scanner_instance.channel_recorders.pop(scanner_instance.channels[0])
+			await recorder.close()
+			return recorder
+
+		recorder = asyncio.run(scenario())
+
+		assert recorder.start_time == datetime.datetime(2026, 9, 19, 12, 0, 0, 250000)
+
+	def test_arrival_times_follow_the_slices_queued (self, scanner_instance):
+		"""Each queued live slice keeps its arrival time; a dropped slice leaves none behind."""
+
+		async def scenario ():
+			scanner_instance.sample_queue = asyncio.Queue(maxsize=1)
+			block = numpy.zeros(4, dtype=numpy.complex64)
+			scanner_instance._safe_queue_put(block, 100.0)
+			scanner_instance._safe_queue_put(block, 101.0)
+
+		asyncio.run(scenario())
+
+		assert list(scanner_instance._slice_arrivals) == [100.0]

@@ -299,9 +299,9 @@ class RecordingConfig(pydantic.BaseModel):
 	audio_format: typing.Literal['wav', 'flac'] = 'wav'
 	"""
 	File format for recordings. WAV is uncompressed and embeds Broadcast WAV
-	(BEXT) metadata with sample-accurate timestamps, so audio editors such as
-	Audacity, Reaper, and iZotope RX place each recording on a timeline at its
-	real capture time. FLAC is lossless and typically 20-45% smaller than WAV,
+	(BEXT) metadata with the time each recording starts, so audio editors such
+	as Audacity, Reaper, and iZotope RX place each recording on a timeline at
+	its real capture time. FLAC is lossless and typically 20-45% smaller than WAV,
 	depending on the band and the signal, but cannot carry BEXT timeline
 	metadata: the date, time, and frequency are stored as text tags.
 	"""

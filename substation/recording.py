@@ -2,8 +2,8 @@
 Channel recording management with WAV and FLAC output support.
 
 Handles buffered audio recording to WAV or FLAC files. WAV files include
-industry-standard Broadcast WAV (BWF/BEXT) metadata with sample-accurate
-timestamps for timeline placement in audio editors. FLAC files are lossless
+industry-standard Broadcast WAV (BWF/BEXT) metadata with the recording's
+start time, counted in samples, for timeline placement in audio editors. FLAC files are lossless
 compressed — typically 20-45% smaller than WAV depending on band and signal
 content (measured on real PMR and airband archives) — with Vorbis comment
 metadata (date and frequency as text tags, but no timeline positioning
@@ -342,8 +342,8 @@ class ChannelRecorder:
 	which is critical for real-time operation. If processing falls behind, old
 	samples are dropped rather than causing the entire system to stall.
 
-	Metadata: WAV files get a Broadcast WAV (BEXT) chunk with sample-accurate
-	timestamps for timeline placement in audio editors. FLAC files get Vorbis
+	Metadata: WAV files get a Broadcast WAV (BEXT) chunk with the recording's
+	start time for timeline placement in audio editors. FLAC files get Vorbis
 	comments with the same fields as text (no timeline positioning support).
 	"""
 
@@ -625,6 +625,24 @@ class ChannelRecorder:
 		history = self.bext_metadata['coding_history'].rstrip('\r\n')
 		self.bext_metadata['coding_history'] = f"{history};{tone_str}\r\n"
 
+	def move_start (self, audio_samples: int) -> None:
+
+		"""
+		Move the recording's start later by audio_samples, for audio trimmed from its beginning.
+
+		Keeps the BEXT TimeReference, and FLAC's TIME_REFERENCE, on the first
+		sample the file holds.  The filename, with its one-second resolution,
+		keeps the time the recording opened.
+		"""
+
+		if audio_samples <= 0:
+			return
+
+		self.time_reference += audio_samples
+
+		if self.bext_metadata:
+			self.bext_metadata['time_reference'] = self.time_reference
+
 	def append_audio (self, samples: numpy.typing.NDArray[numpy.float32]) -> None:
 
 		"""
@@ -809,7 +827,9 @@ class ChannelRecorder:
 		# noise estimate.
 		if self.trim_carrier_transients and samples.size > 0:
 			if not self._first_flush_done:
-				samples = _trim_carrier_transient_start(samples, self.audio_sample_rate)
+				trimmed = _trim_carrier_transient_start(samples, self.audio_sample_rate)
+				self.move_start(len(samples) - len(trimmed))
+				samples = trimmed
 			if self._closing.is_set():
 				samples = _trim_carrier_transient_end(samples, self.audio_sample_rate)
 
@@ -1067,10 +1087,9 @@ class ChannelRecorder:
 		Write Vorbis comments to a FLAC file after it has been closed.
 
 		Stores the same metadata fields as the BEXT chunk (band, frequency,
-		date, time, modulation) as Vorbis comment tags.  Note: FLAC cannot
-		carry the sample-accurate time_reference that enables broadcast
-		timeline placement in audio editors — date and time are stored as
-		text strings only.
+		date, time, time reference, modulation) as Vorbis comment tags.
+		Audio editors read the time reference for timeline placement only
+		from a BEXT chunk, which FLAC has no place for, so here it is text.
 		"""
 
 		if not self.bext_metadata:

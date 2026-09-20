@@ -1,4 +1,5 @@
 import asyncio
+import collections
 import concurrent.futures
 import datetime
 import inspect
@@ -332,6 +333,13 @@ class RadioScanner:
 		# Set when scan() starts shutting down, so a file reader waiting for
 		# room in the queue gives up instead of waiting forever.
 		self._stopping = False
+
+		# When the slice being processed began, so a recording can start at
+		# its transmission's onset: from the virtual clock in file playback,
+		# and live from when the device delivered the slice, less its length.
+		# The arrival times queue beside the slices they belong to.
+		self._slice_start_time: datetime.datetime | None = None
+		self._slice_arrivals: collections.deque[float] = collections.deque()
 
 		# A file playback's end-of-stream sentinel still waiting for room in
 		# the queue, kept so the task is not garbage collected.
@@ -1213,7 +1221,7 @@ class RadioScanner:
 			logger.info(f"Waiting for {len(stopping)} recording(s) to finish closing")
 			await asyncio.wait([asyncio.wrap_future(future) for future in stopping])
 
-	def _safe_queue_put (self, samples: numpy.typing.NDArray[numpy.complex64]) -> None:
+	def _safe_queue_put (self, samples: numpy.typing.NDArray[numpy.complex64], arrival: float | None = None) -> None:
 
 		"""
 		Safely put samples in queue, dropping them if queue is full
@@ -1230,6 +1238,10 @@ class RadioScanner:
 		except asyncio.QueueFull:
 			# Drop samples if consumer is behind
 			logger.warning("Sample queue full; dropping samples")
+			return
+
+		if arrival is not None:
+			self._slice_arrivals.append(arrival)
 
 	def _signal_stream_end (self) -> None:
 
@@ -1313,7 +1325,7 @@ class RadioScanner:
 				# Live SDR: non-blocking, drop if queue full.
 				# Real-time streams can't wait — dropping is better than
 				# stalling the device driver and causing USB overflows.
-				self.loop.call_soon_threadsafe(self._safe_queue_put, samples)
+				self.loop.call_soon_threadsafe(self._safe_queue_put, samples, time.time())
 
 	async def _sample_band_async (self) -> typing.AsyncGenerator[numpy.typing.NDArray[numpy.complex64], None]:
 		"""
@@ -1505,7 +1517,7 @@ class RadioScanner:
 				# folder or an unmounted share, loses this recording only: the
 				# scan and the radio channel's detection carry on.
 				try:
-					self._start_channel_recording(channel_freq, channel_index, snr_db, loop)
+					self._start_channel_recording(channel_freq, channel_index, snr_db, loop, onset_samples=trim_start)
 				except (OSError, RuntimeError) as exc:
 					logger.error(f"Channel {channel_index}: could not create its recording, so this transmission is not recorded: {exc}")
 					self._unrecorded_channels.add(channel_freq)
@@ -1731,7 +1743,7 @@ class RadioScanner:
 
 		return filtered
 
-	def _start_channel_recording (self, channel_freq: float, channel_index: int, snr_db: float, loop: asyncio.AbstractEventLoop) -> None:
+	def _start_channel_recording (self, channel_freq: float, channel_index: int, snr_db: float, loop: asyncio.AbstractEventLoop, onset_samples: int = 0) -> None:
 
 		"""
 		Start recording a channel
@@ -1741,7 +1753,15 @@ class RadioScanner:
 			channel_index: Channel index number
 			snr_db: Passed for info only, used to generate filename_suffix
 			loop: Event loop to use for creating async tasks
+			onset_samples: IQ samples from the start of the slice to the
+				transmission's onset, so the recording's timestamp is the onset
 		"""
+
+		# The recording starts where its transmission does.  Without a slice
+		# start time, as outside scan(), the recorder takes the time it opens.
+		start_time = None
+		if self._slice_start_time is not None:
+			start_time = self._slice_start_time + datetime.timedelta(seconds=onset_samples / self.sample_rate)
 
 		# Create recorder instance
 
@@ -1768,7 +1788,7 @@ class RadioScanner:
 			fade_out_ms=self.recording_config.fade_out_ms,
 			dynamics_curve_enabled=self.recording_config.dynamics_curve_enabled,
 			dynamics_curve_config=self.recording_config.dynamics_curve,
-			start_time=self.clock.now() if self.clock else None,
+			start_time=start_time,
 			audio_format=self.audio_format,
 		)
 
@@ -1903,6 +1923,7 @@ class RadioScanner:
 		# Advance the virtual clock by the number of samples in this slice.
 		# This keeps timestamps accurate for file playback mode.
 		if self.clock:
+			self._slice_start_time = self.clock.now()
 			self.clock.advance(len(samples))
 
 			# Log progress every 10 minutes of file time.
@@ -2157,7 +2178,10 @@ class RadioScanner:
 						# later in the recording pipeline (_write_samples_to_wav)
 						# so they survive carrier transient trimming.
 						if turning_on:
-							audio = self._refine_trim_on_audio(audio, turning_on=True)
+							refined = self._refine_trim_on_audio(audio, turning_on=True)
+							# The recording's timestamp follows the trim
+							self.channel_recorders[channel_freq].move_start(len(audio) - len(refined))
+							audio = refined
 						elif turning_off:
 							audio = self._refine_trim_on_audio(audio, turning_on=False)
 
@@ -2368,6 +2392,11 @@ class RadioScanner:
 			logger.info("Started async SDR streaming")
 
 			async for samples in self._sample_band_async():
+				# A live slice ends about when the device delivered it
+				if self.clock is None and self._slice_arrivals:
+					arrival = self._slice_arrivals.popleft()
+					self._slice_start_time = datetime.datetime.fromtimestamp(arrival - len(samples) / self.sample_rate)
+
 				# CPU-heavy processing stays off the event loop to keep async I/O
 				# responsive.  The future is kept: when the scan is cancelled, the
 				# slice goes on processing in its thread, and cleanup waits for it.
