@@ -194,8 +194,14 @@ def _blanker_hampel (
 	frequency from the FM discriminator.  Placed before de-emphasis so
 	the filter doesn't smear spike energy into adjacent samples.
 
-	Uses state['blanker_tail'] to carry the last half_win samples across
-	block boundaries, ensuring seamless detection at block edges.
+	Output runs _BLANKER_HALF_WIN samples behind input (about 50 µs at
+	the IF rate).  A sample is judged against its neighbours on both
+	sides, so the last half-window of each block waits for the next block
+	to bring its right-hand neighbours; the first block starts with that
+	many samples of zero, which is silence.  Judging them at once, with
+	mirrored padding, let a two-sample glitch at the end of a block count
+	as its own neighbours and pass.  state carries the samples held back
+	and the ones before them.
 	"""
 
 	hw = _BLANKER_HALF_WIN
@@ -204,17 +210,19 @@ def _blanker_hampel (
 	if len(demod) == 0:
 		return demod
 
-	# Prepend tail from previous block for continuity at the boundary.
-	tail = state.get('blanker_tail')
-	if tail is not None and len(tail) > 0:
-		combined = numpy.concatenate([tail, demod])
-		offset = len(tail)
-	else:
-		combined = demod
-		offset = 0
+	first_block = 'blanker_held' not in state
+	empty = numpy.zeros(0, dtype=demod.dtype)
+	held = state.get('blanker_held', empty)
+	context = state.get('blanker_context', empty)
 
-	# Save tail for next block (last half_win samples of this block).
-	state['blanker_tail'] = demod[-hw:].copy()
+	combined = numpy.concatenate([context, held, demod])
+	judge_start = len(context)
+	judge_end = max(judge_start, len(combined) - hw)
+
+	# Keep what the next block needs: the samples held back, and the ones
+	# before them as their left-hand neighbours.
+	state['blanker_context'] = combined[max(0, judge_end - hw):judge_end].copy()
+	state['blanker_held'] = combined[judge_end:].copy()
 
 	# Rolling median and MAD via scipy.ndimage.median_filter.
 	rolling_median = scipy.ndimage.median_filter(combined, size=win_size, mode='reflect')
@@ -233,8 +241,12 @@ def _blanker_hampel (
 	result = combined.copy()
 	result[outliers] = rolling_median[outliers]
 
-	# Return only the portion corresponding to the current block.
-	return result[offset:]
+	output = result[judge_start:judge_end]
+
+	if first_block:
+		output = numpy.concatenate([numpy.zeros(len(demod) - len(output), dtype=demod.dtype), output])
+
+	return output
 
 
 def detect_ctcss (audio: numpy.typing.NDArray[numpy.float32], sample_rate: int) -> float | None:

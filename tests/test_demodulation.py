@@ -40,7 +40,11 @@ class TestNFMDemodulation:
 		assert abs(dominant - audio_freq) < 200  # within 200 Hz
 
 	def test_state_continuity (self):
-		"""Two consecutive blocks produce continuous output."""
+		"""Two consecutive blocks produce exactly what one pass over both produces.
+
+		A threshold on the step at the join passed or failed by where the
+		join fell on the waveform; comparing with one pass does not.
+		"""
 		sr = 1_024_000
 		audio_rate = 16000
 		iq = iq_generators.generate_fm_iq(1000.0, 2500.0, sr, 0.2)
@@ -51,12 +55,9 @@ class TestNFMDemodulation:
 		audio_b, state = substation.dsp.demodulation.demodulate_nfm(iq[half:], sr, audio_rate, state=state)
 		joined = numpy.concatenate([audio_a, audio_b])
 
-		# No large discontinuity at the boundary
-		boundary = len(audio_a)
-		if boundary > 0 and boundary < len(joined):
-			jump = abs(joined[boundary] - joined[boundary - 1])
-			# A smooth signal shouldn't have a big jump
-			assert jump < 0.5
+		whole, _ = substation.dsp.demodulation.demodulate_nfm(iq, sr, audio_rate, state=None)
+
+		numpy.testing.assert_allclose(joined, whole[:len(joined)], atol=1e-5)
 
 	def test_empty_input (self):
 		audio, state = substation.dsp.demodulation.demodulate_nfm(
@@ -559,11 +560,14 @@ class TestSSBDemodulation:
 class TestHampelBlanker:
 
 	def test_clean_signal_unchanged (self):
-		"""A smooth signal with no outliers should pass through unmodified."""
+		"""A smooth signal with no outliers passes through unmodified, half a window late."""
+		hw = substation.dsp.demodulation._BLANKER_HALF_WIN
 		signal = numpy.sin(numpy.linspace(0, 10 * numpy.pi, 1000)).astype(numpy.float32)
 		state: dict = {}
 		result = substation.dsp.demodulation._blanker_hampel(signal, state)
-		numpy.testing.assert_allclose(result, signal, atol=1e-6)
+		assert len(result) == len(signal)
+		numpy.testing.assert_allclose(result[hw:], signal[:-hw], atol=1e-6)
+		numpy.testing.assert_allclose(result[:hw], 0.0)
 
 	def test_spikes_removed (self):
 		"""Injected impulse spikes should be replaced with local median."""
@@ -573,15 +577,48 @@ class TestHampelBlanker:
 		for pos in spike_positions:
 			spiked[pos] = 5.0  # huge outlier vs ~1.0 amplitude
 		state: dict = {}
-		result = substation.dsp.demodulation._blanker_hampel(spiked, state)
+		hw = substation.dsp.demodulation._BLANKER_HALF_WIN
+		result = substation.dsp.demodulation._blanker_hampel(spiked, state)[hw:]
 		# Spikes should be suppressed — result should be close to original
 		for pos in spike_positions:
 			assert abs(result[pos]) < 2.0, f"Spike at {pos} not suppressed: {result[pos]}"
 		# Non-spike samples should be unchanged
-		mask = numpy.ones(len(signal), dtype=bool)
+		mask = numpy.ones(len(result), dtype=bool)
 		for pos in spike_positions:
 			mask[max(0, pos-1):pos+2] = False
-		numpy.testing.assert_allclose(result[mask], signal[mask], atol=1e-6)
+		numpy.testing.assert_allclose(result[mask], signal[:len(result)][mask], atol=1e-6)
+
+	def test_glitch_at_the_end_of_a_block_is_caught (self):
+		"""Regression: a two-sample glitch in a block's last three samples passed the blanker.
+
+		They were judged at once, with mirrored padding for the neighbours
+		still to come, so the glitch counted as its own neighbours.
+		"""
+		signal = (0.3 * numpy.sin(numpy.linspace(0, 20 * numpy.pi, 800))).astype(numpy.float32)
+		signal[398:400] = 3.0
+		state: dict = {}
+
+		out = numpy.concatenate([
+			substation.dsp.demodulation._blanker_hampel(signal[:400], state),
+			substation.dsp.demodulation._blanker_hampel(signal[400:], state),
+		])
+
+		assert numpy.max(numpy.abs(out[390:410])) < 1.0
+
+	def test_blocks_give_what_one_pass_gives (self):
+		"""Blanking in blocks gives the same output as blanking the whole signal at once."""
+		rng = numpy.random.default_rng(2)
+		signal = (0.3 * numpy.sin(numpy.linspace(0, 40 * numpy.pi, 2000)) + 0.01 * rng.standard_normal(2000)).astype(numpy.float32)
+		signal[rng.choice(2000, 30, replace=False)] = 4.0
+		# Two-sample glitches at block ends, where mirrored padding let them through
+		for end in (333, 666, 999):
+			signal[end - 2:end] = 4.0
+
+		whole = substation.dsp.demodulation._blanker_hampel(signal, {})
+		state: dict = {}
+		pieces = numpy.concatenate([substation.dsp.demodulation._blanker_hampel(signal[i:i + 333], state) for i in range(0, 2000, 333)])
+
+		numpy.testing.assert_allclose(pieces, whole)
 
 
 class TestCTCSSDetection:
@@ -859,9 +896,10 @@ class TestVoiceBandpass:
 		block2 = signal[100:].copy()
 		block2[0] = 5.0  # spike at first sample of block 2
 		state: dict = {}
+		hw = substation.dsp.demodulation._BLANKER_HALF_WIN
 		substation.dsp.demodulation._blanker_hampel(block1, state)
 		result2 = substation.dsp.demodulation._blanker_hampel(block2, state)
-		assert abs(result2[0]) < 1.0, f"Spike at block boundary not suppressed: {result2[0]}"
+		assert abs(result2[hw]) < 1.0, f"Spike at block boundary not suppressed: {result2[hw]}"
 
 	def test_empty_signal (self):
 		"""Empty input should return empty output without error."""
