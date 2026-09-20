@@ -30,6 +30,15 @@ import substation.constants
 
 logger = logging.getLogger(__name__)
 
+# Top-level sections that earlier releases accepted and this one no longer
+# uses, each with the reason a user is told.  `substation --init` copied every
+# section of the shipped file into the user's config.yaml, so rejecting these
+# would stop configurations written that way from loading after an upgrade.
+# They are dropped with a warning instead; misspelt keys are still rejected.
+REMOVED_SECTIONS = {
+	'supervisor': "the Supervisor dashboard integration has been removed",
+}
+
 
 def _fraction_constructor (loader: yaml.SafeLoader, node: yaml.nodes.ScalarNode) -> fractions.Fraction:
 	"""
@@ -842,6 +851,23 @@ def _load_raw_config (config_path: pathlib.Path) -> dict:
 	return data
 
 
+def _drop_removed_sections (data: dict, source: str) -> dict:
+
+	"""
+	Return data without the top-level sections in REMOVED_SECTIONS.
+
+	Logs a warning for each one found, naming where it was found and why it
+	is no longer used.  The input is not changed.
+	"""
+
+	found = [key for key in data if key in REMOVED_SECTIONS]
+
+	for key in found:
+		logger.warning(f"Ignoring the '{key}' section in {source}: {REMOVED_SECTIONS[key]}. Delete the section to stop this warning.")
+
+	return {key: value for key, value in data.items() if key not in REMOVED_SECTIONS}
+
+
 def _apply_band_defaults (data: dict) -> dict:
 
 	"""
@@ -943,7 +969,7 @@ def load_config (path: str | pathlib.Path | None = None) -> AppConfig:
 		user_path = None
 
 	if user_path is not None:
-		user = _load_raw_config(user_path)
+		user = _drop_removed_sections(_load_raw_config(user_path), str(user_path))
 		raw = _deep_merge(base, user)
 		logger.debug("Loaded config from %s + %s", default_path.name, user_path.name)
 	else:
@@ -976,7 +1002,7 @@ def validate_config (config: dict | AppConfig) -> AppConfig:
 	if isinstance(config, AppConfig):
 		return config
 
-	return AppConfig.model_validate(_apply_band_defaults(config))
+	return AppConfig.model_validate(_apply_band_defaults(_drop_removed_sections(config, "the configuration")))
 
 
 def get_band_config (config: dict | AppConfig, band_name: str) -> BandConfig:

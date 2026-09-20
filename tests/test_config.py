@@ -77,19 +77,42 @@ class TestYamlLoading:
 		config = substation.config.load_config(str(user_cfg))
 		assert config.recording.audio_output_dir == "/tmp/str_path_override"
 
-	def test_removed_supervisor_section_is_rejected (self, tmp_path):
-		"""A user config still carrying the removed supervisor section fails, and the error names the key.
+	def test_removed_supervisor_section_is_ignored_with_a_warning (self, tmp_path, caplog):
+		"""Regression: a config.yaml written by --init before Supervisor was removed stopped loading.
 
-		The Supervisor dashboard integration was removed outright, with no
-		alias or deprecation period, so the failure message is the only
-		pointer a user gets to the line they need to delete.
+		`substation --init` copied the shipped `supervisor` section into every
+		user's file, so rejecting it broke everyone who followed the Quick
+		Start.  The section is now dropped, the rest of the file still applies,
+		and the warning names the section and the file.
 		"""
 		user_cfg = tmp_path / "config.yaml"
 		user_cfg.write_text(yaml.dump({
-			"supervisor": {"enabled": True, "port": 9004},
+			"supervisor": {"enabled": False, "port": 9004},
+			"recording": {"audio_output_dir": "/tmp/kept_override"},
 		}))
 
-		with pytest.raises(pydantic.ValidationError, match="supervisor"):
+		config = substation.config.load_config(user_cfg)
+
+		assert config.recording.audio_output_dir == "/tmp/kept_override"
+		assert "'supervisor' section" in caplog.text
+		assert str(user_cfg) in caplog.text
+
+	def test_removed_section_is_ignored_in_a_dict_config (self, minimal_config_dict, caplog):
+		"""Programs passing a dict get the same treatment as config.yaml."""
+		minimal_config_dict["supervisor"] = {"enabled": True}
+
+		config = substation.config.validate_config(minimal_config_dict)
+
+		assert "supervisor" not in config.model_dump()
+		assert "'supervisor' section" in caplog.text
+		assert "supervisor" in minimal_config_dict
+
+	def test_misspelt_section_is_still_rejected (self, tmp_path):
+		"""Only sections that really were removed are ignored; a typo still fails and names the key."""
+		user_cfg = tmp_path / "config.yaml"
+		user_cfg.write_text(yaml.dump({"recordng": {"audio_output_dir": "/tmp/x"}}))
+
+		with pytest.raises(pydantic.ValidationError, match="recordng"):
 			substation.config.load_config(user_cfg)
 
 
