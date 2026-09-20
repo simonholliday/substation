@@ -343,21 +343,8 @@ class RadioScanner:
 		logger.info(f"Sample rate: {self.sample_rate/1e6:.3f} MHz")
 		logger.info(f"SNR threshold: {self.snr_threshold_db} dB ON / {self.snr_threshold_off_db} dB OFF (hysteresis)")
 
-		# When the user provides per-element gains, the overall sdr_gain_db
-		# is *ignored* (see BandConfig._validate_band() and the gain setter
-		# in each device wrapper).  Logging its value here would be
-		# actively misleading — the user has already been warned one line
-		# earlier that the overall gain is being ignored, and the actual
-		# per-element values will be logged at INFO by the device wrapper
-		# once setGain is called.  In that case we emit a single summary
-		# line pointing to the per-element log lines below.
-		if self.band_config.sdr_gain_elements is not None:
-			element_summary = ', '.join(
-				f"{name}={value:g}" for name, value in self.band_config.sdr_gain_elements.items()
-			)
-			logger.info(f"SDR Gain: per-element ({element_summary})")
-		else:
-			logger.info(f"SDR Gain: {self.sdr_gain_db}")
+		# The gain is logged by _setup_sdr, once the device shows whether it
+		# takes per-element gain.
 
 		logger.info(f"SDR Device: {self.device_type} (index {self.device_index})")
 		logger.info(f"Modulation: {self.modulation}")
@@ -1071,20 +1058,35 @@ class RadioScanner:
 			self.center_freq = device_center
 
 		# Per-element gain takes priority over overall gain for devices with
-		# multiple gain stages (e.g., AirSpy R2: LNA, Mixer, VGA).
-		if self.band_config.sdr_gain_elements and hasattr(self.sdr, 'gain_elements'):
-			self.sdr.gain_elements = self.band_config.sdr_gain_elements
-		elif self.sdr_gain_db == 'auto' or self.sdr_gain_db is None:
-			try:
-				self.sdr.gain = 'auto'
-			except Exception:
-				self.sdr.gain = None
+		# multiple gain stages (e.g., AirSpy R2: LNA, Mixer, VGA).  Only the
+		# SoapySDR wrapper has them; other devices use sdr_gain_db, and the
+		# log says which happened.
+		gain_elements = self.band_config.sdr_gain_elements
+
+		if gain_elements and hasattr(self.sdr, 'gain_elements'):
+			self.sdr.gain_elements = gain_elements
+			element_summary = ', '.join(f"{name}={value:g}" for name, value in gain_elements.items())
+			logger.info(f"SDR Gain: per-element ({element_summary})")
 		else:
-			self.sdr.gain = self.sdr_gain_db
+			if gain_elements:
+				logger.warning(f"sdr_gain_elements is set, but {self.device_type} has no per-element gain, so sdr_gain_db ({self.sdr_gain_db}) is used instead")
+
+			if self.sdr_gain_db == 'auto' or self.sdr_gain_db is None:
+				try:
+					self.sdr.gain = 'auto'
+				except Exception:
+					self.sdr.gain = None
+			else:
+				self.sdr.gain = self.sdr_gain_db
+
+			logger.info(f"SDR Gain: {self.sdr_gain_db}")
 
 		# Apply device-specific settings (bias tee, clock source, etc.)
-		if self.band_config.sdr_device_settings and hasattr(self.sdr, 'device_settings'):
-			self.sdr.device_settings = self.band_config.sdr_device_settings
+		if self.band_config.sdr_device_settings:
+			if hasattr(self.sdr, 'device_settings'):
+				self.sdr.device_settings = self.band_config.sdr_device_settings
+			else:
+				logger.warning(f"sdr_device_settings is set, but {self.device_type} takes no device settings, so they are not applied")
 
 		serial = getattr(self.sdr, 'serial', None)
 

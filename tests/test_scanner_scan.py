@@ -463,3 +463,54 @@ class TestBandTooWide:
 		substation.cli.list_bands(config_path)
 
 		assert "Cannot be scanned" in capsys.readouterr().out
+
+
+class FakeSoapyDevice (FakeLiveDevice):
+
+	"""A live receiver with per-element gain and device settings, as the SoapySDR wrapper has."""
+
+	def __init__ (self) -> None:
+
+		"""Start with nothing applied."""
+
+		super().__init__(blocks=0)
+		self.gain_elements: dict | None = None
+		self.device_settings: dict | None = None
+
+
+class TestGainAndSettingsReachTheDevice:
+
+	def _setup (self, minimal_config_dict, monkeypatch, device):
+
+		"""Run the real device setup for test_nfm, with per-element gain and a device setting, against device."""
+
+		band = minimal_config_dict["bands"]["test_nfm"]
+		band["sdr_gain_elements"] = {"LNA": 10, "VGA": 12}
+		band["sdr_device_settings"] = {"biastee": "true"}
+		config = substation.config.validate_config(minimal_config_dict)
+		monkeypatch.setattr(substation.devices, "create_device", lambda *args, **kwargs: device)
+		substation.scanner.RadioScanner(config=config, band_name="test_nfm", device_type="rtlsdr")._setup_sdr()
+
+	def test_device_without_per_element_gain_says_it_uses_sdr_gain_db (self, minimal_config_dict, monkeypatch, caplog):
+		"""Regression: on an RTL-SDR or HackRF, the logs said per-element gain applied while sdr_gain_db was used."""
+		device = FakeLiveDevice(blocks=0)
+
+		with caplog.at_level(logging.INFO):
+			self._setup(minimal_config_dict, monkeypatch, device)
+
+		assert device.gain == 30
+		assert "has no per-element gain, so sdr_gain_db (30" in caplog.text
+		assert "takes no device settings" in caplog.text
+		assert "per-element (" not in caplog.text
+
+	def test_device_with_per_element_gain_uses_it (self, minimal_config_dict, monkeypatch, caplog):
+		"""A SoapySDR device gets the elements and the settings, and the log says so."""
+		device = FakeSoapyDevice()
+
+		with caplog.at_level(logging.INFO):
+			self._setup(minimal_config_dict, monkeypatch, device)
+
+		assert device.gain_elements == {"LNA": 10.0, "VGA": 12.0}
+		assert device.device_settings == {"biastee": "true"}
+		assert "SDR Gain: per-element (LNA=10, VGA=12)" in caplog.text
+		assert "no per-element gain" not in caplog.text

@@ -769,11 +769,12 @@ class BandConfig(pydantic.BaseModel):
 				f"(channel turns off at noise floor level)"
 			)
 
-		# Warn if per-element gain overrides sdr_gain_db
+		# Which of the two gains applies depends on the device, known only
+		# when a scan starts, and the scanner logs it then.
 		if self.sdr_gain_elements is not None and self.sdr_gain_db is not None:
-			logger.info(
-				"sdr_gain_elements is set — sdr_gain_db will be ignored. "
-				"Per-element gain takes priority for fine-tuned stage control."
+			logger.debug(
+				"sdr_gain_elements is set: a device with per-element gain uses it in place of "
+				"sdr_gain_db, and any other device uses sdr_gain_db"
 			)
 
 		return self

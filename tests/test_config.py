@@ -453,13 +453,6 @@ class TestGainElements:
 		"""sdr_gain_elements should be None when not specified."""
 		assert app_config.bands["test_nfm"].sdr_gain_elements is None
 
-	def test_gain_elements_overrides_gain_db_logged (self, minimal_config_dict, caplog):
-		"""When both sdr_gain_elements and sdr_gain_db are set, a log message should note the override."""
-		minimal_config_dict["bands"]["test_nfm"]["sdr_gain_elements"] = {"LNA": 10}
-		minimal_config_dict["bands"]["test_nfm"]["sdr_gain_db"] = 30
-		with caplog.at_level(logging.INFO):
-			substation.config.validate_config(minimal_config_dict)
-		assert "sdr_gain_elements is set" in caplog.text
 
 
 class TestDeviceSettings:
