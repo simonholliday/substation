@@ -21,6 +21,7 @@ to a unified internal interface.
 
 import importlib
 import logging
+import threading
 import typing
 
 import numpy
@@ -39,7 +40,30 @@ class HackRfDevice (substation.devices.base.BaseDevice):
 	Unifies multiple possible Python bindings into a single interface.
 	Different HackRF libraries use different function names and signatures,
 	so we detect what's available and create an adapter layer.
+
+	In python_hackrf, the module only initialises the library and opens
+	devices; every control call is a method of the opened device, which is
+	where the wrapper looks for them.
 	"""
+
+	# How often the stream watchdog checks that the device is still
+	# streaming, in seconds.
+	STREAM_CHECK_INTERVAL_SECONDS = 0.5
+
+	# Each control call, and the method names the bindings give it on the
+	# opened device, in order of preference.
+	_METHOD_NAMES: dict[str, tuple[str, ...]] = {
+		'set_sample_rate': ('pyhackrf_set_sample_rate', 'set_sample_rate'),
+		'set_freq': ('pyhackrf_set_freq', 'set_freq', 'set_frequency'),
+		'set_lna_gain': ('pyhackrf_set_lna_gain', 'set_lna_gain'),
+		'set_vga_gain': ('pyhackrf_set_vga_gain', 'set_vga_gain'),
+		'start_rx': ('pyhackrf_start_rx', 'start_rx'),
+		'stop_rx': ('pyhackrf_stop_rx', 'stop_rx'),
+		'is_streaming': ('pyhackrf_is_streaming', 'is_streaming'),
+		'close': ('pyhackrf_close', 'close'),
+	}
+
+	_REQUIRED_METHODS = ('set_sample_rate', 'set_freq', 'start_rx', 'stop_rx', 'close')
 
 	def __init__ (self, device_index: int = 0) -> None:
 		"""
@@ -58,15 +82,31 @@ class HackRfDevice (substation.devices.base.BaseDevice):
 		self._rx_buffer = numpy.array([], dtype=numpy.complex64)
 		self._rx_wrapper: typing.Callable | None = None
 
+		# Set when the scan cancels streaming, so the stream watchdog knows
+		# that the stream stopping is expected rather than a device fault.
+		self._rx_cancelled = threading.Event()
+
 		# Cache hardware state (HackRF doesn't provide getters for these)
 		self._sample_rate: float | None = None
 		self._center_freq: float | None = None
 		self._gain_db: float | None = None
 
-		# Detect available functions and map them to our internal names
-		self._setup_bindings()
-		# Initialize library and open the device
+		# Initialize library and open the device, then find its control calls
+		self._funcs: dict[str, typing.Callable] = {}
 		self._open_device()
+
+		try:
+			self._setup_bindings()
+		except RuntimeError:
+			# Do not leave the device open and the library initialised
+			for name in ('pyhackrf_close', 'close'):
+				device_close = getattr(self._device, name, None)
+				if callable(device_close):
+					device_close()
+					break
+			if self._initialized_library and hasattr(self._module, 'pyhackrf_exit'):
+				self._module.pyhackrf_exit()
+			raise
 
 	def _import_hackrf_module (self) -> typing.Any:
 		"""
@@ -92,78 +132,42 @@ class HackRfDevice (substation.devices.base.BaseDevice):
 		)
 
 	def _setup_bindings (self) -> None:
+
 		"""
-		Detect and map module-specific functions to a unified internal interface.
+		Find each control call on the opened device.
 
-		Different HackRF bindings use different naming conventions:
-		- python_hackrf uses: pyhackrf_set_sample_rate, pyhackrf_set_freq, etc.
-		- Other bindings use: set_sample_rate, set_freq, etc.
-
-		This method searches for each function by trying multiple names,
-		storing the first match in our internal function dictionary.
+		Stores the device's bound method under our internal name in
+		self._funcs, trying each binding's name in _METHOD_NAMES in turn, and
+		raises RuntimeError naming any required call the device lacks.
 		"""
 
 		self._funcs = {}
-		m = self._module
 
-		# Map our internal function names to possible binding-specific names
-		# Listed in order of preference (most common first)
-		targets = {
-			'set_sample_rate': ['pyhackrf_set_sample_rate', 'set_sample_rate'],
-			'set_freq': ['pyhackrf_set_freq', 'set_freq', 'set_frequency'],
-			'set_vga_gain': ['pyhackrf_set_vga_gain', 'set_vga_gain', 'set_gain'],
-			'set_lna_gain': ['pyhackrf_set_lna_gain', 'set_lna_gain'],
-			'start_rx': ['pyhackrf_start_rx', 'start_rx', 'start_rx_streaming'],
-			'stop_rx': ['pyhackrf_stop_rx', 'stop_rx', 'stop_rx_streaming'],
-			'close': ['pyhackrf_close', 'close']
-		}
-
-		# For each internal function name, try to find it in the module
-		for key, names in targets.items():
+		for key, names in self._METHOD_NAMES.items():
 			for name in names:
-				func = getattr(m, name, None)
+				method = getattr(self._device, name, None)
 
-				if func:
-					self._funcs[key] = func
+				if callable(method):
+					self._funcs[key] = method
 					break
 
-		# Verify that all critical functions were discovered.
-		required = {'set_sample_rate', 'set_freq', 'start_rx', 'stop_rx', 'close'}
-		missing = required - self._funcs.keys()
+		missing = [key for key in self._REQUIRED_METHODS if key not in self._funcs]
 		if missing:
 			raise RuntimeError(
 				f"HackRF binding is missing required functions: {', '.join(sorted(missing))}. "
 				f"The installed binding may be incompatible."
 			)
 
-	def _call_safe (self, key: str, *args: typing.Any) -> None:
-		"""
-		Call a mapped function, handling both module-level and method signatures.
+	def _call_safe (self, key: str, *args: typing.Any) -> typing.Any:
 
-		Different HackRF bindings have different calling patterns:
-		1. Module functions: func(device, *args) - e.g., pyhackrf_set_freq(device, freq)
-		2. Device methods: device.func(*args) - e.g., device.set_freq(freq)
-		3. Module functions without device: func(*args) - less common
+		"""Call a control method of the opened device by its internal name; a missing optional one does nothing."""
 
-		This method tries pattern #1 first, falls back to #2 or #3 if that fails.
-		"""
+		method = self._funcs.get(key)
 
-		func = self._funcs.get(key)
+		if method is None:
+			return None
 
-		if not func:
-			return
-
-		try:
-			# Try: module_function(device, *args)
-			func(self._device, *args)
-		except (TypeError, AttributeError):
-			# Try: device.method(*args) or module_function(*args)
-			method = getattr(self._device, key, None)
-
-			if method:
-				method(*args)
-			else:
-				func(*args)
+		return method(*args)
 
 	def _open_device (self) -> None:
 		"""
@@ -273,34 +277,51 @@ class HackRfDevice (substation.devices.base.BaseDevice):
 		2. Buffer and rechunk to the requested num_samples size
 		3. Call the user callback with fixed-size blocks
 
-		Different bindings pass samples differently, so the wrapper handles
-		multiple calling patterns.
+		Returns once streaming has started.  If the device stops streaming
+		without being cancelled, as when it is unplugged, or the callback
+		fails, the callback is called once with (None, None), which is how
+		BaseDevice signals the end of a stream.
 		"""
 
 		# Clear any leftover samples from previous streaming session
 		self._rx_buffer = numpy.array([], dtype=numpy.complex64)
+		self._rx_cancelled.clear()
+		stream_ended = threading.Event()
+
+		def end_stream () -> None:
+			"""Report the end of the stream to the scanner, once."""
+			if not stream_ended.is_set() and not self._rx_cancelled.is_set():
+				stream_ended.set()
+				callback(None, None)
 
 		def wrapper (*args: typing.Any) -> int:
 			"""
 			Callback invoked by HackRF library for each sample block.
 
-			Different bindings pass arguments differently:
-			- Some: wrapper(device, buffer) - 2 args
-			- Some: wrapper(buffer) - 1 arg
+			python_hackrf passes (device, buffer, buffer_length, valid_length),
+			and only the first valid_length bytes of the buffer hold samples.
+			Other bindings pass (device, buffer) or (buffer).
 
 			Returns 0 to continue streaming, non-zero to stop.
 			"""
 			try:
-				# Extract buffer from args (handle both calling patterns)
 				buffer_obj = args[1] if len(args) >= 2 else args[0]
+				if len(args) >= 4:
+					buffer_obj = buffer_obj[:args[3]]
+
 				# Convert raw int8 IQ to complex64 normalized samples
 				samples = self._convert_samples(buffer_obj)
 				# Rechunk to requested size and call user callback
 				self._buffer_samples(samples, num_samples, callback)
-				return 0  # Continue streaming
-			except Exception as e:
-				logger.error(f"HackRF Callback Error: {e}")
-				return 0  # Continue despite error (don't crash streaming)
+				return 0
+
+			except Exception:
+				# The scanner's callback does not fail in normal running, so
+				# this is a fault: stop the stream and say so, rather than
+				# drop the block and carry on.
+				logger.exception("HackRF receive callback failed; stopping the stream")
+				end_stream()
+				return -1
 
 		self._rx_wrapper = wrapper
 
@@ -313,8 +334,33 @@ class HackRfDevice (substation.devices.base.BaseDevice):
 			# Pattern 2: start_rx(callback)
 			self._call_safe('start_rx', wrapper)
 
+		# libhackrf stops calling back when the device is lost, and nothing
+		# else would tell the scanner, which would then wait forever.
+		if 'is_streaming' in self._funcs:
+			threading.Thread(target=self._watch_stream, args=(end_stream,), name="hackrf-stream-watchdog", daemon=True).start()
+
+	def _watch_stream (self, end_stream: typing.Callable[[], None]) -> None:
+
+		"""Poll the device until streaming stops; if the scan did not cancel it, report the end of the stream."""
+
+		while not self._rx_cancelled.wait(self.STREAM_CHECK_INTERVAL_SECONDS):
+
+			try:
+				streaming = bool(self._call_safe('is_streaming'))
+			except Exception as exc:
+				logger.debug(f"HackRF streaming check failed: {exc}")
+				streaming = False
+
+			if not streaming:
+				if not self._rx_cancelled.is_set():
+					logger.error("HackRF stopped streaming")
+				end_stream()
+				return
+
 	def cancel_read_async (self) -> None:
-		self._call_safe ('stop_rx')
+		"""Stop streaming; the stream watchdog then stops quietly."""
+		self._rx_cancelled.set()
+		self._call_safe('stop_rx')
 
 	def close (self) -> None:
 		try:

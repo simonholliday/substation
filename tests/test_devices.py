@@ -9,6 +9,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 import types
 import unittest.mock
 
@@ -80,6 +81,150 @@ class TestCreateDevice:
 	def test_case_insensitive (self):
 		mock_cls = _mock_create_device("RTLSDR", "rtlsdr", "RtlSdrDevice")
 		mock_cls.assert_called_once()
+
+
+class FakePyHackrfDevice:
+
+	"""Stands in for python_hackrf's PyHackrfDevice: every control call is a method of the opened device."""
+
+	def __init__ (self) -> None:
+
+		"""Start idle, recording each call."""
+
+		self.calls: list[tuple] = []
+		self.rx_callback = None
+		self.streaming = False
+
+	def pyhackrf_set_sample_rate (self, freq_hz: float) -> None:
+		"""Record it."""
+		self.calls.append(("sample_rate", freq_hz))
+
+	def pyhackrf_set_freq (self, freq_hz: int) -> None:
+		"""Record it."""
+		self.calls.append(("freq", freq_hz))
+
+	def pyhackrf_set_lna_gain (self, value: int) -> None:
+		"""Record it."""
+		self.calls.append(("lna", value))
+
+	def pyhackrf_set_vga_gain (self, value: int) -> None:
+		"""Record it."""
+		self.calls.append(("vga", value))
+
+	def set_rx_callback (self, rx_callback_function) -> None:
+		"""Keep the callback, as the binding does."""
+		self.rx_callback = rx_callback_function
+
+	def pyhackrf_start_rx (self) -> None:
+		"""Start streaming."""
+		self.streaming = True
+
+	def pyhackrf_stop_rx (self) -> None:
+		"""Stop streaming."""
+		self.streaming = False
+
+	def pyhackrf_is_streaming (self) -> bool:
+		"""Report streaming."""
+		return self.streaming
+
+	def pyhackrf_close (self) -> None:
+		"""Record it."""
+		self.calls.append(("close",))
+
+
+def _fake_python_hackrf (device):
+
+	"""A module shaped like python_hackrf's: only initialisation, enumeration and opening are module functions."""
+
+	module = types.ModuleType("python_hackrf.pylibhackrf.pyhackrf")
+	module.pyhackrf_init = lambda: None
+	module.pyhackrf_exit = lambda: None
+	module.pyhackrf_device_list = lambda: types.SimpleNamespace(device_count=1, serial_numbers=["0000000000000000abcd"])
+	module.pyhackrf_open_by_serial = lambda serial: device
+	return module
+
+
+@pytest.fixture
+def hackrf_device (monkeypatch):
+
+	"""A HackRfDevice opened through a fake python_hackrf, and the fake device it drives."""
+
+	import substation.devices.hackrf
+
+	device = FakePyHackrfDevice()
+	monkeypatch.setattr(substation.devices.hackrf.importlib, "import_module", lambda name: _fake_python_hackrf(device))
+	monkeypatch.setattr(substation.devices.hackrf.HackRfDevice, "STREAM_CHECK_INTERVAL_SECONDS", 0.02)
+	return substation.devices.hackrf.HackRfDevice(0), device
+
+
+class TestHackRfDevice:
+
+	def test_fake_matches_the_real_binding (self):
+		"""Every method the fake offers exists on the real PyHackrfDevice, so the fake cannot drift from it."""
+		pyhackrf = pytest.importorskip("python_hackrf.pylibhackrf.pyhackrf")
+		fake_methods = {name for name in vars(FakePyHackrfDevice) if not name.startswith("_")} - {"calls", "rx_callback", "streaming"}
+
+		assert fake_methods <= set(dir(pyhackrf.PyHackrfDevice))
+
+	def test_settings_reach_the_opened_device (self, hackrf_device):
+		"""Regression: the control calls were looked up on the module, where python_hackrf has none, so no HackRF could open."""
+		wrapper, device = hackrf_device
+
+		wrapper.sample_rate = 12.5e6
+		wrapper.center_freq = 456.5e6
+		wrapper.gain = 16
+
+		assert device.calls == [("sample_rate", 12.5e6), ("freq", 456500000), ("lna", 16), ("vga", 16)]
+
+	def test_only_the_valid_part_of_each_buffer_is_used (self, hackrf_device):
+		"""Regression: the whole transfer buffer was converted, including bytes past valid_length."""
+		wrapper, device = hackrf_device
+		blocks = []
+
+		wrapper.read_samples_async(lambda samples, _context: blocks.append(samples), 0)
+		buffer = numpy.full(1000, 64, dtype=numpy.int8)
+		assert device.rx_callback(device, buffer, 1000, 600) == 0
+		wrapper.cancel_read_async()
+
+		assert len(blocks) == 1
+		assert len(blocks[0]) == 300
+
+	def test_a_device_that_stops_streaming_ends_the_stream (self, hackrf_device):
+		"""Regression: an unplugged HackRF never signalled the end of its stream, so the scan waited forever."""
+		wrapper, device = hackrf_device
+		ended = threading.Event()
+
+		wrapper.read_samples_async(lambda samples, _context: ended.set() if samples is None else None, 0)
+		device.streaming = False
+
+		assert ended.wait(timeout=2.0)
+
+	def test_cancelling_does_not_report_an_end (self, hackrf_device):
+		"""The scan's own cancel is not a fault, so no end of stream is reported."""
+		wrapper, device = hackrf_device
+		ends = []
+
+		wrapper.read_samples_async(lambda samples, _context: ends.append(samples) if samples is None else None, 0)
+		wrapper.cancel_read_async()
+		time.sleep(0.1)
+
+		assert ends == []
+		assert not device.streaming
+
+	def test_callback_failure_stops_the_stream (self, hackrf_device):
+		"""Regression: the wrapper swallowed callback errors and kept streaming."""
+		wrapper, device = hackrf_device
+		received = []
+
+		def failing (samples, _context):
+			received.append(samples)
+			if samples is not None:
+				raise ValueError("scanner fault")
+
+		wrapper.read_samples_async(failing, 0)
+
+		assert device.rx_callback(device, numpy.zeros(8, dtype=numpy.int8), 8, 8) != 0
+		assert received[-1] is None
 
 
 class TestHackRfBindingMissing:
