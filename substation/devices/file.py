@@ -121,6 +121,7 @@ class FileDevice (substation.devices.base.BaseDevice):
 	"""
 
 	def __init__ (self, file_path: str, center_freq: float) -> None:
+		"""Open the IQ WAV file at file_path, recorded at center_freq Hz, and read its header."""
 
 		self._file_path = file_path
 		self._center_freq = center_freq
@@ -162,10 +163,12 @@ class FileDevice (substation.devices.base.BaseDevice):
 
 	@property
 	def sample_rate (self) -> float | None:
+		"""The file's sample rate in Hz, from its WAV header."""
 		return self._sample_rate
 
 	@sample_rate.setter
 	def sample_rate (self, value: float) -> None:
+		"""Keep the file's own rate: a different one is ignored, with a warning."""
 		if abs(value - self._sample_rate) > 1.0:
 			logger.warning(
 				f"IQ file sample rate is {self._sample_rate:.0f} Hz, "
@@ -174,18 +177,22 @@ class FileDevice (substation.devices.base.BaseDevice):
 
 	@property
 	def center_freq (self) -> float | None:
+		"""The centre frequency the recording was made at, in Hz, as given."""
 		return self._center_freq
 
 	@center_freq.setter
 	def center_freq (self, value: float) -> None:
+		"""Ignored: a recording's centre frequency is fixed."""
 		pass
 
 	@property
 	def gain (self) -> float | str | None:
+		"""The gain last set; it has no effect on a file."""
 		return self._gain
 
 	@gain.setter
 	def gain (self, value: float | str | None) -> None:
+		"""Remember the gain; a file has none to set."""
 		self._gain = value
 
 	def _calibrate_iq_scale (self) -> float:

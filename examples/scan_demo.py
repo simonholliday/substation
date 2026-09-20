@@ -28,7 +28,7 @@ logging.basicConfig(
 )
 
 def my_channel_event_handler (band: str, channel_index: int, is_active: bool, snr_db: float) -> None:
-	
+
 	"""
 	This callback is triggered whenever a channel turns ON (signal detected)
 	or OFF (signal lost).
@@ -44,7 +44,7 @@ def my_channel_event_handler (band: str, channel_index: int, is_active: bool, sn
 	print(f"\n>>> Event: Band [{band}] Channel {channel_index} is now {state_desc} ({snr_db:.1f} dB SNR)")
 
 def my_recording_event_handler (band: str, channel_index: int, file_path: str) -> None:
-	
+
 	"""
 	This callback is triggered when a recording is finished and the file
 	is finalized on disk (including metadata).
@@ -60,11 +60,11 @@ def my_recording_event_handler (band: str, channel_index: int, file_path: str) -
 	# Here you could trigger an upload, run speech-to-text, or send a notification.
 
 async def run_custom_scanner () -> None:
-	
+
 	"""
 	Initialize and run the scanner module.
 	"""
-	
+
 	try:
 		# 1. Load configuration
 		# The bundled config.yaml.default is always loaded; a config.yaml in

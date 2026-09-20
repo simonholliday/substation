@@ -329,7 +329,7 @@ class _BextMetadata (typing.TypedDict):
 
 
 class ChannelRecorder:
-	
+
 	"""
 	Manages buffered audio recording for a single channel.
 
@@ -1081,7 +1081,7 @@ class ChannelRecorder:
 				new_riff_size = f.tell() - 8
 				f.seek(4)
 				f.write(struct.pack('<I', new_riff_size))
-			
+
 			logger.debug(f"Appended BEXT chunk to {self.filepath} (New RIFF size: {new_riff_size})")
 		except Exception as e:
 			logger.error(f"Failed to append BEXT chunk to {self.filepath}: {e}")

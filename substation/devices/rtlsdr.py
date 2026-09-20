@@ -64,7 +64,7 @@ rtlsdr = _import_pyrtlsdr()
 
 
 class RtlSdrDevice (substation.devices.base.BaseDevice):
-	
+
 	"""
 	Wrapper for RTL-SDR devices
 

@@ -155,7 +155,7 @@ def _decimate_common (
 
 	sr = int(round(sample_rate))
 	ar = int(target_rate)
-	
+
 	if sr <= 0 or ar <= 0:
 		return signal, state
 

@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 class HackRfDevice (substation.devices.base.BaseDevice):
-	
+
 	"""
 	Wrapper for HackRF devices with automatic binding detection.
 
@@ -209,19 +209,23 @@ class HackRfDevice (substation.devices.base.BaseDevice):
 
 	@property
 	def sample_rate (self) -> float | None:
+		"""The sample rate last set, in Hz; HackRF cannot report its own."""
 		return self._sample_rate
 
 	@sample_rate.setter
 	def sample_rate (self, value: float) -> None:
+		"""Set the sample rate in Hz."""
 		self._sample_rate = value
 		self._call_safe ('set_sample_rate', value)
 
 	@property
 	def center_freq (self) -> float | None:
+		"""The centre frequency last set, in Hz; HackRF cannot report its own."""
 		return self._center_freq
 
 	@center_freq.setter
 	def center_freq (self, value: float) -> None:
+		"""Tune to a centre frequency in Hz."""
 		self._center_freq = value
 		self._call_safe('set_freq', int(value))
 
@@ -363,6 +367,7 @@ class HackRfDevice (substation.devices.base.BaseDevice):
 		self._call_safe('stop_rx')
 
 	def close (self) -> None:
+		"""Stop streaming, close the device, and release the HackRF library."""
 		try:
 			self.cancel_read_async()
 		except Exception as exc:

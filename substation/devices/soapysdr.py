@@ -196,11 +196,12 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 		"""
 		Set the sample rate in Hz.
 
-		After setting, reads back the actual rate the device applied.
-		Some devices only support discrete rates and will round to the
-		nearest supported value. If the actual rate differs from the
-		requested rate, a warning is logged — this matters because the
-		scanner uses the sample rate for all frequency calculations.
+		Some devices support only discrete rates, and may round a request
+		to the nearest one without saying so.  So the requested rate is
+		checked against the rates the device lists: if it is not one, the
+		nearest listed rate is set instead, with a warning, and that is the
+		rate the getter reports.  This matters because the scanner uses
+		the sample rate for all frequency calculations.
 		"""
 
 		# Check if the requested rate matches a supported rate.
@@ -641,11 +642,13 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 	def read_samples (self, num_samples: int) -> numpy.typing.NDArray[numpy.complex64]:
 
 		"""
-		Synchronous sample read for calibration.
+		Synchronous sample read.
 
 		Sets up a temporary stream, reads the requested number of samples,
-		then tears down the stream. Used by the scanner's frequency
-		calibration routine.
+		then tears down the stream.  The scanner's frequency calibration
+		reads this way, but only from a device with a freq_correction
+		setting, which the SoapySDR wrapper does not have, so the scanner
+		does not call this.
 
 		The read is bounded by a wall-clock deadline so a stalled or
 		disconnected device cannot hang startup indefinitely.

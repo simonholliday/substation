@@ -350,7 +350,8 @@ def main () -> int:
 		return 2
 
 	if args.band not in cfg.bands:
-		print(f"error: band {args.band!r} not found in {args.config}", file=sys.stderr)
+		source = args.config if args.config is not None else "the configuration"
+		print(f"error: band {args.band!r} not found in {source}", file=sys.stderr)
 		print("available bands: " + ", ".join(sorted(cfg.bands)), file=sys.stderr)
 		return 2
 

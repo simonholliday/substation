@@ -37,6 +37,7 @@ class VirtualClock:
 	"""
 
 	def __init__ (self, start_datetime: datetime.datetime, sample_rate: float) -> None:
+		"""Start the clock at start_time, counting IQ samples at sample_rate."""
 		self.start_datetime = start_datetime
 		self.start_epoch = start_datetime.timestamp()
 		self.sample_rate = sample_rate
@@ -595,6 +596,7 @@ class RadioScanner:
 		"""
 
 		def _adapter (**kwargs: typing.Any) -> None:
+			"""Pass the event on as the callback's positional arguments."""
 			callback(kwargs['band'], kwargs['index'], kwargs['is_active'], kwargs['snr_db'])
 
 		self.on('channel_state', _adapter)
@@ -608,6 +610,7 @@ class RadioScanner:
 		"""
 
 		def _adapter (**kwargs: typing.Any) -> None:
+			"""Pass the event on as the callback's positional arguments."""
 			callback(kwargs['band'], kwargs['index'], kwargs['file_path'])
 
 		self.on('recording_saved', _adapter)
@@ -2024,12 +2027,9 @@ class RadioScanner:
 			# Phase 4: bulk energy check avoids per-channel work when quiet.
 			# We use a threshold that's strictly lower than the lowest possible detection threshold.
 			bulk_threshold_db = max(2.0, self.snr_threshold_off_db - 2.0)
-			
-			if self.dc_mask is not None:
-				max_power = numpy.max(psd_db[self.dc_mask])
-			else:
-				max_power = numpy.max(psd_db)
-				
+
+			max_power = numpy.max(psd_db[self.dc_mask])
+
 			if max_power < noise_floor_db + bulk_threshold_db and not any(self.channel_states.values()):
 				# Fast path: spectrum is quiet and no channels are currently active
 				self.sample_counter += len(samples)
@@ -2078,7 +2078,7 @@ class RadioScanner:
 				above_threshold = snr_db > threshold
 
 				# Snapshot for potential rollback if the variance check rejects this turn-ON
-				prior_last_active_time = self.channel_last_active_time.get(channel_freq)
+				prior_last_active_time = self.channel_last_active_time[channel_freq]
 
 				is_active = self._is_channel_active(channel_freq, above_threshold, current_state, now)
 
@@ -2133,10 +2133,7 @@ class RadioScanner:
 								f"below threshold {var_threshold:.1f} dB (likely noise)"
 							)
 							is_active = False
-							if prior_last_active_time is None:
-								self.channel_last_active_time.pop(channel_freq, None)
-							else:
-								self.channel_last_active_time[channel_freq] = prior_last_active_time
+							self.channel_last_active_time[channel_freq] = prior_last_active_time
 							continue
 
 				# Gate 2: audio spectral flatness (speculative demodulation)
@@ -2164,10 +2161,7 @@ class RadioScanner:
 								f"(spectral flatness {flatness:.2f})"
 							)
 							is_active = False
-							if prior_last_active_time is None:
-								self.channel_last_active_time.pop(channel_freq, None)
-							else:
-								self.channel_last_active_time[channel_freq] = prior_last_active_time
+							self.channel_last_active_time[channel_freq] = prior_last_active_time
 							continue
 
 				trim_start, trim_end, offset, turning_on, turning_off = self._prepare_channel_transition(
@@ -2353,6 +2347,7 @@ class RadioScanner:
 			# Start async SDR streaming in background thread (non-blocking)
 			# This must run in an executor because read_samples_async blocks
 			async def start_streaming () -> None:
+				"""Run the device's read in an executor, and end the processing loop when its stream ends."""
 				try:
 					await loop.run_in_executor(
 						None,
@@ -2388,6 +2383,7 @@ class RadioScanner:
 			streaming_task = asyncio.create_task(start_streaming())
 
 			def _on_streaming_done (task: asyncio.Task) -> None:
+				"""Done-callback: if the streaming task failed unexpectedly, report it and end the processing loop."""
 				# Belt-and-braces: start_streaming handles its own errors, so
 				# an exception here means something unexpected escaped.  Make
 				# sure the processing loop still gets woken up.
