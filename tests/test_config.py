@@ -310,6 +310,23 @@ class TestBandDefaults:
 		assert config.bands["test_nfm"].modulation == "NFM"
 		assert config.bands["test_nfm"].sample_rate == 1.024e6
 
+	def test_template_name_in_another_case_adjusts_the_shipped_template (self, tmp_path, monkeypatch):
+		"""Regression: a user's `air` template sat beside the shipped `AIR` and replaced it whole.
+
+		The shipped AIR bands then lost the settings the user did not repeat:
+		air_civil_bristol stopped recording and dropped to automatic gain.
+		"""
+		monkeypatch.chdir(tmp_path)
+		shipped = substation.config.load_config().bands["air_civil_bristol"]
+
+		user_cfg = tmp_path / "config.yaml"
+		user_cfg.write_text(yaml.dump({"band_defaults": {"air": {"snr_threshold_db": 12}}}))
+		adjusted = substation.config.load_config(user_cfg).bands["air_civil_bristol"]
+
+		assert shipped.recording_enabled
+		assert adjusted.recording_enabled
+		assert adjusted.sdr_gain_db == shipped.sdr_gain_db
+
 	def test_unknown_type_warns (self, minimal_config_dict, caplog):
 		minimal_config_dict["band_defaults"] = {"KNOWN_TYPE": {"sdr_gain_db": 10}}
 		minimal_config_dict["bands"]["test_nfm"]["type"] = "UNKNOWN_TYPE"

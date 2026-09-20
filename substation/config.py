@@ -885,6 +885,37 @@ def _drop_removed_sections (data: dict, source: str) -> dict:
 	return {key: value for key, value in data.items() if key not in REMOVED_SECTIONS}
 
 
+def _normalize_template_names (data: dict) -> dict:
+
+	"""
+	Return data with its band_defaults template names in upper case.
+
+	Template names match a band's type in any letter case, so `air` and
+	`AIR` are one template.  Normalising before the shipped file and the
+	user's file are merged lets a user's `air` adjust the shipped `AIR`
+	rather than sit beside it and replace it whole.  Names that collide
+	within one file are merged in the order they appear.  The input is not
+	changed.
+	"""
+
+	templates = data.get('band_defaults')
+	if not isinstance(templates, dict):
+		return data
+
+	normalized: dict[typing.Any, typing.Any] = {}
+
+	for name, settings in templates.items():
+		key = name.strip().upper() if isinstance(name, str) else name
+		existing = normalized.get(key)
+
+		if isinstance(existing, dict) and isinstance(settings, dict):
+			normalized[key] = _deep_merge(existing, settings)
+		else:
+			normalized[key] = settings
+
+	return {**data, 'band_defaults': normalized}
+
+
 def _apply_band_defaults (data: dict) -> dict:
 
 	"""
@@ -980,7 +1011,7 @@ def load_config (path: str | pathlib.Path | None = None) -> AppConfig:
 	"""
 
 	default_path = _locate_default_config()
-	base = _load_raw_config(default_path)
+	base = _normalize_template_names(_load_raw_config(default_path))
 
 	user_path = _resolve_user_config_path(path)
 
@@ -988,7 +1019,7 @@ def load_config (path: str | pathlib.Path | None = None) -> AppConfig:
 		user_path = None
 
 	if user_path is not None:
-		user = _drop_removed_sections(_load_raw_config(user_path), str(user_path))
+		user = _normalize_template_names(_drop_removed_sections(_load_raw_config(user_path), str(user_path)))
 		raw = _deep_merge(base, user)
 		logger.debug("Loaded config from %s + %s", default_path.name, user_path.name)
 	else:
