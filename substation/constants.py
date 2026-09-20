@@ -148,6 +148,13 @@ EMPTY_CHECK_BLOCKS = 30
 # surrounded by other voice content.
 CARRIER_TRANSIENT_RATIO = 8.0
 
+# Audio the end-of-recording treatment works on, in seconds.  The key-OFF
+# transient trim searches this much of the tail, because the audio silence
+# timeout (3 s by default) keeps a recording running after the transmitter
+# unkeys.  Periodic flushes hold this much back, so the final flush always
+# has it to trim and fade.
+END_OF_RECORDING_SECONDS = 4.0
+
 # ==============================================================================
 # Noise Floor Estimation Constants
 # ==============================================================================

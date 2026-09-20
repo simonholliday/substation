@@ -17,9 +17,13 @@ import substation.recording
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_recorder (tmp_path, max_seconds=5.0, sample_rate=16000, noise_reduction=False):
-	"""Create a ChannelRecorder writing to tmp_path."""
-	return substation.recording.ChannelRecorder(
+def _make_recorder (tmp_path, max_seconds=5.0, sample_rate=16000, noise_reduction=False, tail_hold=False, fade_out_ms=None):
+	"""Create a ChannelRecorder writing to tmp_path.
+
+	Without tail_hold, flushes write everything, so tests of the ring's
+	mechanics see every sample; the tail hold has tests of its own.
+	"""
+	recorder = substation.recording.ChannelRecorder(
 		channel_freq=446.00625e6,
 		channel_index=0,
 		band_name="test",
@@ -31,7 +35,13 @@ def _make_recorder (tmp_path, max_seconds=5.0, sample_rate=16000, noise_reductio
 		filename_suffix="test",
 		soft_limit_drive=2.0,
 		noise_reduction_enabled=noise_reduction,
+		fade_out_ms=fade_out_ms,
 	)
+
+	if not tail_hold:
+		recorder.tail_hold_samples = 0
+
+	return recorder
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +228,47 @@ class TestWavOutput:
 		data, _ = soundfile.read(rec.filepath)
 		# Soft limiter should keep output within [-1, 1]
 		assert numpy.max(numpy.abs(data)) <= 1.0
+
+
+class TestTailHold:
+
+	def test_periodic_flush_keeps_the_tail_for_the_final_flush (self, tmp_path):
+		"""A flush before close() leaves the newest END_OF_RECORDING_SECONDS in the ring."""
+		rec = _make_recorder(tmp_path, max_seconds=30.0, tail_hold=True)
+		rec.append_audio(numpy.full(16000 * 10, 0.3, dtype=numpy.float32))
+
+		asyncio.run(rec._flush_buffer_to_disk())
+
+		assert rec._ring_frames_written - rec._ring_frames_flushed == 16000 * 4
+
+	def test_recording_ends_with_its_fade_out_after_a_late_flush (self, tmp_path):
+		"""Regression: a periodic flush just after the last audio left the final flush empty, so there was no fade.
+
+		The fade-out and the key-OFF trim run on the final flush only, and it
+		held only what arrived since the last periodic flush.
+		"""
+		rec = _make_recorder(tmp_path, max_seconds=30.0, tail_hold=True, fade_out_ms=50.0)
+		rec.append_audio(numpy.full(16000 * 10, 0.3, dtype=numpy.float32))
+
+		async def scenario ():
+			await rec._flush_buffer_to_disk()
+			await rec.close()
+
+		asyncio.run(scenario())
+
+		data, _ = soundfile.read(rec.filepath)
+		assert len(data) == 16000 * 10
+		assert abs(data[-1]) < 0.01
+		assert abs(data[-16000]) > 0.2
+
+	def test_small_buffer_still_drains (self, tmp_path):
+		"""The hold is at most a quarter of the buffer, so a flush of a small, full buffer still writes most of it."""
+		rec = _make_recorder(tmp_path, max_seconds=2.0, tail_hold=True)
+		rec.append_audio(numpy.full(32000, 0.3, dtype=numpy.float32))
+
+		asyncio.run(rec._flush_buffer_to_disk())
+
+		assert rec._ring_frames_written - rec._ring_frames_flushed == 32000 // 4
 
 
 class TestCloseFlushRace:

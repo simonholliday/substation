@@ -209,8 +209,9 @@ def _trim_carrier_transient_end (audio: numpy.typing.NDArray[numpy.float32], sam
 	duration, exponential decay) but is followed by silence rather than
 	preceded by it.
 
-	Scans the last 500ms backwards from the end, finding the *last*
-	spike that exceeds the detection threshold and passes all checks.
+	Scans the last END_OF_RECORDING_SECONDS backwards from the end,
+	finding the *last* spike that exceeds the detection threshold and
+	passes all checks.
 	This mirrors the start-trim's "earliest first" strategy — voice
 	content earlier in the window won't mask a later transient.
 
@@ -220,11 +221,11 @@ def _trim_carrier_transient_end (audio: numpy.typing.NDArray[numpy.float32], sam
 	  3. Pre-silence: 20ms before spike is quiet (< 25% of spike peak)
 	"""
 
-	# --- Scan window: last 4 seconds ---
+	# --- Scan window: the last END_OF_RECORDING_SECONDS ---
 	# Wide because the audio silence timeout (default 3s) keeps the
 	# recording running long after the key-OFF transient.  The transient
 	# can easily be 500ms+ from the end of the file.
-	scan_len = min(len(audio), int(sample_rate * 4.0))
+	scan_len = min(len(audio), int(sample_rate * substation.constants.END_OF_RECORDING_SECONDS))
 	if scan_len < 10:
 		return audio
 
@@ -560,6 +561,13 @@ class ChannelRecorder:
 		# Flag to indicate if recorder is closing
 		self._closing = threading.Event()
 
+		# Audio each flush before close() leaves in the ring, so the final
+		# flush always holds the real tail for the key-OFF trim and the
+		# fade-out: a flush just after the last audio arrived used to leave
+		# it nothing, and the file ended with no fade.  At most a quarter of
+		# the buffer, so a small buffer still drains.
+		self.tail_hold_samples = min(int(audio_sample_rate * substation.constants.END_OF_RECORDING_SECONDS), self.max_buffer_samples // 4)
+
 		# An early flush, asked for by append_audio() once half the buffer is
 		# unflushed.  IQ file playback runs many times faster than real time,
 		# so between timed flushes it can append more audio than the buffer
@@ -742,6 +750,12 @@ class ChannelRecorder:
 			self._flush_request_sent = False
 
 			n_unflushed = self._ring_frames_written - self._ring_frames_flushed
+
+			# Until the recorder closes, the newest audio stays in the ring
+			# (see tail_hold_samples in __init__).
+			if not self._closing.is_set():
+				n_unflushed -= self.tail_hold_samples
+
 			if n_unflushed <= 0:
 				return
 
@@ -759,7 +773,7 @@ class ChannelRecorder:
 				samples_to_write[:tail_len] = self._ring[start:]
 				samples_to_write[tail_len:] = self._ring[:n_unflushed - tail_len]
 
-			self._ring_frames_flushed = self._ring_frames_written
+			self._ring_frames_flushed += n_unflushed
 
 		write_future = asyncio.get_running_loop().run_in_executor(None, self._write_samples_to_wav, samples_to_write)
 		self._pending_write = write_future
