@@ -39,7 +39,6 @@ dependencies = [
     # which substation/devices/rtlsdr.py provides a stand-in for when setuptools
     # is absent (the default in Python 3.12+ venvs).
     "pyrtlsdr>=0.3.0,<0.4.0",
-    "noisereduce>=3.0.3",
     "PyYAML>=6.0",
     "scipy>=1.10.0",
     "soundfile>=0.12.1",
@@ -70,6 +69,15 @@ dev = [
 # "OSC event forwarding" for the wire format and address table.
 osc = [
     "python-osc>=1.8",
+]
+
+# The noisereduce library, used only by
+# substation.dsp.noise_reduction.apply_noisereduce, which the scanner does not
+# call — install with `pip install "substation[noisereduce]"`.  It pulls in
+# matplotlib and more, so it stays off every other install, Raspberry Pi
+# included.
+noisereduce = [
+    "noisereduce>=3.0.3",
 ]
 
 # HackRF One support — install with `pip install "substation[hackrf]"`.

@@ -148,7 +148,7 @@ def apply_noisereduce (
 	try:
 		import noisereduce
 	except ImportError as exc:
-		raise RuntimeError("noisereduce is required for noise reduction") from exc
+		raise RuntimeError('apply_noisereduce needs the noisereduce library: pip install "substation[noisereduce]"') from exc
 
 	# Extract noise profile from quietest portions of the audio
 	noise_clip = _noise_clip_from_percentile(audio, sample_rate, frame_ms, percentile)

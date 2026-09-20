@@ -833,7 +833,7 @@ taskset -c 3 substation --band pmr --device-index 1
 ## Resource and Performance Notes
 - **Sample rate dominates CPU**. Large bands at high sample rates increase FFT/PSD load.
 - **Overrun warnings** indicate the processing of a slice exceeded its real-time window. This can lead to dropped IQ blocks (`Sample queue full`).
-- **Noise reduction** runs during write/flush if enabled (default). It uses `apply_spectral_subtraction` which is efficient and receives the band-wide noise floor for improved frame classification. The alternative `apply_noisereduce` implementation exists in `substation/dsp/noise_reduction.py` for reference but is not used by default as it is significantly more CPU-intensive.
+- **Noise reduction** runs during write/flush if enabled (default). It uses `apply_spectral_subtraction` which is efficient and receives the band-wide noise floor for improved frame classification. The alternative `apply_noisereduce` implementation exists in `substation/dsp/noise_reduction.py` for reference but is not used by default as it is significantly more CPU-intensive. It needs the `noisereduce` library, installed with `pip install "substation[noisereduce]"`.
 - **Queue size** provides burst tolerance but uses memory: each queued slice holds every IQ sample in it.
 - **RTL-SDR USB buffers**: librtlsdr keeps 15 USB transfers of one slice each in flight, and Linux allows 16 MB of USB transfers by default. A slice of more than about 559,000 IQ samples, about 233 ms at 2.4 MHz once rounded up to whole blocks, therefore fails to stream with `Failed to submit transfer` until that limit is raised (see [INSTALL.md](INSTALL.md#2-system-optimisation-usb-buffering)).
 
@@ -841,7 +841,7 @@ If you see repeated `Sample queue full` warnings, reduce the band's `sample_rate
 
 ## Limitations
 - Processing is slice-based; extremely wide bands or multiple high-rate scans can exceed real-time capacity on low-power CPUs.
-- If you enable `apply_noisereduce` (requires code change), it is CPU-intensive for long chunks; on constrained devices, stick with the default `apply_spectral_subtraction` or reduce `disk_flush_interval_seconds`.
+- If you enable `apply_noisereduce` (requires a code change and the `noisereduce` extra), it is CPU-intensive for long chunks; on constrained devices, stick with the default `apply_spectral_subtraction` or reduce `disk_flush_interval_seconds`.
 
 ## Author
 Written by Simon Holliday ([https://simonholliday.com/](https://simonholliday.com/))
