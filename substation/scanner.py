@@ -1042,6 +1042,11 @@ class RadioScanner:
 		filtered_ppm = [x for x in ppm_measurements if q1 - 1.5 * iqr <= x <= q3 + 1.5 * iqr]
 
 		spread_ppm = float(numpy.std(filtered_ppm))
+
+		# Negated on purpose: a station measuring above its true frequency means
+		# the receiver's crystal runs slow, and a positive PPM tells librtlsdr
+		# the crystal is fast, so the correction that cancels the error is minus
+		# the median.  The calibration tests model the same physics.
 		correction_ppm = -int(round(float(numpy.median(filtered_ppm))))
 
 		if spread_ppm > substation.constants.CALIBRATION_MAX_SPREAD_PPM:
@@ -1273,6 +1278,10 @@ class RadioScanner:
 		processed, and the processing loop is emptying the queue, so the
 		sentinel waits for room behind them.  A live stream that has ended
 		has failed, so there one pending slice is discarded to make room.
+
+		An unplugged RTL-SDR reaches here rather than hanging: librtlsdr
+		returns a negative status from rtlsdr_read_async once the device is
+		lost, so pyrtlsdr raises and start_streaming queues the sentinel.
 		"""
 
 		if self.sample_queue is None:
@@ -1625,6 +1634,12 @@ class RadioScanner:
 		Voice and data signals fluctuate substantially within a slice
 		due to syllables, frame structure, or burst patterns; stationary
 		noise produces near-constant power across segments.
+
+		FM voice does not slip through this gate despite its constant
+		envelope, because a channel's power here is the mean of the dB values
+		across its bins.  That measures how much of the radio channel is
+		occupied rather than how strong it is, and speech moves it from
+		segment to segment.
 
 		Args:
 			channel_freq: Center frequency of the channel to measure

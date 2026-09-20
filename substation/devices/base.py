@@ -61,6 +61,9 @@ def rechunk_samples (
 
 	num_chunks = combined.size // chunk_size
 
+	# The callback is handed views into combined, not copies.  That is safe
+	# because every producer passes in a freshly allocated array rather than a
+	# driver buffer it will reuse.
 	for i in range(num_chunks):
 		start, end = i * chunk_size, (i + 1) * chunk_size
 		callback(combined[start:end], None)
