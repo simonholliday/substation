@@ -18,6 +18,8 @@ import sys
 import types
 import typing
 
+import numpy
+
 import substation.devices.base
 
 logger = logging.getLogger(__name__)
@@ -229,22 +231,30 @@ class RtlSdrDevice (substation.devices.base.BaseDevice):
 			num_samples: Number of samples to read
 
 		Returns:
-			Complex IQ samples as numpy array
+			Complex IQ samples as a complex64 numpy array
 		"""
 
-		return self._driver().read_samples(num_samples)
+		return numpy.asarray(self._driver().read_samples(num_samples)).astype(numpy.complex64)
 
 	def read_samples_async (self, callback: typing.Callable, num_samples: int) -> None:
 
 		"""
 		Start asynchronous sample reading
 
+		pyrtlsdr delivers complex128.  Each block is passed on as complex64,
+		as every other device delivers it, which halves the memory a queued
+		slice takes; 8-bit samples lose nothing in the conversion.
+
 		Args:
 			callback: Function to call with samples (signature: callback(samples, context))
 			num_samples: Number of samples to read per callback
 		"""
 
-		self._driver().read_samples_async(callback, num_samples)
+		def deliver (samples: typing.Any, context: typing.Any) -> None:
+			"""Pass one block on as complex64."""
+			callback(numpy.asarray(samples).astype(numpy.complex64), context)
+
+		self._driver().read_samples_async(deliver, num_samples)
 
 	def cancel_read_async (self) -> None:
 

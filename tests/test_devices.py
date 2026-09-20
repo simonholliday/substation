@@ -122,6 +122,13 @@ class FakePyRtlSdr:
 
 		return numpy.zeros(num_samples, dtype=numpy.complex128)
 
+	def read_samples_async (self, callback, num_samples: int) -> None:
+
+		"""Deliver one block of complex128, as pyrtlsdr's converter does, then return as if cancelled."""
+
+		self._call("read_samples_async")
+		callback(numpy.full(num_samples, 0.5 - 0.25j, dtype=numpy.complex128), self)
+
 	def cancel_read_async (self) -> None:
 
 		"""Record the cancel."""
@@ -245,6 +252,27 @@ class TestRtlSdrCenterFreq:
 		device = rtlsdr_device_class(0)
 
 		assert device.center_freq == 100e6
+
+
+class TestRtlSdrSampleFormat:
+
+	def test_streamed_blocks_are_complex64 (self, rtlsdr_device_class):
+		"""pyrtlsdr delivers complex128; the scanner gets complex64 like every other device, at half the memory."""
+		device = rtlsdr_device_class(0)
+		blocks = []
+
+		device.read_samples_async(lambda samples, _context: blocks.append(samples), 4096)
+
+		assert len(blocks) == 1
+		assert blocks[0].dtype == numpy.complex64
+		assert blocks[0].shape == (4096,)
+		assert blocks[0][0] == numpy.complex64(0.5 - 0.25j)
+
+	def test_synchronous_reads_are_complex64 (self, rtlsdr_device_class):
+		"""Calibration's reads come back in the same format."""
+		device = rtlsdr_device_class(0)
+
+		assert device.read_samples(1024).dtype == numpy.complex64
 
 
 class TestRtlSdrClosedDevice:

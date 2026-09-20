@@ -463,9 +463,9 @@ scanner:
   calibration_frequency_hz: 93.7e+6
   stuck_channel_threshold_seconds: 60
 ```
-- `sdr_device_sample_size`: number of IQ samples per SDR callback. Higher values reduce callback overhead but increase latency.
-- `band_time_slice_ms`: time slice used for PSD/SNR detection, in milliseconds. Each slice is rounded up to a whole number of `sdr_device_sample_size` blocks.
-- `sample_queue_maxsize`: async queue depth, in blocks of `sdr_device_sample_size` IQ samples. 100-200 is typical; higher tolerates bursts but uses more RAM, so use 50-100 on memory-constrained systems.
+- `sdr_device_sample_size`: size, in IQ samples, of the blocks each slice is built from. Every slice is rounded up to a whole number of blocks. On an RTL-SDR it must be a multiple of 256.
+- `band_time_slice_ms`: how often the scanner analyses the spectrum, in milliseconds. The scanner reads, queues, and processes IQ samples one slice at a time.
+- `sample_queue_maxsize`: how many slices can wait while processing catches up. Each queued slice holds every IQ sample in it, so the memory a full queue needs grows with the band's sample rate and the slice length, and at 12.5 MHz it runs to gigabytes. Lower it on computers with little memory.
 - `calibration_frequency_hz`: optional known signal for PPM correction; set to `null` to disable. Requires a device with a PPM correction control, which means RTL-SDR only; other devices skip calibration automatically. If no strong, steady signal is found at that frequency, calibration is skipped with a warning and the receiver's correction is left as it was, so choose a station you can receive well.
 - `stuck_channel_threshold_seconds`: optional duration in seconds after which a radio channel that stays active triggers a `STUCK CHANNEL WARNING` in the log. Useful for identifying interference or stuck transmitters. Set to `null` to disable.
 
@@ -828,7 +828,8 @@ taskset -c 3 substation --band pmr --device-index 1
 - **Sample rate dominates CPU**. Large bands at high sample rates increase FFT/PSD load.
 - **Overrun warnings** indicate the processing of a slice exceeded its real-time window. This can lead to dropped IQ blocks (`Sample queue full`).
 - **Noise reduction** runs during write/flush if enabled (default). It uses `apply_spectral_subtraction` which is efficient and receives the band-wide noise floor for improved frame classification. The alternative `apply_noisereduce` implementation exists in `substation/dsp/noise_reduction.py` for reference but is not used by default as it is significantly more CPU-intensive.
-- **Queue size** provides burst tolerance but uses RAM (each slice can be several MB).
+- **Queue size** provides burst tolerance but uses memory: each queued slice holds every IQ sample in it.
+- **RTL-SDR USB buffers**: librtlsdr keeps 15 USB transfers of one slice each in flight, and Linux allows 16 MB of USB transfers by default. A slice of more than about 559,000 IQ samples, about 233 ms at 2.4 MHz once rounded up to whole blocks, therefore fails to stream with `Failed to submit transfer` until that limit is raised (see [INSTALL.md](INSTALL.md#2-system-optimisation-usb-buffering)).
 
 If you see repeated `Sample queue full` warnings, reduce the band's `sample_rate`, exclude radio channels, or increase `sample_queue_maxsize`.
 

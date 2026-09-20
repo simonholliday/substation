@@ -134,27 +134,29 @@ class ScannerConfig(pydantic.BaseModel):
 
 	sdr_device_sample_size: int = pydantic.Field(default=131072, gt=0)
 	"""
-	Number of IQ samples the scanner reads from the SDR in each block. Larger
-	blocks make USB transfers more efficient; smaller blocks lower the latency.
-	Must be a power of two for RTL-SDR, for example 16384, 32768 or 65536.
+	Size, in IQ samples, of the blocks each slice is built from. The scanner
+	rounds every slice up to a whole number of these blocks, so this also sets
+	the shortest possible slice. On an RTL-SDR it must be a multiple of 256, for
+	example 65536.
 	"""
 
 	band_time_slice_ms: int = pydantic.Field(default=200, gt=0)
 	"""
 	How often the scanner analyses the spectrum, in milliseconds. The scanner
-	rounds each slice up to a whole number of `sdr_device_sample_size` blocks.
-	Shorter slices detect brief transmissions sooner; longer slices use less CPU.
+	reads, queues, and processes IQ samples one slice at a time, and rounds each
+	slice up to a whole number of `sdr_device_sample_size` blocks, so at low
+	sample rates a slice can be longer than this. Shorter slices detect brief
+	transmissions sooner; longer slices use less CPU and more memory.
 	"""
 
 	sample_queue_maxsize: int = pydantic.Field(default=200, gt=0)
 	"""
-	Number of blocks of IQ samples the scanner holds while processing catches up.
-	When the queue is full, the scanner drops newly arriving blocks with a
-	warning and keeps the blocks already queued. A larger queue tolerates longer
-	processing spikes, such as several radio channels activating at once, and
-	uses more memory, because each block holds `sdr_device_sample_size` IQ
-	samples. Recommended: 100-200 for normal use, 50-100 on memory-constrained
-	systems.
+	Number of slices of IQ samples the scanner holds while processing catches
+	up. When the queue is full, the scanner drops newly arriving slices with a
+	warning and keeps the slices already queued. A larger queue tolerates longer
+	processing spikes, such as several radio channels activating at once. Each
+	queued slice holds every IQ sample in it, so at high sample rates a full
+	queue can need more memory than a small computer has: lower it there.
 	"""
 
 	calibration_frequency_hz: float | None = pydantic.Field(default=93.7e6, gt=0)
