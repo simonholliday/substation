@@ -7,6 +7,7 @@ import pytest
 
 import substation.config
 import substation.devices
+import substation.dsp.demodulation
 import substation.scanner
 
 import iq_generators
@@ -191,3 +192,55 @@ class TestDeviceOverrideApplied:
 		)
 		# snr_threshold_db should be unchanged from base config
 		assert sc.snr_threshold_db == 12.0
+
+
+class TestSsbExtraction:
+
+	@staticmethod
+	def _ssb_scanner (modulation):
+		"""A scanner for a 7.1-7.2 MHz band at 5 kHz spacing, the HF template's."""
+		config = substation.config.validate_config({
+			"scanner": {"sdr_device_sample_size": 16384, "band_time_slice_ms": 100},
+			"recording": {"audio_sample_rate": 16000, "audio_output_dir": "/tmp/unused"},
+			"bands": {"hf": {"freq_start": 7.1e6, "freq_end": 7.2e6, "channel_spacing": 5000.0, "sample_rate": 256e3,
+				"snr_threshold_db": 10.0, "modulation": modulation, "recording_enabled": True, "sdr_gain_db": 30}},
+		})
+		sc = substation.scanner.RadioScanner(config=config, band_name="hf", device_type="rtlsdr")
+		sc._precompute_fft_params()
+		return sc
+
+	@pytest.mark.parametrize("modulation", ["USB", "LSB"])
+	def test_top_of_the_voice_band_is_kept (self, modulation):
+		"""Regression: SSB audio above about 2.1 kHz was cut, by 8 dB at 2.5 kHz, on every shipped HF band.
+
+		The channel filter was centred on the dial frequency, so on a 5 kHz
+		spacing it passed only 2.1 kHz of the sideband.  A 1 kHz and a
+		2.5 kHz tone go through extraction and demodulation together, so the
+		AGC treats them alike.
+		"""
+		sc = self._ssb_scanner(modulation)
+		channel = sc.channels[5]
+		sign = 1 if modulation == "USB" else -1
+		n = sc.samples_per_slice
+		state = None
+		blocks = []
+
+		for block in range(4):
+			t = (numpy.arange(n) + block * n) / sc.sample_rate
+			offset = channel - sc.center_freq
+			iq = 0.05 * numpy.exp(2j * numpy.pi * (offset + sign * 1000) * t) + 0.05 * numpy.exp(2j * numpy.pi * (offset + sign * 2500) * t)
+			extracted = sc._extract_channel_iq(iq.astype(numpy.complex64), channel)
+			sc.sample_counter += n
+			audio, state = substation.dsp.demodulation.DEMODULATORS[modulation](extracted, sc.sample_rate, 16000, state=state)
+			blocks.append(audio)
+
+		audio = numpy.concatenate(blocks[2:])
+		spectrum = numpy.abs(numpy.fft.rfft(audio * numpy.hanning(len(audio))))
+		freqs = numpy.fft.rfftfreq(len(audio), 1 / 16000)
+		level = lambda hz: spectrum[numpy.argmin(numpy.abs(freqs - hz))]
+
+		assert 20 * numpy.log10(level(2500) / level(1000)) > -1.0
+
+	def test_other_modulations_are_extracted_around_the_dial (self):
+		"""Only SSB moves the channel filter; NFM keeps it centred on the radio channel."""
+		assert self._ssb_scanner("NFM").extraction_offset_hz == 0.0

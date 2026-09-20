@@ -318,6 +318,11 @@ class RadioScanner:
 		# Pre-computed angular frequencies for frequency shifting (computed in _precompute_fft_params).
 		self.channel_omega: dict[float, complex] = {}
 
+		# For SSB the channel filter is centred on the sideband rather than
+		# the dial, and extraction shifts back afterwards, so the demodulator
+		# still finds the dial at 0 Hz.  Zero for every other modulation.
+		self.extraction_offset_hz = {'USB': 1.0, 'LSB': -1.0}.get(self.modulation or '', 0.0) * substation.constants.SSB_CHANNEL_FILTER_OFFSET_HZ
+
 		# Cumulative sample counter for continuous phase in frequency shifting
 		# This ensures the oscillator used for frequency shifting doesn't reset between blocks
 		self.sample_counter: int = 0
@@ -759,7 +764,7 @@ class RadioScanner:
 		self.channel_omega = {}
 
 		for channel_freq in self.channels:
-			freq_offset = channel_freq - self.center_freq
+			freq_offset = channel_freq + self.extraction_offset_hz - self.center_freq
 			# Omega is the phase increment per sample in radians.
 			self.channel_omega[channel_freq] = -2j * numpy.pi * freq_offset / self.sample_rate
 
@@ -1727,7 +1732,7 @@ class RadioScanner:
 		omega = self.channel_omega.get(channel_freq)
 
 		if omega is None:
-			freq_offset = channel_freq - self.center_freq
+			freq_offset = channel_freq + self.extraction_offset_hz - self.center_freq
 			omega = -2j * numpy.pi * freq_offset / self.sample_rate
 
 		# Compute oscillator with continuous phase based on cumulative sample count.
@@ -1753,6 +1758,13 @@ class RadioScanner:
 			samples_shifted,
 			zi=self.channel_filter_zi[channel_freq]
 		)
+
+		# SSB: the filter was centred on the sideband; put the dial back at
+		# 0 Hz, with the same absolute sample count so the phase runs on
+		# across blocks.
+		if self.extraction_offset_hz:
+			shift_omega = 2j * numpy.pi * self.extraction_offset_hz / self.sample_rate
+			filtered = filtered * numpy.exp(shift_omega * (start_sample + phase_arr))
 
 		return filtered
 

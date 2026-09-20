@@ -77,14 +77,23 @@ SSB_AUDIO_CENTER_HZ = 1500.0
 # (which is now sitting on the negative-frequency side of DC).
 SSB_AUDIO_HALF_BW_HZ = 1500.0
 
+# Where the scanner centres its channel filter for SSB, in Hz from the dial
+# frequency: the middle of the 300-2700 Hz voice band, above the dial for
+# USB and below it for LSB.  Centred on the dial, the channel filter of a
+# 5 kHz channel spacing cut the top of the voice, by 8 dB at 2.5 kHz.
+SSB_CHANNEL_FILTER_OFFSET_HZ = 1500.0
+
 # IIR filter order for the SSB sideband-rejection low-pass.
 # After the Weaver shift, the unwanted sideband sits ~2x the LPF cutoff
 # above DC (a 1 kHz tone in the wrong sideband ends up at 2.5 kHz when
 # the cutoff is 1.5 kHz).  Order 5 gives only ~22 dB rejection there,
 # which the downstream AGC then partially undoes by amplifying the
-# residual.  Order 8 gives ~36 dB and is well within scipy's numerical
-# stability range for sosfilt — chosen as a balance between rejection
-# and transient ringing on voice content.
+# residual.  Order 8 gives ~36 dB there and is well within scipy's
+# numerical stability range for sosfilt — chosen as a balance between
+# rejection and transient ringing on voice content.  Closer to the dial the
+# unwanted sideband lands nearer the cutoff, so rejection falls to about
+# 10-15 dB within 300 Hz of it; the channel filter adds rejection further
+# out, since it is centred on the wanted sideband.
 SSB_LPF_ORDER = 8
 
 # ==============================================================================
