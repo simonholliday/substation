@@ -748,6 +748,33 @@ class TestDCSDetection:
 		assert substation.dsp.demodulation.detect_dcs(dcs_audio(0o340), 16000) == 0o023
 
 
+class TestNfmCarrier:
+
+	@pytest.mark.parametrize("offset_hz", [0.0, 2.0, 100.0])
+	def test_unmodulated_carrier_demodulates_to_silence (self, offset_hz):
+		"""Regression: a carrier on the radio channel's frequency demodulated to loud noise.
+
+		The demodulator subtracted each block's mean from the radio channel's
+		IQ, which removes a carrier within a few Hz of the frequency, so the
+		audio silence timeout could not end the recording of a keyed but
+		silent transmitter.
+		"""
+		if_rate = 256000
+		t = numpy.arange(if_rate * 2) / if_rate
+		rng = numpy.random.default_rng(0)
+		noise = 0.001 * (rng.standard_normal(len(t)) + 1j * rng.standard_normal(len(t)))
+		iq = (0.3 * numpy.exp(2j * numpy.pi * offset_hz * t) + noise).astype(numpy.complex64)
+
+		state = None
+		blocks = []
+		for start in range(0, len(iq), len(iq) // 4):
+			audio, state = substation.dsp.demodulation.demodulate_nfm(iq[start:start + len(iq) // 4], if_rate, 16000, state)
+			blocks.append(audio)
+
+		audio = numpy.concatenate(blocks[1:])
+		assert numpy.sqrt(numpy.mean(audio ** 2)) < substation.constants.AUDIO_SILENCE_RMS_THRESHOLD
+
+
 class TestVoiceAgc:
 
 	@staticmethod

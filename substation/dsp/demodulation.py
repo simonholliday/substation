@@ -504,10 +504,12 @@ def demodulate_nfm (
 	if len(iq_if) == 0:
 		return numpy.array([], dtype=numpy.float32), state
 
-	# 2. IQ DC Removal (Robustness against ADC saturation)
-	# Massive DC offsets from saturation "blind" the discriminator.
-	# We subtract the mean of the block to re-center it.
-	iq_if = iq_if - numpy.mean(iq_if)
+	# 2. No DC removal here.  The scanner removes the SDR's DC offset from
+	# the whole slice, and it lands outside every radio channel.  At this
+	# point, a DC component is the transmission's own carrier, on the
+	# radio channel's frequency, and subtracting the block mean removed it:
+	# an unmodulated carrier within a few Hz of the frequency demodulated
+	# to loud noise, so the audio silence timeout never ended its recording.
 
 	# 3. FM demodulation: instantaneous frequency is the phase difference per sample.
 	if 'nfm_last_iq' not in state:
