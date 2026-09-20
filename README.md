@@ -129,7 +129,7 @@ A wideband transceiver covering 1 MHz to 6 GHz with up to 20 MHz of instantaneou
 | `--device-type`    | `hackrf`, `hackrf-one`, `hackrfone`                                |
 | Best for           | Wideband monitoring, multi-band capture in a single tune           |
 
-**Setup** - see [INSTALL.md](INSTALL.md#2-system-optimisation-usb-buffering) for the USB buffer tuning (`usbcore.usbfs_memory_mb=1000`) and [INSTALL.md](INSTALL.md#3-os-dependencies) for the `libhackrf-dev` system package.
+**Setup** - install the HackRF extra with `pip install "substation[hackrf]"`, which builds the `python_hackrf` binding against the `libhackrf-dev` system package (see [INSTALL.md](INSTALL.md#3-os-dependencies)). See [INSTALL.md](INSTALL.md#2-system-optimisation-usb-buffering) for the USB buffer tuning (`usbcore.usbfs_memory_mb=1000`).
 
 **Recommended starting config**
 - `snr_threshold_db: 6`

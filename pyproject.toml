@@ -39,7 +39,6 @@ dependencies = [
     # which substation/devices/rtlsdr.py provides a stand-in for when setuptools
     # is absent (the default in Python 3.12+ venvs).
     "pyrtlsdr>=0.3.0,<0.4.0",
-    "python_hackrf",
     "noisereduce>=3.0.3",
     "PyYAML>=6.0",
     "scipy>=1.10.0",
@@ -71,6 +70,15 @@ dev = [
 # "OSC event forwarding" for the wire format and address table.
 osc = [
     "python-osc>=1.8",
+]
+
+# HackRF One support — install with `pip install "substation[hackrf]"`.
+# python_hackrf publishes source only, so installing it compiles the binding
+# against libhackrf's headers (libhackrf-dev, see INSTALL.md).  Keeping it
+# optional spares everyone without a HackRF that build, and its failure
+# where the headers are missing.
+hackrf = [
+    "python_hackrf",
 ]
 
 [project.urls]

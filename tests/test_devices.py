@@ -74,6 +74,21 @@ class TestCreateDevice:
 		mock_cls.assert_called_once()
 
 
+class TestHackRfBindingMissing:
+
+	def test_error_names_the_extra_to_install (self, monkeypatch):
+		"""python_hackrf is an optional extra, so its absence must say how to install it."""
+		import substation.devices.hackrf
+
+		def no_binding (name, *args, **kwargs):
+			raise ImportError(name)
+
+		monkeypatch.setattr(substation.devices.hackrf.importlib, "import_module", no_binding)
+
+		with pytest.raises(RuntimeError, match=r"substation\[hackrf\]"):
+			substation.devices.hackrf.HackRfDevice()
+
+
 class FakePyRtlSdr:
 
 	"""Stands in for pyrtlsdr 0.3.0's RtlSdr, with the quirks it and a real RTL-SDR Blog V4 show.

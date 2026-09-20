@@ -86,7 +86,10 @@ class HackRfDevice (substation.devices.base.BaseDevice):
 			except ImportError:
 				continue
 
-		raise RuntimeError("HackRF bindings not found. Please install 'python_hackrf'.")
+		raise RuntimeError(
+			'HackRF bindings not found. Install them with: pip install "substation[hackrf]" '
+			"(this builds python_hackrf, which needs the libhackrf development package; see INSTALL.md)"
+		)
 
 	def _setup_bindings (self) -> None:
 		"""

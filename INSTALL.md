@@ -113,7 +113,7 @@ cat /proc/cmdline | grep usbfs_memory_mb
 # Audio and maths libraries
 sudo apt install -y libsndfile1 libsndfile1-dev python3-setuptools python3-dev
 
-# HackRF drivers and utilities
+# HackRF drivers and utilities (only for a HackRF One)
 sudo apt install -y libhackrf-dev hackrf
 ```
 
@@ -123,7 +123,7 @@ sudo apt install -y libhackrf-dev hackrf
 # Audio and maths libraries
 sudo dnf install -y libsndfile libsndfile-devel python3-setuptools python3-devel
 
-# HackRF drivers and utilities
+# HackRF drivers and utilities (only for a HackRF One)
 sudo dnf install -y hackrf hackrf-devel
 ```
 
@@ -224,6 +224,10 @@ substation --init          # writes ./config.yaml (the fully-commented defaults)
 ### Optional extras
 
 ```bash
+# HackRF One support: builds the python_hackrf binding, which needs the
+# HackRF development package from section 3
+pip install "substation[hackrf]"
+
 # OSC event forwarding (for MIDI sequencer, sampler, etc.)
 pip install "substation[osc]"
 ```
