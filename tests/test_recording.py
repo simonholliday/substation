@@ -3,6 +3,7 @@
 import asyncio
 import struct
 import threading
+import tracemalloc
 
 import mutagen.flac
 import numpy
@@ -420,6 +421,38 @@ class TestCheckEmpty:
 		          0.1 * numpy.sin(2 * numpy.pi * 1500 * t)).astype(numpy.float32)
 		path = str(tmp_path / "voice.wav")
 		soundfile.write(path, signal, sr)
+		assert substation.recording.ChannelRecorder.check_empty(path) is False
+
+	def test_long_recording_is_checked_in_bounded_memory (self, tmp_path):
+		"""Regression: the check read the whole file and ran Welch over all of it, about 33 MB per minute.
+
+		A stuck radio channel records for hours, and closing one could get a
+		Raspberry Pi's scanner killed for lack of memory.  Five minutes of
+		noise used 165 MiB; the check now reads at most a minute.
+		"""
+		sr = 16000
+		noise = (numpy.random.default_rng(0).standard_normal(sr * 300) * 0.01).astype(numpy.float32)
+		path = str(tmp_path / "long_noise.wav")
+		soundfile.write(path, noise, sr, subtype="PCM_16")
+
+		tracemalloc.start()
+		try:
+			assert substation.recording.ChannelRecorder.check_empty(path) is True
+			_, peak = tracemalloc.get_traced_memory()
+		finally:
+			tracemalloc.stop()
+
+		assert peak < 20 * 2**20
+
+	def test_long_voice_like_recording_is_not_empty (self, tmp_path):
+		"""A long recording read as spread blocks is still judged by its whole content."""
+		sr = 16000
+		t = numpy.arange(sr * 180) / sr
+		signal = (0.3 * numpy.sin(2 * numpy.pi * 300 * t) + 0.2 * numpy.sin(2 * numpy.pi * 800 * t)).astype(numpy.float32)
+		signal += (numpy.random.default_rng(1).standard_normal(len(t)) * 0.01).astype(numpy.float32)
+		path = str(tmp_path / "long_voice.wav")
+		soundfile.write(path, signal, sr, subtype="PCM_16")
+
 		assert substation.recording.ChannelRecorder.check_empty(path) is False
 
 	def test_very_short_file_is_empty (self, tmp_path):

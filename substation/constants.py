@@ -131,6 +131,14 @@ AUDIO_SILENCE_RMS_THRESHOLD = 0.01
 # speculative demod check) and Gate 3b (post-recording whole-file check).
 SPECTRAL_FLATNESS_THRESHOLD = 0.15
 
+# Most audio the post-recording flatness check (Gate 3b) reads, in seconds,
+# and the number of evenly spaced blocks it reads a longer recording as.
+# Reading a whole recording cost about 33 MB a minute, and a stuck radio
+# channel can record for hours.  60 s in 30 blocks keeps the check under a
+# few MB and still samples the whole recording.
+EMPTY_CHECK_MAX_SECONDS = 60.0
+EMPTY_CHECK_BLOCKS = 30
+
 # Carrier transient detection threshold.  AM transmitters produce sharp
 # clicks when keying on/off.  A carrier transient must exceed
 # CARRIER_TRANSIENT_RATIO × the local noise floor, and the surrounding

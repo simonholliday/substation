@@ -27,6 +27,7 @@ import uuid
 import mutagen.flac
 import numpy
 import numpy.typing
+import scipy.signal
 import soundfile
 
 import substation.constants
@@ -927,22 +928,44 @@ class ChannelRecorder:
 		tones — has a peaked spectrum (flatness < 0.04 typically).  A
 		threshold of 0.15 sits in the large gap between the two, giving
 		robust separation without tuning per modulation type.
+
+		Memory stays bounded however long the recording is.  A recording up
+		to EMPTY_CHECK_MAX_SECONDS long is read whole; a longer one, such as
+		a stuck radio channel's, is read as EMPTY_CHECK_BLOCKS blocks spread
+		evenly through it, adding up to that length, and their spectra are
+		averaged.  Reading all of it cost about 33 MB a minute.  Slow enough
+		to run in an executor, not on the event loop.
 		"""
 
+		if flatness_threshold is None:
+			flatness_threshold = substation.constants.SPECTRAL_FLATNESS_THRESHOLD
+
 		try:
-			data, sr = soundfile.read(filepath, dtype='float32')
+			with soundfile.SoundFile(filepath) as audio_file:
+
+				sr = audio_file.samplerate
+				frames = audio_file.frames
+
+				if frames < 512:
+					return True
+
+				max_frames = int(sr * substation.constants.EMPTY_CHECK_MAX_SECONDS)
+				block_frames = max_frames // substation.constants.EMPTY_CHECK_BLOCKS
+
+				if frames <= max_frames or block_frames < 2048:
+					blocks = [audio_file.read(dtype='float32')]
+				else:
+					blocks = []
+					for start in numpy.linspace(0, frames - block_frames, substation.constants.EMPTY_CHECK_BLOCKS):
+						audio_file.seek(int(start))
+						blocks.append(audio_file.read(block_frames, dtype='float32'))
+
 		except Exception:
 			return False
 
-		if len(data) < 512:
-			return True
-
-		if flatness_threshold is None:
-			import substation.constants
-			flatness_threshold = substation.constants.SPECTRAL_FLATNESS_THRESHOLD
-
-		import scipy.signal as _sig
-		freqs, psd = _sig.welch(data, sr, nperseg=min(2048, len(data)))
+		# Welch's average over each block, then over the blocks, which are the
+		# same length, so each segment counts the same as in one Welch pass.
+		psd = numpy.mean([scipy.signal.welch(block, sr, nperseg=min(2048, len(block)))[1] for block in blocks], axis=0)
 		psd = psd + 1e-12
 		log_mean = numpy.mean(numpy.log(psd))
 		flatness = float(numpy.exp(log_mean - numpy.log(numpy.mean(psd))))

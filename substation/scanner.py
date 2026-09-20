@@ -1769,7 +1769,10 @@ class RadioScanner:
 		# the threshold even though the first block was clean.
 		if self.discard_empty_enabled and os.path.exists(filepath):
 			try:
-				if substation.recording.ChannelRecorder.check_empty(filepath):
+				# In an executor, so a long recording's check never stalls the
+				# event loop that queues IQ samples and flushes other recordings.
+				is_empty = await asyncio.get_running_loop().run_in_executor(None, substation.recording.ChannelRecorder.check_empty, filepath)
+				if is_empty:
 					os.remove(filepath)
 					logger.info(f"Discarded empty recording: {os.path.basename(filepath)}")
 					self.emit('recording_discarded',
