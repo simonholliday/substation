@@ -252,11 +252,16 @@ class RadioScanner:
 		# failure is logged at WARNING and its later ones at DEBUG.
 		self._failed_handlers: set[tuple[str, int]] = set()
 
-		# Async handlers scheduled and not yet finished.  The end of a scan
-		# waits for them, so a consumer sees the last events before scan()
-		# returns.  Added to from the processing thread, hence the lock.
+		# Work handed to other threads or tasks that the end of a scan waits
+		# for: async handlers not yet finished, so a consumer sees the last
+		# events; recordings being stopped, so none is cut off mid-close; and
+		# the slice being processed.  The sets are added to from the
+		# processing thread, hence the lock.
 		self._handler_futures: set[concurrent.futures.Future] = set()
-		self._handler_futures_lock = threading.Lock()
+		self._stop_futures: set[concurrent.futures.Future] = set()
+		self._futures_lock = threading.Lock()
+		self._processing_executor: concurrent.futures.ThreadPoolExecutor | None = None
+		self._processing_future: concurrent.futures.Future | None = None
 
 		# SDR device (typed as Any because scanner accesses device-specific
 		# attributes like read_samples and freq_correction beyond BaseDevice)
@@ -463,7 +468,7 @@ class RadioScanner:
 					target_loop = loop or self.loop
 					if target_loop is not None and not target_loop.is_closed():
 						future = asyncio.run_coroutine_threadsafe(self._await_handler(event, handler, kwargs), target_loop)
-						with self._handler_futures_lock:
+						with self._futures_lock:
 							self._handler_futures.add(future)
 						future.add_done_callback(self._forget_handler_future)
 				elif loop:
@@ -478,8 +483,15 @@ class RadioScanner:
 
 		"""Done-callback: stop tracking an async handler that has finished."""
 
-		with self._handler_futures_lock:
+		with self._futures_lock:
 			self._handler_futures.discard(future)
+
+	def _forget_stop_future (self, future: concurrent.futures.Future) -> None:
+
+		"""Done-callback: stop tracking a recording that has finished closing."""
+
+		with self._futures_lock:
+			self._stop_futures.discard(future)
 
 	async def _wait_for_handlers (self) -> None:
 
@@ -490,7 +502,7 @@ class RadioScanner:
 		such as the final channel_state OFF, run before scan() returns.
 		"""
 
-		with self._handler_futures_lock:
+		with self._futures_lock:
 			pending = list(self._handler_futures)
 
 		if not pending:
@@ -1073,7 +1085,45 @@ class RadioScanner:
 
 	async def _cleanup_sdr (self) -> None:
 
-		"""Clean up SDR resources and close any active recordings"""
+		"""
+		Clean up SDR resources and close any active recordings.
+
+		Waits first for a slice still being processed, which can start or
+		stop recordings, then for recordings already being stopped.  One
+		recording that fails to close does not stop the others closing, and
+		the device is closed whatever happens.
+		"""
+
+		try:
+			await self._close_recordings()
+
+		finally:
+			if self.sdr:
+				try:
+					self.sdr.close()
+					logger.info("SDR device closed")
+				except Exception as e:
+					logger.warning(f"Error closing SDR device (this is normal on interrupt): {e}")
+
+			if self._processing_executor is not None:
+				self._processing_executor.shutdown(wait=False)
+
+		# Let async event handlers finish, the ones for the events emitted
+		# above included, before scan() returns and the loop closes.
+		await self._wait_for_handlers()
+
+	async def _close_recordings (self) -> None:
+
+		"""Finish the slice in flight, then end every activation and close every recording."""
+
+		processing = self._processing_future
+
+		if processing is not None and not processing.done():
+			logger.info("Waiting for the slice being processed to finish")
+			try:
+				await asyncio.wrap_future(processing)
+			except Exception as exc:
+				logger.warning(f"The last slice failed while the scan was stopping: {exc}")
 
 		# Radio channels still ON get their OFF, so a consumer following
 		# channel_state is not left showing them active after the scan.  As
@@ -1086,25 +1136,28 @@ class RadioScanner:
 					is_active=False, snr_db=float(self.channel_snr.get(channel_freq, 0.0)),
 					ctcss_hz=None, dcs_code=None)
 
-		# Close all active recordings first
+		# Close the recordings still open
 		for channel_freq in list(self.channel_recorders.keys()):
 
-			recorder = self.channel_recorders.pop(channel_freq)
+			recorder = self.channel_recorders.pop(channel_freq, None)
+			if recorder is None:
+				continue
+
 			tone = self.channel_tones.pop(channel_freq, {'ctcss_hz': None, 'dcs_code': None})
 
-			await self._stop_channel_recording(channel_freq, recorder, tone)
-
-		# Close SDR device
-		if self.sdr:
 			try:
-				self.sdr.close()
-				logger.info("SDR device closed")
-			except Exception as e:
-				logger.warning(f"Error closing SDR device (this is normal on interrupt): {e}")
+				await self._stop_channel_recording(channel_freq, recorder, tone)
+			except Exception:
+				logger.exception(f"Could not close the recording at {channel_freq/1e6:.5f} MHz")
 
-		# Let async event handlers finish, the ones for the events above
-		# included, before scan() returns and the loop closes.
-		await self._wait_for_handlers()
+		# Wait for recordings that turned off during the scan and are still
+		# closing, so none is cut off before its metadata and checks.
+		with self._futures_lock:
+			stopping = list(self._stop_futures)
+
+		if stopping:
+			logger.info(f"Waiting for {len(stopping)} recording(s) to finish closing")
+			await asyncio.wait([asyncio.wrap_future(future) for future in stopping])
 
 	def _safe_queue_put (self, samples: numpy.typing.NDArray[numpy.complex64]) -> None:
 
@@ -2067,6 +2120,9 @@ class RadioScanner:
 						stop_future = asyncio.run_coroutine_threadsafe(
 							self._stop_channel_recording(channel_freq, recorder, tone), loop
 						)
+						with self._futures_lock:
+							self._stop_futures.add(stop_future)
+						stop_future.add_done_callback(self._forget_stop_future)
 						stop_future.add_done_callback(self._log_future_error)
 
 				# Emit channel_state transition event here — after demod
@@ -2132,6 +2188,7 @@ class RadioScanner:
 
 		logger.info("Starting scan...")
 		self._stream_error = None
+		self._processing_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="substation-slice")
 
 		try:
 			self._setup_sdr()
@@ -2203,13 +2260,11 @@ class RadioScanner:
 			logger.info("Started async SDR streaming")
 
 			async for samples in self._sample_band_async():
-				# CPU-heavy processing stays off the event loop to keep async I/O responsive.
-				await loop.run_in_executor(
-					None,
-					self._process_samples,
-					samples,
-					loop
-				)
+				# CPU-heavy processing stays off the event loop to keep async I/O
+				# responsive.  The future is kept: when the scan is cancelled, the
+				# slice goes on processing in its thread, and cleanup waits for it.
+				self._processing_future = self._processing_executor.submit(self._process_samples, samples, loop)
+				await asyncio.wrap_future(self._processing_future)
 
 				# Yield to other async tasks (recording flushes, async event handlers) so
 				# they don't starve when slices arrive back-to-back.
@@ -2243,4 +2298,4 @@ class RadioScanner:
 			try:
 				await asyncio.shield(self._cleanup_sdr())
 			except asyncio.CancelledError:
-				logger.debug("Cleanup completed despite task cancellation")
+				logger.warning("Cancelled again while closing recordings, so the last recordings may be incomplete")

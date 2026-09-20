@@ -1,9 +1,12 @@
 """Tests that run RadioScanner.scan() from start to finish, with fake receivers and IQ files instead of hardware."""
 
 import asyncio
+import concurrent.futures
 import datetime
 import json
+import pathlib
 import threading
+import time
 import unittest.mock
 
 import numpy
@@ -293,3 +296,69 @@ class TestEventsDuringAScan:
 		states = [payload['is_active'] for name, payload in events if name == 'channel_state']
 		assert states == [True, False]
 		assert async_states == [True, False]
+
+
+def _wav_chunks (path) -> list[bytes]:
+
+	"""The chunk IDs of a RIFF WAV file, in order."""
+
+	data = pathlib.Path(path).read_bytes()
+	chunks = []
+	position = 12
+
+	while position + 8 <= len(data):
+		chunk_id = data[position:position + 4]
+		size = int.from_bytes(data[position + 4:position + 8], "little")
+		chunks.append(chunk_id)
+		position += 8 + size + (size % 2)
+
+	return chunks
+
+
+class TestEndOfScan:
+
+	@pytest.mark.parametrize("stop_s", [5.0, 5.2, 5.4])
+	def test_recording_that_ends_near_the_end_of_a_file_is_finished (self, minimal_config_dict, tmp_path, stop_s):
+		"""Regression: a recording whose transmission ended just before the file did was cancelled mid-close.
+
+		Its stop ran as a fire-and-forget coroutine that the end of the scan
+		cancelled, so it had no BEXT chunk, the post-recording checks never
+		ran, and recording_saved never fired.
+		"""
+		events = []
+		_play_transmissions(minimal_config_dict, tmp_path, 5.8, [(3, 1.5, stop_s)], handlers=_recorder(events))
+
+		saved = [payload['file_path'] for name, payload in events if name == 'recording_saved']
+		assert len(saved) == 1
+		assert b"bext" in _wav_chunks(saved[0])
+
+	def test_cleanup_waits_for_the_slice_being_processed (self, scanner_instance, monkeypatch):
+		"""Regression: cleanup raced a slice still being processed after a cancel, and a KeyError left recordings open.
+
+		The slice turns one radio channel off, taking its recorder, while
+		cleanup is part way through closing the others.
+		"""
+		stopped = []
+		scanner_instance.channel_recorders = {1.0: "recorder 1", 2.0: "recorder 2"}
+
+		async def fake_stop (channel_freq, recorder, tone):
+			await asyncio.sleep(0.2)
+			stopped.append(recorder)
+
+		def slice_turning_channel_2_off ():
+			time.sleep(0.05)
+			scanner_instance.channel_recorders.pop(2.0, None)
+
+		monkeypatch.setattr(scanner_instance, "_stop_channel_recording", fake_stop)
+		device = FakeLiveDevice(blocks=0)
+		scanner_instance.sdr = device
+
+		async def run ():
+			with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+				scanner_instance._processing_future = executor.submit(slice_turning_channel_2_off)
+				await scanner_instance._cleanup_sdr()
+
+		asyncio.run(run())
+
+		assert stopped == ["recorder 1"]
+		assert device.closed
