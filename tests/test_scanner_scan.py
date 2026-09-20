@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 import datetime
 import json
+import logging
 import pathlib
 import threading
 import time
@@ -362,3 +363,27 @@ class TestEndOfScan:
 
 		assert stopped == ["recorder 1"]
 		assert device.closed
+
+
+class TestRecordingThatCannotBeCreated:
+
+	def test_scan_carries_on_without_that_recording (self, minimal_config_dict, tmp_path, caplog):
+		"""Regression: one recording file that could not be created stopped the whole scan.
+
+		A file sits where the output folder should be, so creating the folder
+		fails as it would on a read-only or unmounted share.  The scan must
+		play to the end, and the radio channel's detection events still flow.
+		"""
+		blocker = tmp_path / "not-a-folder"
+		blocker.write_text("")
+		minimal_config_dict["recording"]["audio_output_dir"] = str(blocker / "audio")
+		events = []
+
+		with caplog.at_level(logging.WARNING):
+			_play_transmissions(minimal_config_dict, tmp_path, 6.0, [(3, 1.5, 4.0)], handlers=_recorder(events))
+
+		states = [payload['is_active'] for name, payload in events if name == 'channel_state']
+		assert states == [True, False]
+		assert not [name for name, _ in events if name.startswith('recording_')]
+		assert sum("could not create its recording" in r.getMessage() for r in caplog.records) == 1
+		assert not any("no recorder found" in r.getMessage() for r in caplog.records)

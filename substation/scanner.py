@@ -263,6 +263,10 @@ class RadioScanner:
 		self._processing_executor: concurrent.futures.ThreadPoolExecutor | None = None
 		self._processing_future: concurrent.futures.Future | None = None
 
+		# Radio channels whose current activation has no recording because
+		# its file could not be created, so their audio is dropped quietly.
+		self._unrecorded_channels: set[float] = set()
+
 		# SDR device (typed as Any because scanner accesses device-specific
 		# attributes like read_samples and freq_correction beyond BaseDevice)
 		self.sdr: typing.Any | None = None
@@ -1430,7 +1434,14 @@ class RadioScanner:
 				self.channel_filter_zi.pop(channel_freq, None)
 				self.channel_demod_state.pop(channel_freq, None)
 
-				self._start_channel_recording(channel_freq, channel_index, snr_db, loop)
+				# A file that cannot be created, on a full disk, a read-only
+				# folder or an unmounted share, loses this recording only: the
+				# scan and the radio channel's detection carry on.
+				try:
+					self._start_channel_recording(channel_freq, channel_index, snr_db, loop)
+				except (OSError, RuntimeError) as exc:
+					logger.error(f"Channel {channel_index}: could not create its recording, so this transmission is not recorded: {exc}")
+					self._unrecorded_channels.add(channel_freq)
 
 			# Note: channel_state event is emitted by _process_samples
 			# after the demod step, so it can carry CTCSS/DCS tone info
@@ -2101,13 +2112,14 @@ class RadioScanner:
 						recorder = self.channel_recorders.get(channel_freq)
 						if recorder:
 							recorder.append_audio(audio)
-						else:
+						elif channel_freq not in self._unrecorded_channels:
 							logger.warning(f"Channel {idx}: no recorder found, audio discarded")
 
 				if turning_off:
 					self.channel_filter_zi.pop(channel_freq, None)
 					self.channel_demod_state.pop(channel_freq, None)
 					self.channel_audio_last_active.pop(channel_freq, None)
+					self._unrecorded_channels.discard(channel_freq)
 
 					# Hand the recorder (and its detected tone) to the stop
 					# coroutine by removing them from the tracking dicts NOW,
