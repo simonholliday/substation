@@ -131,10 +131,10 @@ class FakePyRtlSdr:
 	@property
 	def center_freq (self) -> float:
 
-		"""Read the tuning back."""
+		"""Read the tuning back, rounded to the nearest kHz as pyrtlsdr reports it."""
 
 		self._call("get_center_freq")
-		return self._center_freq
+		return round(self._center_freq, -3)
 
 	@center_freq.setter
 	def center_freq (self, value: float) -> None:
@@ -223,6 +223,28 @@ class TestRtlSdrFreqCorrection:
 
 		assert device.freq_correction == 5
 		assert device._device.corrections_sent == [5]
+
+
+class TestRtlSdrCenterFreq:
+
+	def test_reports_the_exact_frequency_set (self, rtlsdr_device_class):
+		"""Regression: pyrtlsdr reports the centre rounded to the kHz, and the scanner adopted the rounded value.
+
+		With calibration off, every radio channel on air_civil_bristol was then
+		extracted 166 Hz from where the tuner was.
+		"""
+		device = rtlsdr_device_class(0)
+
+		device.center_freq = 124_004_166.7
+
+		assert device.center_freq == 124_004_166.7
+		assert device._device.center_freq == 124_004_000
+
+	def test_asks_the_driver_before_anything_is_set (self, rtlsdr_device_class):
+		"""Until the scanner tunes it, the device reports the driver's own frequency."""
+		device = rtlsdr_device_class(0)
+
+		assert device.center_freq == 100e6
 
 
 class TestRtlSdrClosedDevice:

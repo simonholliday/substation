@@ -88,6 +88,11 @@ class RtlSdrDevice (substation.devices.base.BaseDevice):
 		# any negative correction as an error code and closes the device.
 		self._freq_correction = 0
 
+		# The centre frequency is also remembered rather than read back:
+		# pyrtlsdr rounds the value it reports to the nearest kHz, while the
+		# tuner keeps the exact frequency it was given.
+		self._center_freq: float | None = None
+
 	def _driver (self) -> typing.Any:
 
 		"""
@@ -114,13 +119,26 @@ class RtlSdrDevice (substation.devices.base.BaseDevice):
 
 	@property
 	def center_freq (self) -> float:
-		"""Get the current center frequency in Hz"""
-		return self._driver().center_freq
+
+		"""
+		Get the current center frequency in Hz.
+
+		Returns the value last set rather than asking the driver, because
+		pyrtlsdr rounds the frequency it reports to the nearest kHz.  Most
+		bands tune a few hundred Hz off a whole kHz, and the scanner places
+		every radio channel relative to this value.
+		"""
+
+		if self._center_freq is None:
+			return self._driver().center_freq
+
+		return self._center_freq
 
 	@center_freq.setter
 	def center_freq (self, value: float) -> None:
 		"""Set the center frequency in Hz"""
 		self._driver().center_freq = value
+		self._center_freq = float(value)
 
 	@property
 	def gain (self) -> float | str | None:
