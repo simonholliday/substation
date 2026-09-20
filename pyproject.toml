@@ -117,13 +117,17 @@ filterwarnings = [
 ]
 
 [tool.mypy]
-# Keep mypy strict on our own code.  We only add per-module overrides
-# below to silence "library stubs not installed" errors for third-party
-# packages that don't ship PEP 561 stubs — scipy, SoapySDR, rtlsdr,
-# noisereduce, and soundfile.  Using per-module overrides instead of a
-# global `ignore_missing_imports = true` keeps accidental typos in local
-# imports visible as errors.
-python_version = "3.10"
+# mypy checks for the Python it runs under.  A fixed python_version = "3.10"
+# stopped it before it checked any code wherever numpy 2.5 or later is
+# installed, because numpy's stubs use Python 3.12 syntax, and numpy 2.5
+# does not install on 3.10 anyway.  To check against 3.10, the oldest Python
+# Substation supports, run mypy under 3.10.
+#
+# We only add per-module overrides below to silence "library stubs not
+# installed" errors for third-party packages that don't ship PEP 561
+# stubs — scipy, SoapySDR, rtlsdr, noisereduce, and soundfile.  Using
+# per-module overrides instead of a global `ignore_missing_imports = true`
+# keeps accidental typos in local imports visible as errors.
 
 [[tool.mypy.overrides]]
 module = [

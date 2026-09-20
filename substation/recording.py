@@ -839,7 +839,7 @@ class ChannelRecorder:
 
 		# Apply soft limiter using precomputed parameters
 		if samples.size > 0 and self.soft_limit_drive > 0:
-			samples = numpy.tanh(samples * self.soft_limit_drive) * self.soft_limit_scale
+			samples = (numpy.tanh(samples * self.soft_limit_drive) * self.soft_limit_scale).astype(numpy.float32, copy=False)
 
 		# It will automatically convert to int16 internally
 		with self._write_lock:

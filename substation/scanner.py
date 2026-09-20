@@ -1567,15 +1567,15 @@ class RadioScanner:
 
 		if self.noise_mask is None:
 			# Fallback to percentile method if no gaps defined
-			return numpy.percentile(psd_db, 25)
+			return float(numpy.percentile(psd_db, 25))
 
 		# Precomputed mask keeps noise estimation in numpy (no Python per-gap loops).
 		noise_samples = psd_db[self.noise_mask]
 		if noise_samples.size == 0:
-			return numpy.percentile(psd_db, 25)
+			return float(numpy.percentile(psd_db, 25))
 
 		# Use median of noise samples - robust to outliers
-		return numpy.median(noise_samples)
+		return float(numpy.median(noise_samples))
 
 	def _get_channel_powers (self, psd_db: numpy.typing.NDArray[numpy.float64]) -> numpy.typing.NDArray[numpy.float64]:
 
