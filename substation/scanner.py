@@ -188,7 +188,7 @@ class RadioScanner:
 		out_of_range = sorted(idx for idx in raw_excluded if idx < 1 or idx > len(self.all_channels))
 		if out_of_range:
 			logger.warning(
-				f"Ignoring out-of-range excluded channel indices for band '{band_name}': "
+				f"Ignoring out-of-range excluded radio channel indices for band '{band_name}': "
 				f"{', '.join(str(idx) for idx in out_of_range)}"
 			)
 			excluded_0based -= {idx - 1 for idx in out_of_range}
@@ -226,8 +226,8 @@ class RadioScanner:
 			if abs(ch_freq - self.center_freq) < self.channel_width / 2:
 				self.center_freq += self.channel_spacing / 2
 				logger.info(
-					f"DC offset: shifted center +{self.channel_spacing/2:.0f} Hz "
-					f"to avoid masking channel at {ch_freq/1e6:.5f} MHz"
+					f"DC offset: shifted the centre frequency +{self.channel_spacing/2:.0f} Hz "
+					f"to avoid masking a radio channel at {ch_freq/1e6:.5f} MHz"
 				)
 				break
 
@@ -363,10 +363,10 @@ class RadioScanner:
 
 		logger.info(f"Initialized scanner for band '{band_name}'")
 		logger.info(f"Frequency range: {self.freq_start/1e6:.5f} - {self.freq_end/1e6:.5f} MHz")
-		logger.info(f"Number of channels: {self.num_channels}")
+		logger.info(f"Number of radio channels: {self.num_channels}")
 		if raw_excluded:
 			excluded_list = ", ".join(str(idx) for idx in sorted(raw_excluded))
-			logger.info(f"Excluded channels: {excluded_list}")
+			logger.info(f"Excluded radio channels: {excluded_list}")
 		logger.info(f"Center frequency: {self.center_freq/1e6:.5f} MHz")
 		logger.info(f"Required bandwidth: {self.required_bandwidth/1e6:.5f} MHz (inc. {self.band_edge_margin_hz/1e3:.1f}kHz edge margin)")
 		logger.info(f"Sample rate: {self.sample_rate/1e6:.3f} MHz")
@@ -707,10 +707,10 @@ class RadioScanner:
 
 		# Warn about channels outside range (shouldn't happen if band span check passed)
 		if channels_outside_range:
-			logger.warning(f"CONFIG WARNING: {len(channels_outside_range)} channels fall outside observable frequency range:")
+			logger.warning(f"CONFIG WARNING: {len(channels_outside_range)} radio channels fall outside observable frequency range:")
 			for ch_freq in channels_outside_range:
-				logger.warning(f"  - Channel {ch_freq/1e6:.5f} MHz is outside {observable_min_freq/1e6:.3f} - {observable_max_freq/1e6:.3f} MHz")
-			logger.warning(f"These channels will not be scanned. Check your band configuration in config.yaml")
+				logger.warning(f"  - Radio channel {ch_freq/1e6:.5f} MHz is outside {observable_min_freq/1e6:.3f} - {observable_max_freq/1e6:.3f} MHz")
+			logger.warning(f"These radio channels will not be scanned. Check your band configuration in config.yaml")
 
 		# Pre-compute noise estimation regions (gaps between channels).
 		self._compute_noise_regions()
@@ -807,9 +807,9 @@ class RadioScanner:
 		gap_hz = (first_channel_low - noise_start_freq) / 1e3
 		if first_channel_idx > band_start_idx:
 			self.noise_indices.append((int(band_start_idx), int(first_channel_idx)))
-			logger.debug(f"Edge margin BEFORE first channel: {gap_hz:.1f} kHz ({first_channel_idx - band_start_idx} bins)")
+			logger.debug(f"Edge margin BEFORE first radio channel: {gap_hz:.1f} kHz ({first_channel_idx - band_start_idx} bins)")
 		else:
-			logger.debug(f"No gap before first channel (gap would be {gap_hz:.1f} kHz)")
+			logger.debug(f"No gap before first radio channel (gap would be {gap_hz:.1f} kHz)")
 
 		# Gaps between channels.
 
@@ -853,11 +853,11 @@ class RadioScanner:
 		if band_end_idx > last_channel_idx:
 
 			self.noise_indices.append((int(last_channel_idx), int(band_end_idx)))
-			logger.debug(f"Edge margin AFTER last channel: {gap_hz:.1f} kHz ({band_end_idx - last_channel_idx} bins)")
+			logger.debug(f"Edge margin AFTER last radio channel: {gap_hz:.1f} kHz ({band_end_idx - last_channel_idx} bins)")
 
 		else:
 
-			logger.debug(f"No gap after last channel (gap would be {gap_hz:.1f} kHz)")
+			logger.debug(f"No gap after last radio channel (gap would be {gap_hz:.1f} kHz)")
 
 		total_noise_bins = sum(end - start for start, end in self.noise_indices)
 		logger.info(f"Noise estimation regions: {len(self.noise_indices)} gaps, {total_noise_bins} bins total")
@@ -1532,7 +1532,7 @@ class RadioScanner:
 			state_str = "ON" if is_active else "OFF"
 			channel_mhz = channel_freq / 1e6
 
-			logger.info(f"Channel {channel_index} {state_str} (f = {channel_mhz:.5f} MHz, SNR = {snr_db:.1f}dB, recording: {'YES' if self.can_record else 'NO'})")
+			logger.info(f"Radio channel {channel_index} {state_str} (f = {channel_mhz:.5f} MHz, SNR = {snr_db:.1f}dB, recording: {'YES' if self.can_record else 'NO'})")
 			logger.debug("".join("X" if self.channel_states[ch] else "-" for ch in self.channels))
 
 			if turning_on and self.can_record:
@@ -1546,7 +1546,7 @@ class RadioScanner:
 				try:
 					self._start_channel_recording(channel_freq, channel_index, snr_db, loop, onset_samples=trim_start)
 				except (OSError, RuntimeError) as exc:
-					logger.error(f"Channel {channel_index}: could not create its recording, so this transmission is not recorded: {exc}")
+					logger.error(f"Radio channel {channel_index}: could not create its recording, so this transmission is not recorded: {exc}")
 					self._unrecorded_channels.add(channel_freq)
 
 			# Note: channel_state event is emitted by _process_samples
@@ -1666,9 +1666,9 @@ class RadioScanner:
 			if channel_freq not in self._variance_dead_zone_warned:
 				ch_idx = self.channel_original_indices.get(channel_freq, -1)
 				logger.warning(
-					f"Channel {ch_idx} ({channel_freq/1e6:.4f} MHz) has insufficient "
+					f"Radio channel {ch_idx} ({channel_freq/1e6:.4f} MHz) has insufficient "
 					f"valid power samples for variance check ({len(finite_powers)}/{len(powers)} segments finite). "
-					f"This channel will always be suppressed by the variance check — "
+					f"This radio channel will always be suppressed by the variance check, "
 					f"check FFT geometry, DC spike mask, or band edges."
 				)
 				self._variance_dead_zone_warned.add(channel_freq)
@@ -2096,7 +2096,7 @@ class RadioScanner:
 							if now - last_warn > 60:
 								ch_idx = self.channel_original_indices.get(channel_freq, -1)
 								logger.warning(
-									f"STUCK CHANNEL WARNING: Channel {ch_idx} ({channel_freq/1e6:.4f} MHz) "
+									f"STUCK CHANNEL WARNING: Radio channel {ch_idx} ({channel_freq/1e6:.4f} MHz) "
 									f"has been active for {duration:.0f} seconds"
 								)
 								self.channel_last_warning_times[channel_freq] = now
@@ -2156,7 +2156,7 @@ class RadioScanner:
 						stddev = self._segment_power_variance(channel_freq, segment_psds)
 						if stddev < var_threshold:
 							logger.debug(
-								f"Channel {idx} suppressed: power variance {stddev:.1f} dB "
+								f"Radio channel {idx} suppressed: power variance {stddev:.1f} dB "
 								f"below threshold {var_threshold:.1f} dB (likely noise)"
 							)
 							is_active = False
@@ -2184,7 +2184,7 @@ class RadioScanner:
 						))
 						if flatness > substation.constants.SPECTRAL_FLATNESS_THRESHOLD:
 							logger.debug(
-								f"Channel {idx} suppressed: audio is noise-only "
+								f"Radio channel {idx} suppressed: audio is noise-only "
 								f"(spectral flatness {flatness:.2f})"
 							)
 							is_active = False
@@ -2223,9 +2223,9 @@ class RadioScanner:
 							ctcss = new_state.get('detected_ctcss')
 							dcs = new_state.get('detected_dcs')
 							if ctcss is not None:
-								logger.info(f"Channel {idx} ({channel_freq/1e6:.5f} MHz): CTCSS {ctcss:.1f} Hz")
+								logger.info(f"Radio channel {idx} ({channel_freq/1e6:.5f} MHz): CTCSS {ctcss:.1f} Hz")
 							elif dcs is not None:
-								logger.info(f"Channel {idx} ({channel_freq/1e6:.5f} MHz): DCS {dcs:03o}")
+								logger.info(f"Radio channel {idx} ({channel_freq/1e6:.5f} MHz): DCS {dcs:03o}")
 
 							if ctcss is not None or dcs is not None:
 								rec = self.channel_recorders.get(channel_freq)
@@ -2251,7 +2251,7 @@ class RadioScanner:
 						if recorder:
 							recorder.append_audio(audio)
 						elif channel_freq not in self._unrecorded_channels:
-							logger.warning(f"Channel {idx}: no recorder found, audio discarded")
+							logger.warning(f"Radio channel {idx}: no recorder found, audio discarded")
 
 				if turning_off:
 					self.channel_filter_zi.pop(channel_freq, None)

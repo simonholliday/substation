@@ -595,7 +595,7 @@ class ChannelRecorder:
 		self._write_lock = threading.Lock()
 		self._buffer_lock = threading.Lock()
 
-		logger.debug(f"Started recording channel {channel_index} (f = {channel_freq/1e6:.5f} MHz) to {self.filepath}")
+		logger.debug(f"Started recording radio channel {channel_index} (f = {channel_freq/1e6:.5f} MHz) to {self.filepath}")
 
 	def set_tone_code (self, ctcss: float | None = None, dcs: int | None = None) -> None:
 
@@ -682,7 +682,7 @@ class ChannelRecorder:
 				# and everything older must be marked flushed (dropped).
 				overflow = self._ring_frames_written - self._ring_frames_flushed + n - cap
 				if overflow > 0:
-					logger.warning(f"Channel {self.channel_index}: Buffer overflow, dropping {overflow} oldest samples")
+					logger.warning(f"Radio channel {self.channel_index}: Buffer overflow, dropping {overflow} oldest samples")
 
 				kept = samples[-cap:]
 				first_kept = self._ring_frames_written + n - cap
@@ -703,7 +703,7 @@ class ChannelRecorder:
 			unflushed = self._ring_frames_written - self._ring_frames_flushed
 			if unflushed + n > cap:
 				overflow = unflushed + n - cap
-				logger.warning(f"Channel {self.channel_index}: Buffer overflow, dropping {overflow} oldest samples")
+				logger.warning(f"Radio channel {self.channel_index}: Buffer overflow, dropping {overflow} oldest samples")
 				# Advance the flushed pointer to discard oldest unflushed data
 				self._ring_frames_flushed += overflow
 
@@ -969,7 +969,7 @@ class ChannelRecorder:
 				self._append_bext_chunk()
 
 		duration_seconds = self.total_samples_written / self.audio_sample_rate
-		logger.debug(f"Stopped recording channel {self.channel_index} (f = {self.channel_freq/1e6:.5f} MHz) - Duration: {duration_seconds:.1f}s, File: {self.filepath}")
+		logger.debug(f"Stopped recording radio channel {self.channel_index} (f = {self.channel_freq/1e6:.5f} MHz) - Duration: {duration_seconds:.1f}s, File: {self.filepath}")
 
 	@staticmethod
 	def check_empty (filepath: str, flatness_threshold: float | None = None) -> bool:

@@ -705,7 +705,7 @@ class TestFileDevice:
 		"""A mono WAV file should be rejected."""
 		path = str(tmp_path / "mono.wav")
 		soundfile.write(path, numpy.zeros(1000, dtype=numpy.float32), 16000)
-		with pytest.raises(ValueError, match="2 channels"):
+		with pytest.raises(ValueError, match="2 audio channels"):
 			substation.devices.create_device('file', file_path=path, center_freq=446e6)
 
 	def test_rejects_non_wav (self, tmp_path):

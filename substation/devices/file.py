@@ -132,7 +132,7 @@ class FileDevice (substation.devices.base.BaseDevice):
 
 		if channels != 2:
 			raise ValueError(
-				f"IQ file must have exactly 2 channels (I and Q), "
+				f"IQ file must have exactly 2 audio channels (I and Q), "
 				f"got {channels}: {file_path}"
 			)
 		if bits_per_sample != 16:

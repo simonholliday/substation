@@ -698,10 +698,10 @@ class BandConfig(pydantic.BaseModel):
 	@classmethod
 	def _validate_exclusions (cls, value: typing.Any) -> list[int]:
 		"""
-		Validate and normalize channel exclusion list.
+		Validate and normalize the radio channel exclusion list.
 
 		Converts None to empty list, validates that all values are valid
-		1-based channel numbers (the numbers shown in logs and filenames).
+		1-based radio channel numbers (the numbers shown in logs and filenames).
 		"""
 		if value is None:
 			return []
@@ -714,7 +714,7 @@ class BandConfig(pydantic.BaseModel):
 			idx = int(item)
 
 			if idx < 1:
-				raise ValueError("exclude_channel_indices entries are 1-based channel numbers and must be >= 1")
+				raise ValueError("exclude_channel_indices entries are 1-based radio channel numbers and must be >= 1")
 
 			indices.append(idx)
 
@@ -731,7 +731,7 @@ class BandConfig(pydantic.BaseModel):
 
 		"""
 		Bandwidth in Hz that the SDR must capture to scan this band: its span,
-		plus one radio channel's width and half a channel spacing at each edge.
+		plus one radio channel's width and half a radio channel spacing at each edge.
 		"""
 
 		channel_width = self.channel_width
@@ -754,7 +754,7 @@ class BandConfig(pydantic.BaseModel):
 		if self.freq_start >= self.freq_end:
 			raise ValueError('freq_start must be less than freq_end')
 
-		# Default channel width to 84% of spacing (leaves guard bands)
+		# Default radio channel width to 84% of spacing (leaves guard bands)
 		if self.channel_width is None:
 			self.channel_width = self.channel_spacing * substation.constants.CHANNEL_WIDTH_FRACTION
 
@@ -773,7 +773,7 @@ class BandConfig(pydantic.BaseModel):
 			logger.warning(
 				f"snr_threshold_db ({self.snr_threshold_db}) <= hysteresis_db ({self.hysteresis_db}): "
 				f"OFF threshold will be {self.snr_threshold_db - self.hysteresis_db:.1f} dB "
-				f"(channel turns off at noise floor level)"
+				f"(the radio channel turns off at noise floor level)"
 			)
 
 		# Which of the two gains applies depends on the device, known only

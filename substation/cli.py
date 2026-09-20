@@ -59,7 +59,7 @@ def list_bands (config_path: pathlib.Path | None) -> None:
 			print(f"\n{band_name}:")
 			print(f"  Frequency range: {freq_start:.3f} - {freq_end:.3f} MHz")
 			print(f"  Modulation: {modulation}")
-			print(f"  Channel spacing: {channel_spacing:.1f} kHz")
+			print(f"  Radio channel spacing: {channel_spacing:.1f} kHz")
 
 			# A band that cannot fit its own sample rate cannot be scanned, and
 			# would otherwise fail only after its device had been opened.
