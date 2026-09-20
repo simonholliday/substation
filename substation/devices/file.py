@@ -9,7 +9,8 @@ Handles WAV files larger than 4 GB where the header's 32-bit size
 fields have overflowed — the true frame count is computed from the
 actual file size, not from the WAV header.
 
-Supported formats: WAV with 2 channels (I and Q), PCM_16, any sample rate.
+Supported formats: WAV with 2 channels (I and Q), PCM_16, any sample rate,
+as plain PCM or WAVE_FORMAT_EXTENSIBLE, in a RIFF or an RF64 file.
 
 Usage:
     substation --band pmr --iq-file recording.wav --center-freq 446059313
@@ -29,17 +30,30 @@ import substation.devices.base
 logger = logging.getLogger(__name__)
 
 
-def _parse_wav_header (file_path: str) -> tuple[int, int, int, int]:
-	"""Parse a WAV header and return (sample_rate, channels, bits_per_sample, data_offset).
+# WAVE format codes: plain PCM, and the extensible header that names its
+# real format in a SubFormat GUID whose first two bytes are that code.
+_WAVE_FORMAT_PCM = 0x0001
+_WAVE_FORMAT_EXTENSIBLE = 0xFFFE
 
-	Reads only the header — does not load sample data.  Works with
-	files larger than 4 GB where the RIFF/data size fields have
-	overflowed.
+# A 32-bit size field holding this value defers to the ds64 chunk (RF64).
+_RF64_SIZE_IN_DS64 = 0xFFFFFFFF
+
+
+def _parse_wav_header (file_path: str) -> tuple[int, int, int, int, int | None]:
+	"""Parse a WAV header and return (sample_rate, channels, bits_per_sample, data_offset, data_size).
+
+	Reads only the header — does not load sample data.  data_size is the
+	data chunk's length in bytes where the header states it reliably, and
+	None where it cannot: an RF64 file whose ds64 chunk is missing, or a
+	RIFF file over 4 GB, whose 32-bit size fields have overflowed.  The
+	caller then takes the data to run to the end of the file.
 	"""
+
+	file_size = os.path.getsize(file_path)
 
 	with open(file_path, 'rb') as f:
 		riff = f.read(4)
-		if riff != b'RIFF':
+		if riff not in (b'RIFF', b'RF64', b'BW64'):
 			raise ValueError(f"Not a WAV file (missing RIFF header): {file_path}")
 		f.read(4)  # file size (may be overflowed — ignore)
 		wave = f.read(4)
@@ -50,6 +64,8 @@ def _parse_wav_header (file_path: str) -> tuple[int, int, int, int]:
 		channels = 0
 		bits_per_sample = 0
 		data_offset = 0
+		data_size: int | None = None
+		ds64_data_size: int | None = None
 
 		while True:
 			chunk_id = f.read(4)
@@ -60,18 +76,32 @@ def _parse_wav_header (file_path: str) -> tuple[int, int, int, int]:
 			if chunk_id == b'fmt ':
 				fmt_data = f.read(chunk_size)
 				audio_fmt, channels, sample_rate, _, _, bits_per_sample = struct.unpack('<HHIIHH', fmt_data[:16])
-				if audio_fmt != 1:
+				if audio_fmt == _WAVE_FORMAT_EXTENSIBLE and len(fmt_data) >= 26:
+					audio_fmt = struct.unpack('<H', fmt_data[24:26])[0]
+				if audio_fmt != _WAVE_FORMAT_PCM:
 					raise ValueError(f"Unsupported WAV format {audio_fmt} (only PCM supported)")
+			elif chunk_id == b'ds64':
+				ds64_data = f.read(chunk_size)
+				if len(ds64_data) >= 16:
+					ds64_data_size = struct.unpack('<Q', ds64_data[8:16])[0]
 			elif chunk_id == b'data':
 				data_offset = f.tell()
+				if chunk_size == _RF64_SIZE_IN_DS64:
+					data_size = ds64_data_size
+				elif file_size - data_offset <= 0xFFFFFFFF:
+					data_size = chunk_size
 				break
 			else:
 				f.seek(chunk_size, 1)
 
+			# A chunk of odd length is followed by a pad byte.
+			if chunk_size % 2:
+				f.seek(1, 1)
+
 	if data_offset == 0 or sample_rate == 0:
 		raise ValueError(f"Invalid WAV file (missing fmt or data chunk): {file_path}")
 
-	return sample_rate, channels, bits_per_sample, data_offset
+	return sample_rate, channels, bits_per_sample, data_offset, data_size
 
 
 class FileDevice (substation.devices.base.BaseDevice):
@@ -95,10 +125,9 @@ class FileDevice (substation.devices.base.BaseDevice):
 		self._file_path = file_path
 		self._center_freq = center_freq
 		self._stop_event = threading.Event()
-		self._reader_thread: threading.Thread | None = None
 
 		# Parse WAV header (works even if size fields overflowed)
-		sample_rate, channels, bits_per_sample, data_offset = _parse_wav_header(file_path)
+		sample_rate, channels, bits_per_sample, data_offset, data_size = _parse_wav_header(file_path)
 
 		if channels != 2:
 			raise ValueError(
@@ -116,9 +145,12 @@ class FileDevice (substation.devices.base.BaseDevice):
 		self._bytes_per_frame = channels * (bits_per_sample // 8)  # 4 bytes
 		self._gain: float | str | None = None
 
-		# True frame count from file size (not from WAV header which overflows at 4 GB)
-		file_size = os.path.getsize(file_path)
-		data_bytes = file_size - data_offset
+		# Frame count from the data chunk's size where the header states it,
+		# so chunks after the data are not read as IQ samples, and otherwise
+		# from the file size (a RIFF header overflows at 4 GB).
+		data_bytes = os.path.getsize(file_path) - data_offset
+		if data_size is not None:
+			data_bytes = min(data_bytes, data_size)
 		self._frames = data_bytes // self._bytes_per_frame
 
 		duration = self._frames / self._sample_rate
@@ -214,54 +246,49 @@ class FileDevice (substation.devices.base.BaseDevice):
 		iq_scale = self._calibrate_iq_scale()
 		self.iq_scale = iq_scale
 
-		# Read 64K frames at a time (256 KB of raw PCM data)
-		# Read in large chunks for I/O efficiency (1M frames = 4 MB)
+		# Read in large chunks for I/O efficiency: 1M frames, 4 MB of PCM_16
 		read_frames = 1048576
 		read_bytes = read_frames * self._bytes_per_frame
-		data_offset = self._data_offset
+		remaining = self._frames * self._bytes_per_frame
+		rx_buffer = numpy.array([], dtype=numpy.complex64)
 
-		def _reader_loop () -> None:
+		# Runs in the calling thread and blocks until the file is read or the
+		# scan cancels it, as a live SDR's driver loop does; the scanner calls
+		# it through run_in_executor.  A read error propagates, so the scan
+		# ends with it instead of finishing as if the file had ended.
+		with open(self._file_path, 'rb') as f:
+			f.seek(self._data_offset)
 
-			rx_buffer = numpy.array([], dtype=numpy.complex64)
+			while remaining >= self._bytes_per_frame and not self._stop_event.is_set():
+				raw = f.read(min(read_bytes, remaining))
+				if len(raw) < self._bytes_per_frame:
+					break
 
-			try:
-				with open(self._file_path, 'rb') as f:
-					f.seek(data_offset)
+				remaining -= len(raw)
 
-					while not self._stop_event.is_set():
-						raw = f.read(read_bytes)
-						if len(raw) < self._bytes_per_frame:
-							break
+				# Convert raw int16 pairs to complex64
+				n_frames = len(raw) // self._bytes_per_frame
+				samples = numpy.frombuffer(
+					raw[:n_frames * self._bytes_per_frame], dtype=numpy.int16
+				)
+				iq = (samples[0::2] + 1j * samples[1::2]).astype(numpy.complex64) / 32768.0
 
-						# Convert raw int16 pairs to complex64
-						n_frames = len(raw) // self._bytes_per_frame
-						samples = numpy.frombuffer(
-							raw[:n_frames * self._bytes_per_frame], dtype=numpy.int16
-						)
-						iq = (samples[0::2] + 1j * samples[1::2]).astype(numpy.complex64) / 32768.0
+				if iq_scale != 1.0:
+					iq *= iq_scale
 
-						if iq_scale != 1.0:
-							iq *= iq_scale
+				rx_buffer = substation.devices.base.rechunk_samples(
+					rx_buffer, iq, num_samples, callback
+				)
 
-						rx_buffer = substation.devices.base.rechunk_samples(
-							rx_buffer, iq, num_samples, callback
-						)
+		if self._stop_event.is_set():
+			logger.info("IQ file playback stopped")
+			return
 
-				# Flush remaining samples
-				if rx_buffer.size > 0:
-					callback(rx_buffer, None)
+		# Flush remaining samples
+		if rx_buffer.size > 0:
+			callback(rx_buffer, None)
 
-			except Exception as exc:
-				logger.error(f"IQ file read error: {exc}")
-
-			logger.info("IQ file playback complete")
-
-		# Run the reader directly in the calling thread (blocking).
-		# The scanner calls read_samples_async via run_in_executor, which
-		# expects a blocking call.  Live SDR devices block in their driver's
-		# read loop; we block here until the file is fully read or cancelled.
-		self._reader_thread = threading.current_thread()
-		_reader_loop()
+		logger.info("IQ file playback complete")
 
 	def cancel_read_async (self) -> None:
 		"""Stop file playback."""

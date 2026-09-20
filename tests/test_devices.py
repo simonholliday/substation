@@ -5,6 +5,7 @@ import datetime
 import importlib
 import importlib.machinery
 import importlib.util
+import struct
 import subprocess
 import sys
 import threading
@@ -16,6 +17,7 @@ import pytest
 import soundfile
 
 import substation.devices
+import substation.devices.file
 import substation.scanner
 
 
@@ -452,6 +454,81 @@ class TestFileDevice:
 		# Setter is a no-op — getter still returns the original
 		dev.center_freq = 500e6
 		assert dev.center_freq == 446.059e6
+
+	@staticmethod
+	def _stream_all (dev, chunk_size=4096):
+		"""Play the whole file and return every IQ sample delivered, in order."""
+		received = []
+		dev.read_samples_async(lambda samples, _ctx: received.append(samples.copy()), chunk_size)
+		return numpy.concatenate(received) if received else numpy.array([], dtype=numpy.complex64)
+
+	@staticmethod
+	def _pcm16_wav_bytes (frames, extra_before=b"", extra_after=b""):
+		"""A stereo PCM_16 WAV file as bytes, with raw chunks placed before or after its data chunk."""
+		data = numpy.asarray(frames, dtype=numpy.int16).tobytes()
+		fmt = struct.pack('<HHIIHH', 1, 2, 8000, 8000 * 4, 4, 16)
+		body = b"WAVE" + b"fmt " + struct.pack('<I', len(fmt)) + fmt + extra_before
+		body += b"data" + struct.pack('<I', len(data)) + data + extra_after
+		return b"RIFF" + struct.pack('<I', len(body)) + body
+
+	def test_chunk_after_the_data_is_not_played (self, tmp_path):
+		"""Regression: a chunk after the data, such as LIST metadata, was streamed as IQ samples."""
+		frames = numpy.tile([[1000, -1000]], (100, 1))
+		listing = b"LIST" + struct.pack('<I', 64) + bytes(64)
+		path = tmp_path / "trailing.wav"
+		path.write_bytes(self._pcm16_wav_bytes(frames, extra_after=listing))
+
+		dev = substation.devices.create_device('file', file_path=str(path), center_freq=446e6)
+
+		assert len(self._stream_all(dev)) == 100
+
+	def test_odd_sized_chunk_before_the_data_is_skipped_with_its_pad_byte (self, tmp_path):
+		"""Regression: the RIFF pad byte after an odd-sized chunk was not skipped, so valid files were rejected."""
+		frames = numpy.tile([[1000, -1000]], (100, 1))
+		odd = b"junk" + struct.pack('<I', 3) + b"abc" + b"\x00"
+		path = tmp_path / "odd.wav"
+		path.write_bytes(self._pcm16_wav_bytes(frames, extra_before=odd))
+
+		dev = substation.devices.create_device('file', file_path=str(path), center_freq=446e6)
+
+		assert len(self._stream_all(dev)) == 100
+
+	@pytest.mark.parametrize("container", ["WAVEX", "RF64"])
+	def test_extensible_and_rf64_files_play (self, tmp_path, container):
+		"""Regression: WAVE_FORMAT_EXTENSIBLE and RF64, the usual format past 4 GB, were rejected as not WAV."""
+		path = str(tmp_path / f"iq_{container}.wav")
+		stereo = numpy.tile([[0.25, -0.25]], (1000, 1))
+		soundfile.write(path, stereo, 8000, subtype='PCM_16', format=container)
+
+		dev = substation.devices.create_device('file', file_path=path, center_freq=446e6)
+		samples = self._stream_all(dev)
+
+		assert dev.sample_rate == 8000
+		assert len(samples) == 1000
+
+	def test_read_error_is_raised (self, tmp_path, monkeypatch):
+		"""Regression: a read error was logged and swallowed, so playback ended as if the file had."""
+		path = self._make_iq_wav(tmp_path, n_frames=4096)
+		dev = substation.devices.create_device('file', file_path=path, center_freq=446e6)
+		real_open = open
+
+		class FailingFile:
+			def __init__ (self, handle):
+				self._handle = handle
+			def __enter__ (self):
+				return self
+			def __exit__ (self, *exc):
+				self._handle.close()
+			def seek (self, *args):
+				return self._handle.seek(*args)
+			def read (self, *args):
+				raise OSError("I/O error reading the IQ file")
+
+		monkeypatch.setattr(substation.devices.file, "open", lambda *args, **kwargs: FailingFile(real_open(*args, **kwargs)), raising=False)
+		monkeypatch.setattr(dev, "_calibrate_iq_scale", lambda: 1.0)
+
+		with pytest.raises(OSError, match="I/O error"):
+			dev.read_samples_async(lambda samples, _ctx: None, 1024)
 
 	def test_streams_samples (self, tmp_path):
 		"""FileDevice delivers IQ samples via callback."""

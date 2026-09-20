@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime
+import threading
 
 import numpy
 
@@ -123,6 +124,39 @@ class TestStreamEndSentinel:
 
 			assert await sc.sample_queue.get() is block
 			assert await asyncio.wait_for(sc.sample_queue.get(), timeout=1) is None
+
+		asyncio.run(scenario())
+
+	def test_file_reader_waiting_for_room_gives_up_when_the_scan_stops (self, scanner_instance):
+		"""Regression: once processing stopped, the file reader waited for room in the queue until the loop closed.
+
+		It held an executor thread and the file until then, and logged an
+		empty IQ file read error at every Ctrl+C during playback.
+		"""
+
+		async def scenario ():
+			sc = scanner_instance
+			sc.clock = substation.scanner.VirtualClock(datetime.datetime(2000, 1, 1), 1e6)
+			sc.loop = asyncio.get_running_loop()
+			sc.sample_queue = asyncio.Queue(maxsize=1)
+			sc.sample_queue.put_nowait(numpy.zeros(4, dtype=numpy.complex64))
+			returned = threading.Event()
+
+			def reader ():
+				sc._sdr_callback(numpy.ones(4, dtype=numpy.complex64), None)
+				returned.set()
+
+			threading.Thread(target=reader, daemon=True).start()
+			await asyncio.sleep(0.3)
+			assert not returned.is_set()
+
+			sc._stopping = True
+			for _ in range(40):
+				if returned.is_set():
+					break
+				await asyncio.sleep(0.05)
+
+			assert returned.is_set()
 
 		asyncio.run(scenario())
 

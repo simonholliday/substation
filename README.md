@@ -417,7 +417,7 @@ Options:
 - `--device-type`, `-t`: `rtlsdr`, `hackrf`, `airspy`, `airspyhf`, or `soapy:<driver>` (default `rtlsdr`).
 - `--device-index`, `-i`: device index (default `0`).
 - `--list-bands`: list available bands and exit.
-- `--iq-file`: path to an IQ WAV file, with I and Q as its two audio channels, for offline playback (replaces live SDR).
+- `--iq-file`: path to an IQ WAV file, with I and Q as its two audio channels in 16-bit PCM, for offline playback (replaces live SDR).
 - `--center-freq`: centre frequency of the IQ recording in Hz (required with `--iq-file`).
 - `--start-time`: start time of the recording as `"YYYY-MM-DD HH:MM:SS"` (default: `2000-01-01 00:00:00`).
 
@@ -432,7 +432,7 @@ substation --band pmr \
   --start-time "2025-03-16 16:13:20"
 ```
 
-The IQ file must be a WAV with two audio channels (I and Q) at any sample rate. The centre frequency is the frequency the SDR was tuned to when recording. The file's sample rate is read from the WAV header. The band span must fit within the file's bandwidth - the centre frequency doesn't need to match the band midpoint exactly.
+The IQ file must be a WAV with two audio channels (I and Q), as 16-bit PCM, at any sample rate. RF64 and WAVE_FORMAT_EXTENSIBLE files work too, and files over 4 GB whose header sizes have overflowed. The centre frequency is the frequency the SDR was tuned to when recording. The file's sample rate is read from the WAV header. The band span must fit within the file's bandwidth - the centre frequency doesn't need to match the band midpoint exactly.
 
 ## Configuration
 

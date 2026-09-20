@@ -328,6 +328,10 @@ class RadioScanner:
 		# raises it once the processing loop has drained the queue.
 		self._stream_error: BaseException | None = None
 
+		# Set when scan() starts shutting down, so a file reader waiting for
+		# room in the queue gives up instead of waiting forever.
+		self._stopping = False
+
 		# A file playback's end-of-stream sentinel still waiting for room in
 		# the queue, kept so the task is not garbage collected.
 		self._stream_end_put: asyncio.Task | None = None
@@ -1262,10 +1266,21 @@ class RadioScanner:
 				# File playback: use blocking put with backpressure.
 				# The file reader runs faster than processing, so we must
 				# wait for the queue to have space rather than dropping.
+				# Stop waiting once the scan is stopping: nothing will empty
+				# the queue again, and the reader would otherwise hold its
+				# thread and the file until the loop closed.
 				future = asyncio.run_coroutine_threadsafe(
 					self.sample_queue.put(samples), self.loop
 				)
-				future.result()  # block until the put completes
+
+				while True:
+					try:
+						future.result(timeout=0.1)
+						return
+					except concurrent.futures.TimeoutError:
+						if self._stopping:
+							future.cancel()
+							return
 			else:
 				# Live SDR: non-blocking, drop if queue full.
 				# Real-time streams can't wait — dropping is better than
@@ -2227,6 +2242,7 @@ class RadioScanner:
 
 		logger.info("Starting scan...")
 		self._stream_error = None
+		self._stopping = False
 		self._processing_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="substation-slice")
 
 		try:
@@ -2330,6 +2346,8 @@ class RadioScanner:
 		except KeyboardInterrupt:
 			logger.info("Scan interrupted by user")
 		finally:
+			self._stopping = True
+
 			# Cancel async streaming
 			if self.sdr:
 				try:

@@ -303,7 +303,7 @@ Examples:
 	parser.add_argument(
 		'--iq-file',
 		default=None,
-		help='IQ WAV file to process (2-channel I/Q). Replaces live SDR device.'
+		help='IQ WAV file to process (2-channel I/Q, 16-bit PCM). Replaces live SDR device.'
 	)
 
 	parser.add_argument(
