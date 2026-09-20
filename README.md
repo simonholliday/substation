@@ -466,13 +466,13 @@ scanner:
   sdr_device_sample_size: 131072
   band_time_slice_ms: 200
   sample_queue_maxsize: 200
-  calibration_frequency_hz: 93.7e+6
+  calibration_frequency_hz: null
   stuck_channel_threshold_seconds: 60
 ```
 - `sdr_device_sample_size`: size, in IQ samples, of the blocks each slice is built from. Every slice is rounded up to a whole number of blocks. On an RTL-SDR it must be a multiple of 256.
 - `band_time_slice_ms`: how often the scanner analyses the spectrum, in milliseconds. The scanner reads, queues, and processes IQ samples one slice at a time.
 - `sample_queue_maxsize`: how many slices can wait while processing catches up. Each queued slice holds every IQ sample in it, so the memory a full queue needs grows with the band's sample rate and the slice length, and at 12.5 MHz it runs to gigabytes. Lower it on computers with little memory.
-- `calibration_frequency_hz`: optional known signal for PPM correction; set to `null` to disable. Requires a device with a PPM correction control, which means RTL-SDR only; other devices skip calibration automatically. If no strong, steady signal is found at that frequency, calibration is skipped with a warning and the receiver's correction is left as it was, so choose a station you can receive well.
+- `calibration_frequency_hz`: a known strong signal the scanner tunes at startup to measure and correct the receiver's frequency error. `null`, the default, leaves the correction as it is. An FM broadcast station is the usual choice, because it is on air all day at a fixed frequency: in parts of the UK, `93.7e+6` is BBC Radio 4. Requires a device with a PPM correction control, which means RTL-SDR only; other devices skip calibration automatically. If no strong, steady signal is found at that frequency, calibration is skipped with a warning and the receiver's correction is left as it was, so choose a station you can receive well.
 - `stuck_channel_threshold_seconds`: optional duration in seconds after which a radio channel that stays active triggers a `STUCK CHANNEL WARNING` in the log. Useful for identifying interference or stuck transmitters. Set to `null` to disable.
 
 Recording

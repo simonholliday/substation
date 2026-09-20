@@ -160,14 +160,17 @@ class ScannerConfig(pydantic.BaseModel):
 	queue can need more memory than a small computer has: lower it there.
 	"""
 
-	calibration_frequency_hz: float | None = pydantic.Field(default=93.7e6, gt=0)
+	calibration_frequency_hz: float | None = pydantic.Field(default=None, gt=0)
 	"""
-	Frequency in Hz of a strong, steady local signal, such as an FM broadcast
-	station, that the scanner uses at startup to measure and correct the
-	receiver's frequency error. If no strong, steady signal is found there, the
-	scanner skips calibration with a warning and leaves the receiver's correction
-	unchanged. Only RTL-SDR receivers have a PPM correction control; other devices
-	skip calibration. Set to null to turn calibration off.
+	Frequency in Hz of a strong, steady local signal that the scanner uses at
+	startup to measure and correct the receiver's frequency error. Null, the
+	default, leaves the receiver's correction as it is. An FM broadcast station
+	is the usual choice, because it is on air all day at a fixed frequency: in
+	parts of the UK, 93.7e+6 is BBC Radio 4. Pick a station you receive well,
+	since the scanner skips calibration with a warning, and leaves the
+	correction unchanged, when it finds no strong, steady signal there. Only
+	RTL-SDR receivers have a PPM correction control; other devices skip
+	calibration.
 	"""
 
 	stuck_channel_threshold_seconds: float | None = pydantic.Field(default=60.0, gt=0)
