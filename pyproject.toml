@@ -1,11 +1,11 @@
 [build-system]
 # The >=77 floor is required for the PEP 639 SPDX `license` string form below.
-# The <81 cap dates from setuptools 81 removing pkg_resources, but a build
-# requirement never reaches the environment Substation runs in.  pyrtlsdr,
-# the only runtime dependency that imports pkg_resources, is handled in
-# substation/devices/rtlsdr.py instead.  The cap stays until a build without
-# it has been checked.
-requires = ["setuptools>=77,<81", "setuptools-scm>=8.0"]
+# There is no upper cap: an earlier <81 cap dated from setuptools 81 removing
+# pkg_resources, but a build requirement never reaches the environment
+# Substation runs in, and a wheel built with setuptools 84 has the same files,
+# byte for byte, as one built with 80.  pyrtlsdr, the only runtime dependency
+# that imports pkg_resources, is handled in substation/devices/rtlsdr.py.
+requires = ["setuptools>=77", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
