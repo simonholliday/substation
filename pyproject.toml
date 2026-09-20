@@ -108,7 +108,13 @@ substation = ["config.yaml.default", "band_library.yaml"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests"]
-filterwarnings = ["ignore::DeprecationWarning"]
+# A deprecated call in Substation's own code fails the suite, so it is fixed
+# before the Python release that removes it.  Warnings raised inside other
+# packages keep pytest's default handling.
+filterwarnings = [
+    "error::DeprecationWarning:substation",
+    "error::PendingDeprecationWarning:substation",
+]
 
 [tool.mypy]
 # Keep mypy strict on our own code.  We only add per-module overrides

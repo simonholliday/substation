@@ -1,6 +1,6 @@
 import asyncio
 import datetime
-import functools
+import inspect
 import logging
 import os
 import pathlib
@@ -246,6 +246,10 @@ class RadioScanner:
 		#         noise_floor, channel_snr.
 		self._event_handlers: dict[str, list[typing.Callable]] = {}
 
+		# Handlers that have raised, by event and handler, so each one's first
+		# failure is logged at WARNING and its later ones at DEBUG.
+		self._failed_handlers: set[tuple[str, int]] = set()
+
 		# SDR device (typed as Any because scanner accesses device-specific
 		# attributes like read_samples and freq_correction beyond BaseDevice)
 		self.sdr: typing.Any | None = None
@@ -410,9 +414,9 @@ class RadioScanner:
 		Dispatch rules, by handler type and whether `loop` is supplied:
 
 		- async handler + loop given → scheduled via
-		  asyncio.run_coroutine_threadsafe(handler(**kwargs), loop).
+		  asyncio.run_coroutine_threadsafe(), and awaited there.
 		- sync handler + loop given → dispatched via
-		  loop.call_soon_threadsafe(functools.partial(handler, **kwargs)).
+		  loop.call_soon_threadsafe().
 		- sync handler, no loop → called directly on the caller's
 		  thread (used when emit() is itself called from the event loop,
 		  e.g. inside an async coroutine).
@@ -421,8 +425,9 @@ class RadioScanner:
 		  cannot await.  Callers that want to support async consumers for
 		  an event must supply `loop=`.
 
-		Handler exceptions are caught and logged at DEBUG — a misbehaving
-		handler never stops other handlers firing.
+		A handler's exception is caught wherever the handler runs, and logged
+		at WARNING with its traceback the first time that handler fails, then
+		at DEBUG.  A misbehaving handler never stops other handlers firing.
 		"""
 
 		handlers = self._event_handlers.get(event)
@@ -431,16 +436,55 @@ class RadioScanner:
 
 		for handler in handlers:
 			try:
-				if asyncio.iscoroutinefunction(handler):
+				if inspect.iscoroutinefunction(handler):
 					if loop:
-						asyncio.run_coroutine_threadsafe(handler(**kwargs), loop)
+						asyncio.run_coroutine_threadsafe(self._await_handler(event, handler, kwargs), loop)
 				elif loop:
-					# call_soon_threadsafe only accepts *args, not **kwargs.
-					loop.call_soon_threadsafe(functools.partial(handler, **kwargs))
+					loop.call_soon_threadsafe(self._call_handler, event, handler, kwargs)
 				else:
-					handler(**kwargs)
+					self._call_handler(event, handler, kwargs)
 			except Exception:
-				logger.debug(f"Event handler error for '{event}'", exc_info=True)
+				# Scheduling failed, for instance on a loop that has closed.
+				logger.debug(f"Could not dispatch '{event}' to {handler!r}", exc_info=True)
+
+	def _call_handler (self, event: str, handler: typing.Callable, kwargs: dict[str, typing.Any]) -> None:
+
+		"""Call one sync handler, logging whatever it raises."""
+
+		try:
+			handler(**kwargs)
+		except Exception:
+			self._report_handler_error(event, handler)
+
+	async def _await_handler (self, event: str, handler: typing.Callable, kwargs: dict[str, typing.Any]) -> None:
+
+		"""Await one async handler, logging whatever it raises."""
+
+		try:
+			await handler(**kwargs)
+		except Exception:
+			self._report_handler_error(event, handler)
+
+	def _report_handler_error (self, event: str, handler: typing.Callable) -> None:
+
+		"""
+		Log the exception a handler just raised.
+
+		The first failure of each handler on each event is logged at WARNING
+		with its traceback, so a broken consumer is visible at the default log
+		level; repeats go to DEBUG, because per-slice events would otherwise
+		repeat it several times a second.  Call from an except block.
+		"""
+
+		name = getattr(handler, '__qualname__', repr(handler))
+		key = (event, id(handler))
+
+		if key in self._failed_handlers:
+			logger.debug(f"Event handler {name} failed again on '{event}'", exc_info=True)
+			return
+
+		self._failed_handlers.add(key)
+		logger.warning(f"Event handler {name} failed on '{event}'; later failures of this handler are logged at DEBUG", exc_info=True)
 
 	def add_state_callback (self, callback: typing.Callable) -> None:
 

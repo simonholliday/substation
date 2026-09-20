@@ -1,6 +1,7 @@
 """Tests for the RadioScanner event emitter (on/off/emit)."""
 
 import asyncio
+import logging
 
 
 class TestEventEmitter:
@@ -177,3 +178,51 @@ class TestEventEmitter:
 		scanner_instance.emit('channel_snr', channels=[])
 
 		assert received == []
+
+
+class TestHandlerFailures:
+
+	def test_first_failure_is_a_warning_and_repeats_are_debug (self, scanner_instance, caplog):
+		"""Regression: handler errors were logged only at DEBUG, so a broken consumer failed silently."""
+		scanner_instance.on('noise_floor', lambda **kw: 1/0)
+
+		with caplog.at_level(logging.DEBUG, logger='substation.scanner'):
+			for _ in range(3):
+				scanner_instance.emit('noise_floor', noise_floor_db=-80.0, warmup_complete=True)
+
+		warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+		assert len(warnings) == 1
+		assert "'noise_floor'" in warnings[0].getMessage()
+		assert warnings[0].exc_info is not None
+		assert sum(1 for r in caplog.records if r.levelno == logging.DEBUG and "failed again" in r.getMessage()) == 2
+
+	def test_loop_dispatched_handler_failure_is_reported (self, scanner_instance, caplog):
+		"""A sync handler run on the event loop is caught there too, instead of reaching asyncio's error log."""
+		scanner_instance.on('channel_state', lambda **kw: 1/0)
+
+		async def runner ():
+			scanner_instance.emit('channel_state', loop=asyncio.get_running_loop(),
+				band='pmr', index=1, freq=446e6, is_active=True, snr_db=10.0,
+				ctcss_hz=None, dcs_code=None)
+			await asyncio.sleep(0)
+
+		with caplog.at_level(logging.WARNING):
+			asyncio.run(runner())
+
+		assert [r.name for r in caplog.records if r.levelno >= logging.WARNING] == ['substation.scanner']
+
+	def test_async_handler_failure_is_reported (self, scanner_instance, caplog):
+		"""Regression: an async handler's exception stayed in a future nobody read, and vanished."""
+		async def handler (**kw):
+			raise ValueError("consumer broke")
+
+		scanner_instance.on('noise_floor', handler)
+
+		async def runner ():
+			scanner_instance.emit('noise_floor', loop=asyncio.get_running_loop(), noise_floor_db=-80.0, warmup_complete=True)
+			await asyncio.sleep(0.01)
+
+		with caplog.at_level(logging.WARNING):
+			asyncio.run(runner())
+
+		assert any("failed on 'noise_floor'" in r.getMessage() and r.levelno == logging.WARNING for r in caplog.records)
