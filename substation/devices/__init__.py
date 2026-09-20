@@ -65,7 +65,12 @@ def create_device (device_type: str, device_index: int = 0, **kwargs: typing.Any
 	  Requires: soapysdr-module-airspyhf (system package)
 
 	- Generic SoapySDR (prefix: 'soapy:<driver>')
-	  Any SoapySDR-compatible device, e.g., 'soapy:rtlsdr', 'soapy:lime'
+	  Any SoapySDR-compatible device, e.g., 'soapy:rtlsdr', 'soapy:lime'.
+	  The prefix always means SoapySDR, even for a device that also has a
+	  native wrapper here, such as an RTL-SDR or a HackRF.
+
+	- IQ file playback ('file')
+	  Requires file_path and center_freq keyword arguments
 
 	Args:
 		device_type: Type of device (case-insensitive, accepts aliases)
@@ -88,6 +93,14 @@ def create_device (device_type: str, device_index: int = 0, **kwargs: typing.Any
 	family = normalize_device_family(device_type)
 
 	# Lazy imports: only load the binding for the requested device type.
+
+	# SoapySDR-based devices (AirSpy R2, AirSpy HF+, generic).  Checked
+	# first, because 'soapy:rtlsdr' and 'soapy:hackrf' name a family that
+	# also has a native wrapper below.
+	if device_type.lower().startswith('soapy:') or family in ('airspy', 'airspyhf'):
+		import substation.devices.soapysdr
+		return substation.devices.soapysdr.SoapySdrDevice(family, device_index)
+
 	if family == 'rtlsdr':
 		import substation.devices.rtlsdr
 		return substation.devices.rtlsdr.RtlSdrDevice(device_index)
@@ -95,11 +108,6 @@ def create_device (device_type: str, device_index: int = 0, **kwargs: typing.Any
 	if family == 'hackrf':
 		import substation.devices.hackrf
 		return substation.devices.hackrf.HackRfDevice(device_index)
-
-	# SoapySDR-based devices (AirSpy R2, AirSpy HF+, generic)
-	if family in ('airspy', 'airspyhf') or device_type.lower().startswith('soapy:'):
-		import substation.devices.soapysdr
-		return substation.devices.soapysdr.SoapySdrDevice(family, device_index)
 
 	# IQ file playback
 	if family == 'file':

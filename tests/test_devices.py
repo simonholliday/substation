@@ -69,6 +69,12 @@ class TestCreateDevice:
 		mock_cls = _mock_create_device("soapy:lime", "soapysdr", "SoapySdrDevice")
 		mock_cls.assert_called_once_with('lime', 0)
 
+	def test_soapy_prefix_wins_over_a_native_wrapper (self):
+		"""Regression: soapy:rtlsdr and soapy:hackrf built the native wrappers, so SoapySDR was unreachable for them."""
+		for alias, driver in (("soapy:rtlsdr", "rtlsdr"), ("soapy:hackrf", "hackrf")):
+			mock_cls = _mock_create_device(alias, "soapysdr", "SoapySdrDevice")
+			mock_cls.assert_called_once_with(driver, 0)
+
 	def test_case_insensitive (self):
 		mock_cls = _mock_create_device("RTLSDR", "rtlsdr", "RtlSdrDevice")
 		mock_cls.assert_called_once()
