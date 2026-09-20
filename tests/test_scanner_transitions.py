@@ -1,6 +1,7 @@
 """Tests for transition detection, sample-level trimming, and stream-end signalling."""
 
 import asyncio
+import datetime
 
 import numpy
 
@@ -105,8 +106,28 @@ class TestStreamEndSentinel:
 
 		asyncio.run(scenario())
 
+	def test_file_playback_sentinel_waits_for_room (self, scanner_instance):
+		"""Regression: at the end of an IQ file the queue is full, and the sentinel discarded a slice never processed.
+
+		Every later filename and BEXT timestamp was then one slice early.
+		"""
+
+		async def scenario ():
+			sc = scanner_instance
+			sc.clock = substation.scanner.VirtualClock(datetime.datetime(2000, 1, 1), 1e6)
+			sc.sample_queue = asyncio.Queue(maxsize=1)
+			block = numpy.ones(4, dtype=numpy.complex64)
+			sc.sample_queue.put_nowait(block)
+
+			sc._signal_stream_end()
+
+			assert await sc.sample_queue.get() is block
+			assert await asyncio.wait_for(sc.sample_queue.get(), timeout=1) is None
+
+		asyncio.run(scenario())
+
 	def test_sentinel_forces_room_when_queue_full (self, scanner_instance):
-		"""A full queue must not swallow the sentinel — one block is dropped to make room."""
+		"""On a live stream a full queue must not swallow the sentinel — one block is dropped to make room."""
 
 		async def scenario ():
 			sc = scanner_instance

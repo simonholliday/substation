@@ -181,6 +181,16 @@ CALIBRATION_MIN_SIGNAL_DB = 10.0
 CALIBRATION_MAX_CORRECTION_PPM = 200
 
 # ==============================================================================
+# IQ File Playback Constants
+# ==============================================================================
+
+# Slices of IQ samples queued ahead of processing during file playback.  The
+# file reader waits for room instead of dropping slices, and always outruns
+# processing, so the queue stays full: a deeper one holds more memory and
+# gains nothing.  sample_queue_maxsize still applies when it is smaller.
+PLAYBACK_QUEUE_SLICES = 4
+
+# ==============================================================================
 # Event Constants
 # ==============================================================================
 

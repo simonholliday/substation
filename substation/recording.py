@@ -558,6 +558,14 @@ class ChannelRecorder:
 
 		# Flag to indicate if recorder is closing
 		self._closing = threading.Event()
+
+		# An early flush, asked for by append_audio() once half the buffer is
+		# unflushed.  IQ file playback runs many times faster than real time,
+		# so between timed flushes it can append more audio than the buffer
+		# holds.  The event and its loop belong to the flush task.
+		self._flush_requested: asyncio.Event | None = None
+		self._flush_loop: asyncio.AbstractEventLoop | None = None
+		self._flush_request_sent = False
 		self.noise_mag: numpy.ndarray | None = None
 
 		self._write_lock = threading.Lock()
@@ -669,18 +677,39 @@ class ChannelRecorder:
 			self._ring_write_head = (head + n) % cap
 			self._ring_frames_written += n
 
+			# Half the buffer waiting to be written: ask for a flush now rather
+			# than at the next timed one.  Once per flush is enough.
+			if (
+				not self._flush_request_sent
+				and self._flush_loop is not None
+				and self._flush_requested is not None
+				and self._ring_frames_written - self._ring_frames_flushed >= cap // 2
+			):
+				self._flush_request_sent = True
+				self._flush_loop.call_soon_threadsafe(self._flush_requested.set)
+
 	async def _flush_to_disk_periodically (self) -> None:
 
 		"""
-		Async task that periodically flushes buffer to disk
-		Runs until cancelled
+		Async task that flushes the buffer to disk every
+		disk_flush_interval seconds, and early whenever append_audio()
+		finds half the buffer unflushed.  Runs until cancelled.
 		"""
+
+		flush_requested = asyncio.Event()
+		self._flush_requested = flush_requested
+		self._flush_loop = asyncio.get_running_loop()
 
 		try:
 
 			while not self._closing.is_set():
 
-				await asyncio.sleep(self.disk_flush_interval)
+				try:
+					await asyncio.wait_for(flush_requested.wait(), timeout=self.disk_flush_interval)
+				except asyncio.TimeoutError:
+					pass
+
+				flush_requested.clear()
 
 				try:
 					await self._flush_buffer_to_disk()
@@ -708,6 +737,8 @@ class ChannelRecorder:
 		# append_audio() is called from the executor thread.  The critical section
 		# is a fast memcpy so event-loop blocking is negligible.
 		with self._buffer_lock:
+
+			self._flush_request_sent = False
 
 			n_unflushed = self._ring_frames_written - self._ring_frames_flushed
 			if n_unflushed <= 0:

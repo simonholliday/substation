@@ -323,6 +323,10 @@ class RadioScanner:
 		# raises it once the processing loop has drained the queue.
 		self._stream_error: BaseException | None = None
 
+		# A file playback's end-of-stream sentinel still waiting for room in
+		# the queue, kept so the task is not garbage collected.
+		self._stream_end_put: asyncio.Task | None = None
+
 		logger.info(f"Initialized scanner for band '{band_name}'")
 		logger.info(f"Frequency range: {self.freq_start/1e6:.5f} - {self.freq_end/1e6:.5f} MHz")
 		logger.info(f"Number of channels: {self.num_channels}")
@@ -1189,9 +1193,10 @@ class RadioScanner:
 
 		Unlike ordinary sample blocks, the sentinel must not be dropped when
 		the queue is full — a lost sentinel means scan() waits on the queue
-		forever.  If needed, one pending sample block is discarded to make
-		room (the stream is over, so those samples were never going to have
-		successors anyway).
+		forever.  For file playback every queued slice is still to be
+		processed, and the processing loop is emptying the queue, so the
+		sentinel waits for room behind them.  A live stream that has ended
+		has failed, so there one pending slice is discarded to make room.
 		"""
 
 		if self.sample_queue is None:
@@ -1200,6 +1205,11 @@ class RadioScanner:
 		try:
 			self.sample_queue.put_nowait(None)
 		except asyncio.QueueFull:
+
+			if self.clock:
+				# Keep a reference: the loop holds only a weak one to a task.
+				self._stream_end_put = asyncio.get_running_loop().create_task(self.sample_queue.put(None))
+				return
 
 			try:
 				self.sample_queue.get_nowait()
@@ -2217,7 +2227,16 @@ class RadioScanner:
 			# self.loop / self.sample_queue.
 			loop = asyncio.get_running_loop()
 			self.loop = loop
-			self.sample_queue = asyncio.Queue(maxsize=self.sample_queue_maxsize)
+
+			# File playback waits for room in the queue rather than dropping
+			# slices, and the reader outruns processing, so the queue is always
+			# full there: a few slices keep the processing thread busy, and
+			# more would only hold memory.
+			queue_size = self.sample_queue_maxsize
+			if self.clock:
+				queue_size = min(queue_size, substation.constants.PLAYBACK_QUEUE_SLICES)
+
+			self.sample_queue = asyncio.Queue(maxsize=queue_size)
 
 			# Start async SDR streaming in background thread (non-blocking)
 			# This must run in an executor because read_samples_async blocks

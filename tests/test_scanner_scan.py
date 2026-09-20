@@ -387,3 +387,54 @@ class TestRecordingThatCannotBeCreated:
 		assert not [name for name, _ in events if name.startswith('recording_')]
 		assert sum("could not create its recording" in r.getMessage() for r in caplog.records) == 1
 		assert not any("no recorder found" in r.getMessage() for r in caplog.records)
+
+
+class TestPlaybackKeepsEverySample:
+
+	def test_every_slice_of_the_file_is_processed (self, minimal_config_dict, tmp_path):
+		"""Regression: the end-of-stream sentinel discarded the oldest queued slice, never processed.
+
+		File playback ends with the queue full whenever the file is longer
+		than the queue, so a slice near the end of every such file was lost
+		and the virtual clock ended a slice short.
+		"""
+		minimal_config_dict["scanner"]["sample_queue_maxsize"] = 2
+		app_config = substation.config.validate_config(minimal_config_dict)
+		band = app_config.bands["test_nfm"]
+		iq_path = tmp_path / "noise.wav"
+		_write_iq_wav(iq_path, band.sample_rate, seconds=2.0)
+		frames = soundfile.info(str(iq_path)).frames
+		clock = substation.scanner.VirtualClock(datetime.datetime(2000, 1, 1), band.sample_rate)
+
+		scanner = substation.scanner.RadioScanner(
+			config=app_config,
+			band_name="test_nfm",
+			device_type="file",
+			clock=clock,
+			device_kwargs={"file_path": str(iq_path), "center_freq": (band.freq_start + band.freq_end) / 2},
+		)
+		asyncio.run(scanner.scan())
+
+		remainder = frames % scanner.samples_per_slice
+		expected = frames - remainder + (remainder if remainder >= scanner.fft_size else 0)
+		assert clock.samples_delivered == expected
+
+	def test_long_transmission_is_recorded_whole (self, minimal_config_dict, tmp_path, caplog):
+		"""Regression: in playback, a transmission longer than the audio buffer lost its start.
+
+		Flushes ran on a wall-clock timer while playback ran many times faster
+		than real time, so the buffer overflowed between them and dropped the
+		oldest audio.  Here the buffer holds 4 s and the timer fires every 2 s
+		of wall-clock time, against a 10 s transmission.
+		"""
+		minimal_config_dict["recording"]["buffer_size_seconds"] = 4.0
+		minimal_config_dict["recording"]["disk_flush_interval_seconds"] = 2.0
+		events = []
+
+		with caplog.at_level(logging.WARNING):
+			_play_transmissions(minimal_config_dict, tmp_path, 13.0, [(3, 1.5, 11.5)], handlers=_recorder(events))
+
+		saved = [payload['file_path'] for name, payload in events if name == 'recording_saved']
+		assert len(saved) == 1
+		assert soundfile.info(saved[0]).duration > 9.5
+		assert not any("Buffer overflow" in r.getMessage() for r in caplog.records)
