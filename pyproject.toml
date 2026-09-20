@@ -87,7 +87,9 @@ include = ["substation*"]
 [tool.setuptools.package-data]
 # Ship the default configuration inside the package so it resolves for
 # editable installs and wheels alike (see config._locate_default_config).
-substation = ["config.yaml.default"]
+# band_library.yaml is what substation.generate_default_config builds the
+# default configuration's band library from.
+substation = ["config.yaml.default", "band_library.yaml"]
 
 [tool.setuptools_scm]
 # Version is derived from git release tags (vX.Y.Z), same as the other
