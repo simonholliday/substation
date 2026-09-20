@@ -624,151 +624,128 @@ class TestCTCSSDetection:
 			assert result == freq, f"Expected {freq}, got {result}"
 
 
+# The Golay(23,12) generator DCS uses, x^11 + x^10 + x^6 + x^5 + x^4 + x^2 + 1,
+# as its exponents.  The tests build DCS words with their own long division
+# rather than the decoder's constant, so a wrong decoder cannot also make the
+# signals it is tested with.
+GOLAY_GENERATOR_EXPONENTS = (11, 10, 6, 5, 4, 2, 0)
+
+
+def _gf2_remainder (coefficients: list[int]) -> list[int]:
+
+	"""Remainder of a polynomial over GF(2), coefficients[i] being that of x^i, divided by the Golay generator."""
+
+	degree = max(GOLAY_GENERATOR_EXPONENTS)
+	remainder = list(coefficients)
+
+	for power in range(len(remainder) - 1, degree - 1, -1):
+		if remainder[power]:
+			for exponent in GOLAY_GENERATOR_EXPONENTS:
+				remainder[power - degree + exponent] ^= 1
+
+	return remainder[:degree]
+
+
+def dcs_word (code: int) -> int:
+
+	"""
+	The 23-bit DCS word for a 9-bit code, in detect_dcs's window layout.
+
+	The code, then the 100 filler, fill bits 0-11 (the first sent), and the
+	parity fills bits 12-22, so that the word is a multiple of the generator.
+	With x^23 = 1 for this code, that parity is the data times x^11, modulo
+	the generator.
+	"""
+
+	data = (code & 0x1FF) | (0b100 << 9)
+	data_bits = [(data >> i) & 1 for i in range(12)]
+	parity_bits = _gf2_remainder([0] * 11 + data_bits)
+	word = data | sum(bit << (12 + i) for i, bit in enumerate(parity_bits))
+
+	assert not any(_gf2_remainder([(word >> i) & 1 for i in range(23)]))
+	return word
+
+
+def dcs_audio (code: int, sr: int = 16000, duration: float = 1.0) -> numpy.typing.NDArray[numpy.float32]:
+
+	"""A DCS bitstream at 134.3 bps, repeating the code's word, sent from bit 0, as NRZ audio."""
+
+	word = dcs_word(code)
+	samples_per_bit = sr / substation.constants.DCS_BITRATE
+	bit_positions = (numpy.arange(int(sr * duration)) / samples_per_bit).astype(int) % 23
+	bits = numpy.array([(word >> i) & 1 for i in range(23)])[bit_positions]
+	return numpy.where(bits == 1, 0.1, -0.1).astype(numpy.float32)
+
+
+def _rotate (word: int, places: int) -> int:
+
+	"""Rotate a 23-bit word, as a receiver sees the endless stream from another starting bit."""
+
+	return ((word << places) | (word >> (23 - places))) & 0x7FFFFF
+
+
 class TestDCSDetection:
 
-	def _make_dcs_signal (self, code: int, sr: int = 16000, duration: float = 1.0) -> numpy.typing.NDArray[numpy.float32]:
-		"""Generate a synthetic DCS FSK signal for a given 9-bit code."""
+	def test_words_match_the_textbook_equivalents (self):
+		"""The test's own encoder agrees with the standard: DCS 023, 340 and 766 are rotations of one word."""
+		word = dcs_word(0o023)
+		aligned = {_rotate(word, k) & 0x1FF for k in range(23) if (_rotate(word, k) >> 9) & 0x07 == 4}
 
-		# Encode: 9-bit code → 12 data bits (code + filler 100₂) → 23-bit
-		# Golay word, transmitted LSB first: data bits 0..11, then parity
-		# bits 0..10 — the wire order detect_dcs expects.
-		data_12 = (code & 0x1FF) | (4 << 9)  # filler signature at bits 9-11
+		assert aligned == {0o023, 0o340, 0o766}
 
-		# Compute Golay parity (11 bits)
-		gen_poly = [
-			0b10100010011, 0b01110001110, 0b11100011101,
-			0b11011100011, 0b10000111101, 0b00010110111,
-			0b00101101110, 0b01011011100, 0b10110111000,
-			0b01100101001, 0b11001010010, 0b10011110100,
-		]
-		parity = 0
-		for i in range(12):
-			if data_12 & (1 << i):
-				parity ^= gen_poly[i]
+	def test_every_standard_code_decodes (self):
+		"""Regression: fed real DCS words, the decoder got 19 of the 104 standard codes right.
 
-		# Build the 23-bit code word as the detector expects to see it
-		# after all bits are shifted in: data in upper 12, parity in lower 11.
-		# Transmitted LSB first: data bits first, then parity bits.
-		bit_sequence = []
-		for i in range(12):
-			bit_sequence.append((data_12 >> i) & 1)
-		for i in range(11):
-			bit_sequence.append((parity >> i) & 1)
+		Its parity table was not the Golay code DCS uses, and the old tests
+		built their signals from that same table, so they could not see it.
+		"""
+		for code in substation.constants.DCS_STANDARD_CODES:
+			assert substation.dsp.demodulation._golay2312_decode(dcs_word(code)) == code, f"{code:03o}"
 
-		# Generate FSK at DCS_BITRATE, repeating the 23-bit sequence
-		bitrate = substation.constants.DCS_BITRATE
-		samples_per_bit = sr / bitrate
-		n_samples = int(sr * duration)
-		signal = numpy.zeros(n_samples, dtype=numpy.float32)
+	def test_up_to_three_flipped_bits_are_corrected (self):
+		"""Golay(23,12) corrects any three bit errors, in the data or the parity."""
+		rng = numpy.random.default_rng(7)
 
-		for i in range(n_samples):
-			bit_pos = int(i / samples_per_bit) % 23
-			bit = bit_sequence[bit_pos]
-			signal[i] = 0.1 if bit else -0.1
-
-		return signal
-
-	@staticmethod
-	def _make_golay_word (code: int) -> int:
-		"""Build a valid 23-bit Golay word in the decoder's layout (data low, parity high)."""
-		data_12 = (code & 0x1FF) | (4 << 9)
-		gen_poly = [
-			0b10100010011, 0b01110001110, 0b11100011101,
-			0b11011100011, 0b10000111101, 0b00010110111,
-			0b00101101110, 0b01011011100, 0b10110111000,
-			0b01100101001, 0b11001010010, 0b10011110100,
-		]
-		parity = 0
-		for i in range(12):
-			if data_12 & (1 << i):
-				parity ^= gen_poly[i]
-		return (parity << 12) | data_12
-
-	def test_golay_decode_valid (self):
-		"""The Golay(23,12) decoder should decode a valid code word."""
-		code = 0o023  # 19 decimal
-		word = self._make_golay_word(code)
-		result = substation.dsp.demodulation._golay2312_decode(word)
-		assert result == code
-
-	def test_golay_corrects_single_data_error (self):
-		"""The Golay decoder should correct a single bit error in the data field."""
-		code = 0o023
-		word = self._make_golay_word(code)
-		corrupted = word ^ (1 << 5)  # flip a data bit (bits 0-11)
-		result = substation.dsp.demodulation._golay2312_decode(corrupted)
-		assert result == code
-
-	def test_golay_corrects_single_parity_error (self):
-		"""The Golay decoder should correct a single bit error in the parity field."""
-		code = 0o023
-		word = self._make_golay_word(code)
-		corrupted = word ^ (1 << 15)  # flip a parity bit (bits 12-22)
-		result = substation.dsp.demodulation._golay2312_decode(corrupted)
-		assert result == code
-
-	def test_golay_with_magic_rejects_most_garbage (self):
-		"""Random words that pass the magic check should still mostly fail decode."""
-		# The DCS detector first checks (word >> 9) & 0x07 == 4 (magic signature),
-		# then Golay-decodes.  Both checks together reject most random data.
-		rng = numpy.random.RandomState(42)
-		magic_pass = 0
-		golay_pass = 0
-		for _ in range(1000):
-			word = int(rng.randint(0, 2**23))
-			if (word >> 9) & 0x07 == 4:
-				magic_pass += 1
-				if substation.dsp.demodulation._golay2312_decode(word) is not None:
-					golay_pass += 1
-		# ~1/8 pass the magic check, and of those, some will Golay-decode.
-		# The dual-detection requirement in detect_dcs() handles the rest.
-		assert magic_pass < 200  # ~12.5% of 1000
+		for code in (0o023, 0o125, 0o631, 0o754):
+			for flips in (1, 2, 3):
+				for _ in range(20):
+					positions = rng.choice(23, size=flips, replace=False)
+					corrupted = dcs_word(code) ^ sum(1 << int(position) for position in positions)
+					assert substation.dsp.demodulation._golay2312_decode(corrupted) == code
 
 	def test_noise_returns_none (self):
 		"""Random noise should not trigger false DCS detection."""
 		sr = 16000
-		audio = numpy.random.RandomState(42).randn(int(sr * 1.0)).astype(numpy.float32) * 0.1
-		result = substation.dsp.demodulation.detect_dcs(audio, sr)
-		assert result is None
+
+		for seed in range(20):
+			audio = numpy.random.RandomState(seed).randn(int(sr * 1.0)).astype(numpy.float32) * 0.1
+			assert substation.dsp.demodulation.detect_dcs(audio, sr) is None
 
 	def test_detects_known_codes (self):
-		"""End-to-end: a synthetic DCS bitstream decodes to the transmitted code.
+		"""End-to-end: a real DCS bitstream decodes to the transmitted code."""
+		codes = sorted(substation.constants.DCS_STANDARD_CODES)
 
-		Regression test for the decoder's Golay field extraction: before the
-		fix, the data/parity split disagreed with the wire order, so the
-		decoder locked onto rotated alignments and reported wrong codes
-		(e.g. 023 detected as 253).
-		"""
-		for code in (0o023, 0o125, 0o331, 0o565, 0o731):
-			sig = self._make_dcs_signal(code)
-			result = substation.dsp.demodulation.detect_dcs(sig, 16000)
-			assert result == code, (
-				f"Expected {code:03o}, got {result if result is None else format(result, '03o')}"
-			)
+		for code in codes[::9]:
+			result = substation.dsp.demodulation.detect_dcs(dcs_audio(code), 16000)
+			assert result == code, f"Expected {code:03o}, got {result if result is None else format(result, '03o')}"
 
 	def test_detects_code_under_voice (self):
 		"""DCS detection must survive voice content above the subaudible band."""
 		sr = 16000
 		t = numpy.arange(sr) / sr
 		voice = (0.3 * numpy.sin(2 * numpy.pi * 1000 * t)).astype(numpy.float32)
-		sig = self._make_dcs_signal(0o023) + voice
-		result = substation.dsp.demodulation.detect_dcs(sig, sr)
-		assert result == 0o023
 
-	def test_only_standard_codes_reported (self):
-		"""detect_dcs must only ever report codes from the standard DCS table.
+		assert substation.dsp.demodulation.detect_dcs(dcs_audio(0o023) + voice, sr) == 0o023
 
-		A DCS bitstream has no frame marker, so rotated alignments decode as
-		other valid codes — the standard table holds one representative per
-		rotation class, and detect_dcs normalises onto it.  Transmitting a
-		non-listed code therefore reports its standard equivalent (or None),
-		never the raw non-standard value.
+	def test_equivalent_code_reports_its_standard_code (self):
+		"""A radio sending 340, which is 023's word read from another bit, is reported as 023.
+
+		The stream has no frame marker, so a receiver cannot tell the two
+		apart; the standard list holds one code of each rotation class.
 		"""
-		assert 0o777 not in substation.constants.DCS_STANDARD_CODES
-		sig = self._make_dcs_signal(0o777)
-		result = substation.dsp.demodulation.detect_dcs(sig, 16000)
-		assert result is None or result in substation.constants.DCS_STANDARD_CODES
-		assert result != 0o777
+		assert 0o340 not in substation.constants.DCS_STANDARD_CODES
+
+		assert substation.dsp.demodulation.detect_dcs(dcs_audio(0o340), 16000) == 0o023
 
 
 class TestVoiceBandpass:

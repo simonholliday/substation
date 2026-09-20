@@ -3,6 +3,7 @@ Demodulation functions for various modulation types
 """
 
 import functools
+import itertools
 import logging
 import typing
 
@@ -374,6 +375,51 @@ def detect_dcs (audio: numpy.typing.NDArray[numpy.float32], sample_rate: int) ->
 	return None
 
 
+# Golay(23,12) generator polynomial, x^11 + x^10 + x^6 + x^5 + x^4 + x^2 + 1:
+# the code DCS transmits.  Bit i of a 23-bit word is the coefficient of x^i,
+# in detect_dcs's window layout (data at bits 0-11, parity at 12-22), and a
+# valid word is a multiple of the generator.  Checked against the standard:
+# the rotations of DCS 023 that keep the 100 filler in place are 766 and
+# 340, the textbook equivalents, and the 104 standard codes fall in 104
+# different rotation classes.
+_GOLAY_GENERATOR = 0xC75
+
+
+def _golay_syndrome (word: int) -> int:
+
+	"""The remainder of a 23-bit word divided by the Golay generator, over GF(2): zero for a valid word."""
+
+	for bit in range(22, 10, -1):
+		if word >> bit & 1:
+			word ^= _GOLAY_GENERATOR << (bit - 11)
+
+	return word
+
+
+def _golay_error_patterns () -> list[int]:
+
+	"""
+	Map each syndrome to the error pattern of three or fewer flipped bits that causes it.
+
+	Golay(23,12) is a perfect code: the 1 + 23 + 253 + 1771 = 2048 patterns
+	of up to three errors have 2048 different syndromes, one for each
+	possible value, so every received word is within three bits of exactly
+	one valid word.
+	"""
+
+	patterns = [0] * 2048
+
+	for weight in range(4):
+		for positions in itertools.combinations(range(23), weight):
+			pattern = sum(1 << position for position in positions)
+			patterns[_golay_syndrome(pattern)] = pattern
+
+	return patterns
+
+
+_GOLAY_ERROR_PATTERNS = _golay_error_patterns()
+
+
 def _golay2312_decode (word: int) -> int | None:
 
 	"""Decode a 23-bit Golay(23,12) code word.
@@ -383,51 +429,18 @@ def _golay2312_decode (word: int) -> int | None:
 	the 11 parity bits occupy the HIGH bits 12-22 — i.e. data arrives on
 	the wire first, parity last.
 
-	Returns the 9-bit DCS code (lower 9 of the 12 data bits) if the
-	word is valid or correctable (up to 3 bit errors), or None if
-	the word is too corrupted.
-
-	Uses syndrome-based decoding with the standard Golay generator
-	polynomial.
+	Corrects up to three flipped bits, which is every word, since the code
+	is perfect, and returns the 9-bit DCS code (the low 9 of the 12 data
+	bits).  Returns None when the corrected word's filler is not 100₂, so
+	the window is not aligned on a DCS word.
 	"""
 
-	# Golay(23,12) parity matrix rows: row i is the 11-bit parity pattern
-	# contributed by data bit i.
-	gen_poly = numpy.array([
-		0b10100010011, 0b01110001110, 0b11100011101,
-		0b11011100011, 0b10000111101, 0b00010110111,
-		0b00101101110, 0b01011011100, 0b10110111000,
-		0b01100101001, 0b11001010010, 0b10011110100,
-	], dtype=numpy.uint32)
+	corrected = word ^ _GOLAY_ERROR_PATTERNS[_golay_syndrome(word)]
 
-	# Split the received word into its data and parity fields.
-	data_bits = word & 0xFFF
-	parity_bits = (word >> 12) & 0x7FF
+	if (corrected >> 9) & 0x07 != 4:
+		return None
 
-	# Recompute expected parity from data.
-	expected_parity = 0
-	for i in range(12):
-		if data_bits & (1 << i):
-			expected_parity ^= int(gen_poly[i])
-
-	syndrome = expected_parity ^ parity_bits
-
-	# Weight of syndrome (number of 1-bits).
-	weight = bin(syndrome).count('1')
-
-	if weight <= 3:
-		# Syndrome IS the error pattern in the parity bits.
-		# Data bits are correct.
-		return data_bits & 0x1FF
-
-	# Try single-bit error corrections in the data portion.
-	for i in range(12):
-		test_syndrome = syndrome ^ int(gen_poly[i])
-		if bin(test_syndrome).count('1') <= 2:
-			corrected_data = data_bits ^ (1 << i)
-			return corrected_data & 0x1FF
-
-	return None
+	return corrected & 0x1FF
 
 
 def demodulate_nfm (
