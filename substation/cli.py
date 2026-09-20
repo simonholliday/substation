@@ -8,7 +8,7 @@ Typical usage:
 	substation --init                              # Write a starter config.yaml
 	substation --band pmr                          # Scan PMR band
 	substation --list-bands                        # Show available bands
-	substation --band airband --device-type hackrf # Use HackRF
+	substation --band air_civil_bristol --device-type hackrf  # Use HackRF
 	substation --band pmr --iq-file recording.wav --center-freq 446059313
 """
 
@@ -132,7 +132,7 @@ async def run_scanner (config_path: pathlib.Path | None, band_name: str, device_
 	Args:
 		config_path: Optional path to user config override file
 		band_name: Name of the band to scan (must exist in config.bands)
-		device_type: SDR device type ('rtlsdr' or 'hackrf')
+		device_type: SDR device type, as given to --device-type
 		device_index: Device index for multi-device setups (0 for first device)
 
 	Exits:
@@ -250,7 +250,7 @@ def main () -> int:
 Examples:
   substation --init                        # Write a starter config.yaml here
   substation --band pmr                    # Scan PMR band with RTL-SDR
-  substation --band marine --device-type hackrf  # Scan marine band with HackRF
+  substation --band marine_vhf_calling --device-type hackrf  # Scan marine VHF with HackRF
   substation --list-bands                  # List all available bands
   substation --band pmr --iq-file rec.wav --center-freq 446059313  # File playback
 		"""

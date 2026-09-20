@@ -139,7 +139,8 @@ def _decimate_common (
 
 	"""
 	Common implementation for signal decimation (audio or IQ).
-	Preserves input dtype (float or complex).
+	Returns float32 for real input and complex64 for complex input, at
+	equal rates too.
 
 	Args:
 		signal: Input signal
@@ -159,7 +160,9 @@ def _decimate_common (
 		return signal, state
 
 	if sr == ar:
-		return signal, state
+		if numpy.iscomplexobj(signal):
+			return signal.astype(numpy.complex64, copy=False), state
+		return signal.astype(numpy.float32, copy=False), state
 
 	# Check if we can use simple integer decimation (much faster)
 	# If the ratio isn't an integer, we need rational resampling instead
@@ -297,7 +300,8 @@ def apply_fade (
 	or ``pad_out_samples`` are provided the fade is constrained to the padding
 	region so that actual signal content (including attack transients) is never
 	attenuated.  If the padding region is smaller than the requested fade
-	duration the fade is shortened to fit the padding.
+	duration the fade is shortened to fit the padding.  The recorder passes
+	no padding: it applies its fades to the audio it writes.
 
 	Args:
 		audio: Input audio signal
@@ -336,7 +340,7 @@ def apply_fade (
 
 	if fade_in_len > 0:
 		# Half-cosine S-curve: (1 - cos(πt)) / 2
-		# Zero first and second derivatives at endpoints — smoother than smoothstep
+		# Zero slope at both ends, so the gain starts and ends without a corner
 		ramp_in = (1.0 - numpy.cos(numpy.linspace(0.0, numpy.pi, fade_in_len, dtype=numpy.float64))) / 2.0
 		audio[:fade_in_len] *= ramp_in.astype(audio.dtype)
 

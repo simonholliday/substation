@@ -42,9 +42,10 @@ def format_freq (hz: float) -> str:
 
 	"""Format a frequency in Hz as a compact, filename-safe string.
 
-	Automatically selects GHz, MHz, or kHz to keep the string short
-	while preserving full precision (no rounding).  Trailing zeros
-	are stripped for readability.
+	Automatically selects GHz, MHz, or kHz to keep the string short.
+	Below 1 GHz it keeps every Hz; from 1 GHz it rounds to the kHz, so
+	2400000500 Hz gives '2.4GHz'.  Trailing zeros are stripped for
+	readability.
 
 	Examples: 1420405000 → '1.420405GHz', 446006250 → '446.00625MHz',
 	          125850000 → '125.85MHz', 14200 → '14.2kHz'.
@@ -391,8 +392,9 @@ class ChannelRecorder:
 			filename_suffix: Optional suffix for filename (e.g., SNR and device info)
 			soft_limit_drive: Tanh soft-limiter drive amount.  Higher values
 				compress louder signals more aggressively.  Typical range
-				1.0 - 3.0; the config default (1.25) is a gentle setting
-				that leaves most voice content untouched.
+				1.0 - 3.0.  The limiter also has gain below its knee,
+				drive x 0.98 / tanh(drive): the config default (1.25)
+				raises quiet audio by about 3 dB and compresses gently.
 			noise_reduction_enabled: When True (default), spectral-subtraction
 				noise reduction is applied to each flushed block before it is
 				written to disk.  Disable to record the raw demodulated audio.
@@ -416,8 +418,10 @@ class ChannelRecorder:
 		# Precompute soft limiter parameters for efficiency.
 		# Ceiling is 0.98 (-0.18 dB) rather than 1.0 to prevent inter-sample
 		# (true-peak) overshoot: tanh limits individual samples, but the
-		# reconstructed waveform between samples can exceed the sample peaks
-		# by ~0.2 dB.  The 2% headroom absorbs this.
+		# reconstructed waveform between samples can exceed the sample peaks.
+		# For voice-band audio, far below the Nyquist frequency, the excess is
+		# around 0.2 dB, which the 2% headroom covers; it is not a guarantee
+		# for every signal.
 		self.soft_limit_drive = max(0.1, float(soft_limit_drive))
 		self.soft_limit_ceiling = 0.98
 		self.soft_limit_scale = self.soft_limit_ceiling / math.tanh(self.soft_limit_drive)
@@ -451,7 +455,8 @@ class ChannelRecorder:
 
 		# Build filename with timestamp, band, channel, and frequency
 		# Format: YYYY-MM-DD_HH-MM-SS_band_channel_freq_[suffix].{wav,flac}
-		# Example: 2026-01-25_14-30-45_pmr_0_446.00625MHz_12.5dB_rtlsdr_0.wav
+		# Example: 2026-01-25_14-30-45_pmr_1_446.00625MHz_12.5dB_rtlsdr_0.wav
+		# (radio channels are numbered from 1; the device index from 0)
 		date_str = self.start_time.strftime("%Y-%m-%d")
 		time_str = self.start_time.strftime("%H-%M-%S")
 		freq_str = format_freq(channel_freq)

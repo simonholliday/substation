@@ -107,9 +107,9 @@ def _pick_if_decimation (sample_rate: float, audio_sample_rate: int, oversample:
 
 	# No clean chain exists for this sample-rate pair — fall back to the
 	# closest integer divisor.  The audio decimation stage will then use
-	# the rational resample_poly path with its block-boundary tail
-	# transient, but for bands where this branch fires the alternative
-	# is pathological filter sizes, so we accept the trade-off.
+	# the streaming rational resampler, continuous across blocks but slower
+	# than the integer path; for bands where this branch fires the
+	# alternative is pathological filter sizes, so we accept the trade-off.
 	return min(candidates, key=lambda d: (abs(d - ideal), -d))
 
 
@@ -246,8 +246,10 @@ def detect_ctcss (audio: numpy.typing.NDArray[numpy.float32], sample_rate: int) 
 	n_tones = len(tones)
 
 	# Block size: use ~200ms of audio for good frequency resolution.
-	# At 16 kHz, N=3200 gives ~5 Hz resolution (sr/N), sufficient to
-	# distinguish adjacent CTCSS tones (minimum spacing ~2.3 Hz).
+	# At 16 kHz, N=3200 gives ~5 Hz resolution (sr/N).  Adjacent standard
+	# tones are mostly 2.3 Hz or more apart, and the strongest bin still
+	# picks between them; the closest pair, 150.0 and 151.4 Hz, is finer
+	# than that and can be confused.
 	n_samples = min(len(audio), int(sample_rate * 0.2))
 
 	if n_samples < sample_rate * 0.05:
@@ -456,8 +458,9 @@ def demodulate_nfm (
 	Uses a polar discriminator for instantaneous frequency, then applies
 	de-emphasis and DC blocking. Output is normalized and decimated to audio rate.
 
-	Performance and SNR optimized by decimating IQ to a lower rate (near 48 kHz)
-	using an integer factor before processing.
+	Performance and SNR optimized by decimating IQ, by an integer factor, to
+	an IF of about NFM_IF_OVERSAMPLE times the audio rate (64-80 kHz for
+	16 kHz audio) before processing.
 	"""
 
 	if len(iq_samples) == 0:

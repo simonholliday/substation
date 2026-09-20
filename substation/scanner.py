@@ -79,8 +79,17 @@ class RadioScanner:
 		Args:
 			config_path: Optional path to user config override file (str or pathlib.Path)
 			band_name: Name of the band to scan (default: 'pmr')
-			device_type: SDR type ('rtlsdr' or 'hackrf')
+			device_type: SDR type, as for --device-type: 'rtlsdr', 'hackrf',
+				'airspy', 'airspyhf', 'soapy:<driver>', or 'file' for IQ file
+				playback
 			device_index: Device index for the selected SDR type
+			config: A loaded AppConfig, or a dict to validate, used in place of
+				config_path.  A dict does not have config.yaml.default merged
+				under it, so settings it leaves out take their schema defaults
+			clock: A VirtualClock for IQ file playback, which timestamps
+				recordings with the file's time instead of the system clock's
+			device_kwargs: Extra keyword arguments for the device, such as
+				file_path and center_freq for 'file'
 		"""
 
 		if config is None:
@@ -250,8 +259,8 @@ class RadioScanner:
 
 		# Event handlers: unified pub/sub for all scanner events.
 		# Consumers register via scanner.on('event_name', handler).
-		# Events: channel_state, recording_saved, recording_started,
-		#         noise_floor, channel_snr.
+		# Events: channel_state, recording_started, recording_saved,
+		#         recording_discarded, noise_floor, channel_snr.
 		self._event_handlers: dict[str, list[typing.Callable]] = {}
 
 		# Handlers that have raised, by event and handler, so each one's first
@@ -693,7 +702,7 @@ class RadioScanner:
 			logger.warning(f"CONFIG WARNING: {len(channels_outside_range)} channels fall outside observable frequency range:")
 			for ch_freq in channels_outside_range:
 				logger.warning(f"  - Channel {ch_freq/1e6:.5f} MHz is outside {observable_min_freq/1e6:.3f} - {observable_max_freq/1e6:.3f} MHz")
-			logger.warning(f"These channels will not be scanned. Check your band configuration in substation.config.yaml")
+			logger.warning(f"These channels will not be scanned. Check your band configuration in config.yaml")
 
 		# Pre-compute noise estimation regions (gaps between channels).
 		self._compute_noise_regions()
@@ -1605,7 +1614,7 @@ class RadioScanner:
 
 		Used to distinguish stationary noise (low variance) from real signals
 		(high variance) when deciding whether to start recording a channel.
-		Voice and data signals fluctuate substantially within a 200 ms slice
+		Voice and data signals fluctuate substantially within a slice
 		due to syllables, frame structure, or burst patterns; stationary
 		noise produces near-constant power across segments.
 
@@ -1907,10 +1916,12 @@ class RadioScanner:
 		floor → warmup gate → bulk energy fast-path → per-channel SNR with
 		hysteresis → turn-ON noise rejection (Gate 1: RF variance, Gate 2:
 		audio spectral flatness via speculative demod) → audio silence
-		timeout for active channels → state transitions and callbacks →
-		demodulation with sample-level trim and fade → recording.  Turn-OFF
-		triggers Gate 3 (post-recording min-duration and flatness checks)
-		in _stop_channel_recording.
+		timeout for active channels → state transitions, which start and
+		stop recordings → demodulation with sample-level trim → audio to
+		the recorder → the channel_state event, after demodulation so it
+		carries any tone found.  The recorder applies fades when it writes.
+		Turn-OFF triggers Gate 3 (post-recording min-duration and flatness
+		checks) in _stop_channel_recording.
 		"""
 
 		# A file's last block holds whatever was left over, which can be less

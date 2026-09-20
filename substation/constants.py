@@ -11,7 +11,7 @@ specific algorithms and hardware characteristics.
 # NFM (Narrow FM) Demodulation Constants
 # ==============================================================================
 
-# De-emphasis time constant (τ = RC time constant of high-pass filter)
+# De-emphasis time constant (τ = RC time constant of the low-pass filter)
 # Transmitters pre-emphasize high frequencies to improve SNR, receivers must de-emphasize
 # 300µs is the standard for narrow FM (PMR, amateur radio, etc.)
 # Different from broadcast FM which uses 75µs (USA) or 50µs (Europe)
@@ -113,15 +113,17 @@ WELCH_SEGMENTS = 8
 # active.  Used to reject stationary noise that crosses the SNR threshold but
 # contains no real signal.  Voice and data signals fluctuate substantially over
 # time as syllables, frames, or bursts come and go (typically 5-15 dB swings
-# within a 200 ms slice).  Stationary noise produces variance close to the
-# natural sampling variance of an 8-segment Welch PSD (~1-2 dB).  A threshold
-# of 3 dB cleanly separates the cases.
+# within a slice).  Stationary noise produces variance close to the natural
+# sampling variance of a Welch PSD's 15 half-overlapping segments (~1-2 dB).
+# A threshold of 3 dB cleanly separates the cases.
 ACTIVATION_VARIANCE_DB = 3.0
 
 # Demodulated audio RMS below which a channel is considered "silent."
 # Used by the audio silence timeout to stop recording when the transmitter
-# is keyed but not speaking (common on AM airband).  The soft limiter
-# normalises output levels, so 0.01 is stable across bands and gain settings.
+# is keyed but not speaking (common on AM airband).  It is measured before
+# the soft limiter, on audio whose level does not follow the RF level: FM's
+# follows the deviation, and AM and SSB pass through their voice AGC.  So
+# 0.01 is stable across bands and gain settings.
 AUDIO_SILENCE_RMS_THRESHOLD = 0.01
 
 # Spectral flatness (Wiener entropy) threshold for noise rejection.
@@ -160,14 +162,17 @@ END_OF_RECORDING_SECONDS = 4.0
 # ==============================================================================
 
 # EMA (Exponential Moving Average) smoothing factor for the noise floor estimate.
-# Lower values = more smoothing (slower to adapt).  0.15 provides a ~1 second
-# settling time at typical slice rates (~6-10 slices/sec) while filtering out
+# Lower values = more smoothing (slower to adapt).  0.15 settles within
+# about 6 slices, 1-4 seconds on the shipped bands, while filtering out
 # per-slice jitter from adjacent-channel activity and SDR gain fluctuations.
 NOISE_FLOOR_EMA_ALPHA = 0.15
 
 # Number of processing slices to absorb before enabling detection.
 # SDR hardware (especially RTL-SDR) produces transient spikes at startup from
-# PLL settling and AGC convergence.  10 slices at ~100ms each ≈ 1 second.
+# PLL settling and AGC convergence.  Slices are rounded up to whole
+# sdr_device_sample_size blocks, so on the shipped bands they last 200-700 ms
+# and warmup takes 2-7 seconds, in IQ file playback too, where the start of
+# the file is not scanned.
 NOISE_FLOOR_WARMUP_SLICES = 10
 
 # ==============================================================================

@@ -27,7 +27,9 @@ OSC address / argument reference (the Substation outbound addresses):
 
 ctcss_hz / dcs_code carry any subaudible tone detected on the activation.
 OSC has no native null, so 0.0 / 0 mean "no tone detected" (valid CTCSS
-tones start at 67 Hz and DCS codes are always nonzero).
+tones start at 67 Hz and DCS codes are always nonzero).  DCS codes are
+octal, and dcs_code is the code's integer value: DCS 023 is sent as 19.
+Format it in octal (f"{dcs_code:03o}") to show it as a radio does.
 """
 
 import logging
@@ -120,8 +122,9 @@ class OscEventSender:
 		code was detected (valid codes are nonzero).
 
 		Runs on the scanner's event loop thread via
-		loop.call_soon_threadsafe(), so it must return quickly and
-		never raise.
+		loop.call_soon_threadsafe(), so it must return quickly.  Send
+		failures are caught and logged here; anything else is a bug, and
+		propagates to the scanner, which logs it with its traceback.
 		"""
 
 		# OSC has no native boolean — encode as 0 or 1.  Explicit ternary
@@ -143,8 +146,8 @@ class OscEventSender:
 			# etc.).  ValueError / TypeError cover pythonosc's argument
 			# encoding errors if an unexpected type ever slips through.
 			# Anything else (AttributeError, KeyError, ...) is a programming
-			# bug and is deliberately allowed to propagate so it surfaces
-			# via the event loop's default exception handler.
+			# bug and is deliberately allowed to propagate, so the scanner
+			# logs it with its traceback.
 			logger.warning(f"OSC /radio/state send failed: {exc}")
 
 	def on_recording_saved (
