@@ -378,6 +378,60 @@ class TestDeviceOverrideKeys:
 		assert (override.sample_rate, override.snr_threshold_db) == (2.4e6, 7.0)
 
 
+class TestRecordingNeedsADemodulator:
+
+	def test_recording_with_an_unknown_modulation_warns (self, minimal_config_dict, caplog):
+		"""Regression: a modulation with no demodulator, such as a typo for NFM, silently turned recording off."""
+		minimal_config_dict["bands"]["test_nfm"]["modulation"] = "NMF"
+
+		with caplog.at_level(logging.WARNING):
+			substation.config.validate_config(minimal_config_dict)
+
+		assert "'NMF' has no demodulator" in caplog.text
+
+	def test_detection_only_band_with_any_label_is_quiet (self, minimal_config_dict, caplog):
+		"""A band that does not record may carry any label, such as TETRA."""
+		band = minimal_config_dict["bands"]["test_nfm"]
+		band["modulation"] = "TETRA"
+		band["recording_enabled"] = False
+
+		with caplog.at_level(logging.WARNING):
+			substation.config.validate_config(minimal_config_dict)
+
+		assert "no demodulator" not in caplog.text
+
+	def test_shipped_configuration_warns_about_none (self, tmp_path, monkeypatch, caplog):
+		"""Every shipped band that records has a modulation the scanner can demodulate."""
+		monkeypatch.chdir(tmp_path)
+
+		with caplog.at_level(logging.WARNING):
+			substation.config.load_config()
+
+		assert "no demodulator" not in caplog.text
+
+	def test_the_list_matches_the_demodulators (self):
+		"""The configuration's list of recordable modulations is the DSP code's own."""
+		import substation.dsp.demodulation
+
+		assert set(substation.constants.DEMODULATED_MODULATIONS) == set(substation.dsp.demodulation.DEMODULATORS)
+
+
+class TestAudioSampleRate:
+
+	def test_rate_too_low_for_the_voice_band_is_rejected (self, minimal_config_dict):
+		"""Regression: 6 kHz loaded, then the NFM voice filter could not be built and the scan ended at the first activation."""
+		minimal_config_dict["recording"]["audio_sample_rate"] = 6000
+
+		with pytest.raises(pydantic.ValidationError, match="audio_sample_rate"):
+			substation.config.validate_config(minimal_config_dict)
+
+	def test_telephone_rate_is_accepted (self, minimal_config_dict):
+		"""8 kHz holds the whole voice band."""
+		minimal_config_dict["recording"]["audio_sample_rate"] = 8000
+
+		assert substation.config.validate_config(minimal_config_dict).recording.audio_sample_rate == 8000
+
+
 class TestRequiredBandwidth:
 
 	def test_span_plus_one_channel_and_edge_margins (self, app_config):

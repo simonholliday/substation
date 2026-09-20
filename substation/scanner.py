@@ -363,12 +363,11 @@ class RadioScanner:
 		logger.info(f"Modulation: {self.modulation}")
 
 		if self.can_record:
-			status = f"ENABLED ({self.audio_sample_rate} Hz mono WAV to {self.audio_output_dir})"
+			logger.info(f"Recording: ENABLED ({self.audio_sample_rate} Hz mono {self.audio_format.upper()} to {self.audio_output_dir})")
 		elif self.recording_enabled:
-			status = f"DISABLED (no demodulator for {self.modulation})"
+			logger.warning(f"Recording: DISABLED (no demodulator for {self.modulation})")
 		else:
-			status = "DISABLED"
-		logger.info(f"Recording: {status}")
+			logger.info("Recording: DISABLED")
 
 
 	def _now (self) -> float:

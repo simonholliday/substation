@@ -275,3 +275,9 @@ DCS_STANDARD_CODES = frozenset((
 # 3400 Hz is the standard voice telephony upper limit.
 NFM_VOICE_HIGHPASS_HZ = 300.0
 NFM_VOICE_LOWPASS_HZ = 3400.0
+
+# Modulations the scanner can demodulate, and so record.  Must match the keys
+# of substation.dsp.demodulation.DEMODULATORS (a test checks); kept here so the
+# configuration can warn about a band that cannot record without importing
+# the DSP code.  Other labels, such as TETRA, are valid for detection only.
+DEMODULATED_MODULATIONS = ('NFM', 'AM', 'USB', 'LSB')

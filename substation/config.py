@@ -290,7 +290,7 @@ class RecordingConfig(pydantic.BaseModel):
 	intervals hold less audio in memory and cost more disk activity.
 	"""
 
-	audio_sample_rate: int = pydantic.Field(default=16000, gt=0)
+	audio_sample_rate: int = pydantic.Field(default=16000, gt=2 * substation.constants.NFM_VOICE_LOWPASS_HZ)
 	"""
 	Sample rate of the recorded audio, in Hz. 16 kHz covers the voice band;
 	higher rates keep more high-frequency content and use more disk space.
@@ -750,6 +750,14 @@ class BandConfig(pydantic.BaseModel):
 		# Default channel width to 84% of spacing (leaves guard bands)
 		if self.channel_width is None:
 			self.channel_width = self.channel_spacing * substation.constants.CHANNEL_WIDTH_FRACTION
+
+		# Recording needs a demodulator.  A label with none, such as a typo
+		# for NFM, would otherwise turn recording off with only an INFO line.
+		if self.recording_enabled and self.modulation not in substation.constants.DEMODULATED_MODULATIONS:
+			logger.warning(
+				f"recording_enabled is true, but modulation {self.modulation!r} has no demodulator, so this band "
+				f"detects transmissions without recording them. Recording works with: {', '.join(substation.constants.DEMODULATED_MODULATIONS)}."
+			)
 
 		# Warn if SNR threshold is at or below hysteresis margin.
 		# OFF threshold = snr_threshold_db - hysteresis_db, which can go
