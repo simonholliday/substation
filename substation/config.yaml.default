@@ -176,8 +176,9 @@ recording:
 # A band names its template in `type` and inherits the settings the template
 # gives, such as the radio channel spacing and modulation that every DMR band
 # shares. A band overrides an inherited setting by giving it itself. Every
-# setting in a template is optional, but each band must still end up with the
-# settings a band requires.
+# setting in a template is optional, and a template passes on none that it
+# leaves out or sets to null. Each band must still end up with the settings a
+# band requires.
 #
 #   channel_spacing: null
 #     Spacing between radio channel centre frequencies, in Hz, for example

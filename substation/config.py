@@ -393,8 +393,9 @@ class BandTypeConfig(pydantic.BaseModel):
 	A band names its template in `type` and inherits the settings the template
 	gives, such as the radio channel spacing and modulation that every DMR band
 	shares. A band overrides an inherited setting by giving it itself. Every
-	setting in a template is optional, but each band must still end up with the
-	settings a band requires.
+	setting in a template is optional, and a template passes on none that it
+	leaves out or sets to null. Each band must still end up with the settings a
+	band requires.
 	"""
 
 	model_config = pydantic.ConfigDict(extra='forbid', use_attribute_docstrings=True)
@@ -929,8 +930,10 @@ def _apply_band_defaults (data: dict) -> dict:
 			type_defaults = normalized_types.get(type_key)
 
 			if isinstance(type_defaults, dict):
-				# Defaults first, then band config (band values override)
-				merged = dict(type_defaults)
+				# Defaults first, then band config (band values override).  A
+				# template setting that is null is not passed on: in a template,
+				# null means the template leaves that setting to the band.
+				merged = {key: value for key, value in type_defaults.items() if value is not None}
 				merged.update(band_config)
 				merged_bands[band_name] = merged
 				continue

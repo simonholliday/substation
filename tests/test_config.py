@@ -275,6 +275,41 @@ class TestBandDefaults:
 		# (but our band has it set to 30, so it stays 30)
 		assert config.bands["test_nfm"].sdr_gain_db == 30
 
+	def test_band_inherits_what_it_does_not_set (self, minimal_config_dict):
+		"""A band takes each setting it leaves out from its template, and keeps the ones it gives."""
+		minimal_config_dict["band_defaults"] = {
+			"TEST_TYPE": {"snr_threshold_db": 8.0, "sdr_gain_db": 25}
+		}
+		band = minimal_config_dict["bands"]["test_nfm"]
+		band["type"] = "TEST_TYPE"
+		del band["snr_threshold_db"]
+
+		config = substation.config.validate_config(minimal_config_dict)
+
+		assert config.bands["test_nfm"].snr_threshold_db == 8.0
+		assert config.bands["test_nfm"].sdr_gain_db == 30
+
+	def test_null_in_a_template_is_not_passed_on (self, minimal_config_dict):
+		"""Regression: a template setting written as null, as the generated reference shows it, broke every band of that type.
+
+		The raw merge copied the null into each band, and a band's
+		snr_threshold_db must be a number.  Null in a template now means the
+		template does not set it, so the band's own default applies.
+		"""
+		minimal_config_dict["band_defaults"] = {
+			"TEST_TYPE": {"snr_threshold_db": None, "channel_width": None, "modulation": None, "sample_rate": None}
+		}
+		band = minimal_config_dict["bands"]["test_nfm"]
+		band["type"] = "TEST_TYPE"
+		del band["snr_threshold_db"]
+
+		config = substation.config.validate_config(minimal_config_dict)
+
+		default_threshold = substation.config.BandConfig.model_fields["snr_threshold_db"].default
+		assert config.bands["test_nfm"].snr_threshold_db == default_threshold
+		assert config.bands["test_nfm"].modulation == "NFM"
+		assert config.bands["test_nfm"].sample_rate == 1.024e6
+
 	def test_unknown_type_warns (self, minimal_config_dict, caplog):
 		minimal_config_dict["band_defaults"] = {"KNOWN_TYPE": {"sdr_gain_db": 10}}
 		minimal_config_dict["bands"]["test_nfm"]["type"] = "UNKNOWN_TYPE"
