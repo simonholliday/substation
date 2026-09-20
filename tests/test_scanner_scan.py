@@ -438,3 +438,28 @@ class TestPlaybackKeepsEverySample:
 		assert len(saved) == 1
 		assert soundfile.info(saved[0]).duration > 9.5
 		assert not any("Buffer overflow" in r.getMessage() for r in caplog.records)
+
+
+class TestBandTooWide:
+
+	def test_band_wider_than_its_sample_rate_fails_before_the_device_opens (self, minimal_config_dict, monkeypatch):
+		"""Regression: a band too wide for its sample rate failed only after the device was opened and calibrated."""
+		minimal_config_dict["bands"]["test_nfm"]["sample_rate"] = 50e3
+		config = substation.config.validate_config(minimal_config_dict)
+		opened = []
+		monkeypatch.setattr(substation.devices, "create_device", lambda *args, **kwargs: opened.append(args))
+
+		with pytest.raises(ValueError, match="too wide"):
+			substation.scanner.RadioScanner(config=config, band_name="test_nfm", device_type="rtlsdr")
+
+		assert opened == []
+
+	def test_list_bands_marks_a_band_that_cannot_be_scanned (self, tmp_path, minimal_config_dict, capsys):
+		"""--list-bands says which bands their own sample rate cannot capture."""
+		minimal_config_dict["bands"]["test_nfm"]["sample_rate"] = 50e3
+		config_path = tmp_path / "config.yaml"
+		config_path.write_text(yaml.dump(minimal_config_dict))
+
+		substation.cli.list_bands(config_path)
+
+		assert "Cannot be scanned" in capsys.readouterr().out

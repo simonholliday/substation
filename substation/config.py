@@ -673,6 +673,20 @@ class BandConfig(pydantic.BaseModel):
 		"""Normalize gain to 'auto' or float."""
 		return _normalize_gain(value)
 
+	@property
+	def required_bandwidth (self) -> float:
+
+		"""
+		Bandwidth in Hz that the SDR must capture to scan this band: its span,
+		plus one radio channel's width and half a channel spacing at each edge.
+		"""
+
+		channel_width = self.channel_width
+		if channel_width is None:
+			channel_width = self.channel_spacing * substation.constants.CHANNEL_WIDTH_FRACTION
+
+		return self.freq_end - self.freq_start + channel_width + self.channel_spacing
+
 	@pydantic.model_validator(mode='after')
 	def _validate_band (self) -> 'BandConfig':
 		"""

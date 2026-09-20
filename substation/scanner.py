@@ -221,7 +221,12 @@ class RadioScanner:
 				break
 
 		# Required bandwidth includes the band span plus one channel width plus margin on each end
-		self.required_bandwidth = self.freq_end - self.freq_start + self.channel_width + (2 * self.band_edge_margin_hz)
+		self.required_bandwidth = self.band_config.required_bandwidth
+
+		# A band wider than its sample rate cannot be scanned.  Checked now, so
+		# the mistake shows before the device is opened and calibrated, and
+		# again by _precompute_fft_params once the device reports its rate.
+		self._check_band_fits()
 
 		# Channel state tracking: True = on, False = off
 		self.channel_states: dict[float, bool] = {ch_freq: False for ch_freq in self.channels}
@@ -589,6 +594,28 @@ class RadioScanner:
 
 		self.on('recording_saved', _adapter)
 
+	def _check_band_fits (self) -> None:
+
+		"""Raise ValueError, with advice in the log, if the band is wider than the sample rate can capture."""
+
+		observable_span = self.sample_rate
+		band_span = self.required_bandwidth
+
+		if band_span <= observable_span:
+			return
+
+		observable_min_freq = self.center_freq - observable_span / 2
+		observable_max_freq = self.center_freq + observable_span / 2
+
+		logger.error(f"CONFIG ERROR: Band '{self.band_name}' spans {band_span/1e6:.2f} MHz but sample rate is only {self.sample_rate/1e6:.2f} MHz")
+		logger.error(f"Band frequency range: {self.freq_start/1e6:.3f} - {self.freq_end/1e6:.3f} MHz (inc. margins)")
+		logger.error(f"Observable frequency range: {observable_min_freq/1e6:.3f} - {observable_max_freq/1e6:.3f} MHz")
+		logger.error("To fix this, you can either:")
+		logger.error(f"  1. Split this band into multiple smaller bands of ~{observable_span*0.8/1e6:.1f} MHz each in config.yaml")
+		logger.error("  2. Increase the sample_rate for this band (if your SDR hardware supports it)")
+		logger.error("  3. Use a different SDR with higher bandwidth capability")
+		raise ValueError(f"Band '{self.band_name}' is too wide ({band_span/1e6:.2f} MHz) for sample rate ({self.sample_rate/1e6:.2f} MHz)")
+
 	def _precompute_fft_params (self) -> None:
 
 		"""
@@ -627,25 +654,11 @@ class RadioScanner:
 		self.freqs = self.center_freq + numpy.fft.fftshift(freqs_unshifted)
 
 		# Calculate observable frequency range based on sample rate
+		self._check_band_fits()
+
 		observable_span = self.sample_rate
 		observable_min_freq = self.center_freq - observable_span / 2
 		observable_max_freq = self.center_freq + observable_span / 2
-
-		# Calculate actual band span required (with margins).
-		band_span = self.required_bandwidth
-
-		# Check if band is too wide for sample rate (prevents silent/invalid scanning).
-		if band_span > observable_span:
-			logger.error(f"CONFIG ERROR: Band '{self.band_name}' spans {band_span/1e6:.2f} MHz but sample rate is only {self.sample_rate/1e6:.2f} MHz")
-			logger.error(f"Band frequency range: {self.freq_start/1e6:.3f} - {self.freq_end/1e6:.3f} MHz (inc. margins)")
-			logger.error(f"Observable frequency range: {observable_min_freq/1e6:.3f} - {observable_max_freq/1e6:.3f} MHz")
-			logger.error(f"")
-			logger.error(f"To fix this, you can either:")
-			logger.error(f"  1. Split this band into multiple smaller bands of ~{observable_span*0.8/1e6:.1f} MHz each in substation.config.yaml")
-			logger.error(f"  2. Increase the sample_rate for this band (if your SDR hardware supports it)")
-			logger.error(f"  3. Use a different SDR with higher bandwidth capability")
-			logger.error(f"")
-			raise ValueError(f"Band '{self.band_name}' is too wide ({band_span/1e6:.2f} MHz) for sample rate ({self.sample_rate/1e6:.2f} MHz)")
 
 		# Pre-compute channel index ranges for fast per-channel power extraction.
 		freq_resolution = self.sample_rate / self.fft_size

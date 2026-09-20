@@ -318,6 +318,15 @@ class TestBandDefaults:
 		assert "UNKNOWN_TYPE" in caplog.text
 
 
+class TestRequiredBandwidth:
+
+	def test_span_plus_one_channel_and_edge_margins (self, app_config):
+		"""The band's span, one radio channel's width, and half a spacing at each edge."""
+		band = app_config.bands["test_nfm"]
+
+		assert band.required_bandwidth == pytest.approx((446.09375e6 - 446.00625e6) + 0.84 * 12500 + 12500)
+
+
 class TestGainElements:
 
 	def test_gain_elements_accepted (self, minimal_config_dict):

@@ -61,6 +61,11 @@ def list_bands (config_path: pathlib.Path | None) -> None:
 			print(f"  Modulation: {modulation}")
 			print(f"  Channel spacing: {channel_spacing:.1f} kHz")
 
+			# A band that cannot fit its own sample rate cannot be scanned, and
+			# would otherwise fail only after its device had been opened.
+			if band_config.required_bandwidth > band_config.sample_rate:
+				print(f"  Cannot be scanned: needs {band_config.required_bandwidth / 1e6:.3f} MHz, but its sample rate captures {band_config.sample_rate / 1e6:.3f} MHz")
+
 		print()
 
 	except Exception as e:
