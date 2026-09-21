@@ -11,16 +11,46 @@ name: Publish to PyPI
 on:
   push:
     tags:
-      - "v*"
+      # Release tags only, in GitHub's filter syntax, where [0-9]+ is one or
+      # more digits. A tag that is not a version, or a pre-release such as
+      # v0.6.0rc1, does not publish: widen this to release one.
+      - "v[0-9]+.[0-9]+.[0-9]+"
 
 jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        # The oldest Python the package supports, and the one it is developed on.
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # tags, so setuptools-scm can version the editable install
+          persist-credentials: false  # nothing here needs the token afterwards
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install the package and its test tools
+        # osc as well as dev, so the OSC sender's tests run rather than skip.
+        # The HackRF binding needs system headers, so its tests skip here.
+        run: pip install -e ".[dev,osc]"
+      - name: Run the tests
+        run: pytest -q
+
   build:
     name: Build distributions
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # full history + tags so setuptools-scm can derive the version
+          persist-credentials: false  # the build must not be able to push
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -35,7 +65,7 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    needs: build
+    needs: [test, build]  # a tag whose tests fail publishes nothing
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -45,4 +75,7 @@ jobs:
         with:
           name: dist
           path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      # Pinned to a commit rather than a moving branch, because this job can
+      # publish to PyPI as Substation. This commit is release v1.14.2; to
+      # update it, read the SHA the new release tag points at.
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
