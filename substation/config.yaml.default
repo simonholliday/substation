@@ -123,7 +123,10 @@ recording:
     # Audio silence timeout in milliseconds. Stops recording when demodulated
     # audio has been silent for this long, even if the RF carrier is still
     # present (common on AM airband where the carrier persists after voice
-    # stops). Set to 0 to rely on RF-only detection.
+    # stops). Set to 0 to rely on RF-only detection. A carrier that stays keyed
+    # but silent can turn on and time out again repeatedly, passing the noise
+    # checks each time; if one radio channel does this persistently, add it to
+    # the band's `exclude_channel_indices`.
     audio_silence_timeout_ms: 3000
 
     # Whether the scanner removes the sharp clicks a transmitter makes at
@@ -201,7 +204,9 @@ recording:
 #
 #   modulation: null
 #     Modulation the scanner demodulates for recording: `NFM`, `AM`, `USB`, or
-#     `LSB`, in any letter case.
+#     `LSB`, in any letter case. USB and LSB are for HF voice: amateur
+#     convention is LSB below 10 MHz and USB above, and HFGCS, VOLMET, and
+#     marine HF use USB.
 #
 #   recording_enabled: false
 #     Whether the scanner records audio from detected transmissions. Set to
@@ -251,7 +256,8 @@ recording:
 #   modulation: null
 #     Modulation the scanner demodulates: `NFM`, `AM`, `USB`, or `LSB`, in any
 #     letter case. Recording needs one; without it, the scanner only detects
-#     activity in the band.
+#     activity in the band. USB and LSB are for HF voice: amateur convention is
+#     LSB below 10 MHz and USB above, and HFGCS, VOLMET, and marine HF use USB.
 #
 #   recording_enabled: false
 #     Whether the scanner records audio from active radio channels. Set to
@@ -289,7 +295,9 @@ recording:
 #   sdr_device_settings: null
 #     Device-specific settings the scanner passes to the SDR through SoapySDR's
 #     `writeSetting()`, such as bias tee control, an external clock, or device
-#     calibration. Keys and values are device-specific strings.
+#     calibration. Keys and values are device-specific strings. With
+#     `--log-level DEBUG`, the scanner logs the settings a device offers when
+#     it starts.
 #     Example: {biastee: "true"}
 #
 #   activation_variance_db: null
@@ -332,7 +340,8 @@ recording:
 #
 #   sdr_device_settings: null
 #     Device-specific settings on this device, such as bias tee control, as
-#     string keys and values.
+#     string keys and values. With `--log-level DEBUG`, the scanner logs the
+#     settings a device offers when it starts.
 #     Example: {biastee: "true"}
 #
 #   snr_threshold_db: null

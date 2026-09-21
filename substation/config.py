@@ -370,7 +370,10 @@ class RecordingConfig(pydantic.BaseModel):
 	Audio silence timeout in milliseconds. Stops recording when demodulated audio
 	has been silent for this long, even if the RF carrier is still present
 	(common on AM airband where the carrier persists after voice stops). Set to 0
-	to rely on RF-only detection.
+	to rely on RF-only detection. A carrier that stays keyed but silent can turn
+	on and time out again repeatedly, passing the noise checks each time; if one
+	radio channel does this persistently, add it to the band's
+	`exclude_channel_indices`.
 	"""
 
 	trim_carrier_transients: bool = pydantic.Field(default=False)
@@ -429,7 +432,8 @@ class BandTypeConfig(pydantic.BaseModel):
 	modulation: str | None = None
 	"""
 	Modulation the scanner demodulates for recording: `NFM`, `AM`, `USB`, or
-	`LSB`, in any letter case.
+	`LSB`, in any letter case. USB and LSB are for HF voice: amateur convention is
+	LSB below 10 MHz and USB above, and HFGCS, VOLMET, and marine HF use USB.
 	"""
 
 	recording_enabled: bool = False
@@ -493,7 +497,8 @@ class DeviceOverrideConfig(pydantic.BaseModel):
 	sdr_device_settings: dict[str, str] | None = pydantic.Field(default=None, examples=[{'biastee': 'true'}])
 	"""
 	Device-specific settings on this device, such as bias tee control, as string
-	keys and values.
+	keys and values. With `--log-level DEBUG`, the scanner logs the settings a
+	device offers when it starts.
 	"""
 
 	snr_threshold_db: float | None = None
@@ -569,7 +574,8 @@ class BandConfig(pydantic.BaseModel):
 	"""
 	Modulation the scanner demodulates: `NFM`, `AM`, `USB`, or `LSB`, in any
 	letter case. Recording needs one; without it, the scanner only detects
-	activity in the band.
+	activity in the band. USB and LSB are for HF voice: amateur convention is LSB
+	below 10 MHz and USB above, and HFGCS, VOLMET, and marine HF use USB.
 	"""
 
 	recording_enabled: bool = False
@@ -618,7 +624,9 @@ class BandConfig(pydantic.BaseModel):
 	"""
 	Device-specific settings the scanner passes to the SDR through SoapySDR's
 	`writeSetting()`, such as bias tee control, an external clock, or device
-	calibration. Keys and values are device-specific strings.
+	calibration. Keys and values are device-specific strings. With
+	`--log-level DEBUG`, the scanner logs the settings a device offers when it
+	starts.
 	"""
 
 	activation_variance_db: float | None = pydantic.Field(default=None, ge=0)
