@@ -98,7 +98,7 @@ A high-quality, low-cost general-purpose receiver. The natural starting point fo
 - The 8-bit ADC limits dynamic range. A strong adjacent station can desensitise weak ones in the same capture.
 - Manual gain values are typically 20-40 dB if you don't want AGC.
 
-**Working example band**
+**Working example band** - Bristol airband, as shipped in the default config:
 
 ```yaml
 air_civil_bristol:
@@ -106,7 +106,16 @@ air_civil_bristol:
     freq_start: 125.5e+6
     freq_end: 126.0e+6
     sample_rate: 1.024e6
+    exclude_channel_indices: [26, 27, 34, 35]
+    device_overrides:
+      airspyhf:
+        sample_rate: 0.912e6
+        snr_threshold_db: 6
+        sdr_gain_db: auto
+        activation_variance_db: 3.0
 ```
+
+The excluded radio channels and the AirSpy HF+ overrides were both tuned for one location and one receiver, so review them for yours. `device_overrides` applies only when that device is selected, so an RTL-SDR uses the base values.
 
 **References**
 - Manufacturer page: [https://www.rtl-sdr.com/about-rtl-sdr/](https://www.rtl-sdr.com/about-rtl-sdr/)
@@ -253,6 +262,7 @@ air_civil_bristol:
     freq_start: 125.5e+6
     freq_end: 126.0e+6
     sample_rate: 1.024e6           # base value, used by RTL-SDR
+    exclude_channel_indices: [26, 27, 34, 35]
     device_overrides:
       airspyhf:                    # applied when --device-type is airspyhf
         sample_rate: 0.912e6
