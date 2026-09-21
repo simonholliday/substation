@@ -45,7 +45,7 @@ Recordings are not just raw demodulated audio dumped to disk. Each file passes t
 - **Half-cosine fades** at recording boundaries prevent clicks from sudden onset or cutoff.
 - **Soft limiting** via a tanh waveshaper rounds off peaks as they near full scale: audio up to full scale comes out at no more than 0.98 of it (-0.18 dBFS), leaving headroom for the small overshoot between audio samples that voice-band audio produces.
 - **Broadcast WAV metadata** (BEXT, EBU Tech 3285) embeds each recording's start time, frequency, modulation, and detected CTCSS/DCS codes directly in each file. Audio editors like Audacity, Reaper, and iZotope RX can place recordings on a timeline at their real capture time.
-- **FLAC output** (optional) provides lossless compression, typically 20–45% smaller than WAV depending on band and signal content (measured on real PMR and airband archives), with metadata stored as Vorbis comments. Compression level 6 was chosen after benchmarking every level on real PMR recordings on a Raspberry Pi: it produces essentially the same output size as level 8 but encodes in ~40% less CPU time.
+- **FLAC output** (optional) compresses recordings losslessly, to a size that depends on the band and the signal, with metadata stored as Vorbis comments. Its compression level was chosen by encoding real PMR recordings on a Raspberry Pi at every level: the highest levels gave almost no further reduction and cost noticeably more CPU time.
 
 ### Efficiency
 
@@ -490,7 +490,7 @@ recording:
 - `buffer_size_seconds`: max in-memory audio per radio channel before drops.
 - `disk_flush_interval_seconds`: how often to flush to disk.
 - `audio_sample_rate`: output rate (Hz).
-- `audio_format`: `wav` (default) or `flac`. WAV embeds Broadcast WAV (BEXT) metadata with the time each recording starts, for timeline placement in audio editors. FLAC is lossless compressed (typically 20–45% smaller than WAV, depending on band and signal content) with text-based metadata tags (no timeline positioning support).
+- `audio_format`: `wav` (default) or `flac`. WAV embeds Broadcast WAV (BEXT) metadata with the time each recording starts, for timeline placement in audio editors. FLAC is losslessly compressed, to a size that depends on the band and the signal, with text-based metadata tags (no timeline positioning support).
 - `fade_in_ms`/`fade_out_ms`: half-cosine fades applied to the padding region at the start and end of each recording (signal content is never attenuated).
 - `soft_limit_drive`: post-processing soft limiter drive; higher values limit more strongly.
 - `noise_reduction_enabled`: toggle spectral subtraction noise reduction (default: true).
@@ -622,7 +622,7 @@ Each recording embeds metadata directly in the audio file.
 
 **WAV format** (default): Industry-standard Broadcast WAV (BWF/BEXT, EBU Tech 3285) with the time each recording starts, at the transmission's onset. Audio editors like Audacity, Reaper, and iZotope RX can place recordings on a timeline at their real capture time. These are standard `.wav` files that play in any audio player.
 
-**FLAC format**: Vorbis comment tags store the same fields (band, frequency, date, time, modulation) as text. FLAC files are typically 20–45% smaller than WAV, depending on band and signal content, and audio editors cannot use their `time_reference` tag for timeline placement, which they read only from a BEXT chunk.
+**FLAC format**: Vorbis comment tags store the same fields (band, frequency, date, time, modulation) as text. FLAC files are smaller than WAV, by an amount that depends on the band and the signal, and audio editors cannot use their `time_reference` tag for timeline placement, which they read only from a BEXT chunk.
 
 ### Metadata example
 If you open a recording in a professional audio tool or a BWF viewer, you will see fields like these:
