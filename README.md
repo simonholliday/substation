@@ -70,7 +70,7 @@ To use this software, a compatible Software Defined Radio (SDR) USB device is re
 | AirSpy R2               | 24 MHz - 1.8 GHz               | 10 MHz   | 12-bit | High-quality VHF/UHF      |
 | AirSpy HF+ Discovery    | 0.5 kHz - 31 MHz, 60 - 260 MHz | 768 kHz  | 18-bit | HF / VHF precision        |
 
-Any other device with a SoapySDR driver module installed can be used too - see [Other SoapySDR Devices](#other-soapysdr-devices) below.
+Any other device with a SoapySDR driver module installed can be used too - see [Other SoapySDR devices](#other-soapysdr-devices) below.
 
 ### RTL-SDR Blog V4 / V3
 
@@ -198,7 +198,7 @@ A high-dynamic-range VHF/UHF receiver with a 12-bit ADC (≈16-bit effective fro
 **Gotchas**
 - **Sample rates are discrete.** Asking for anything other than 2.5 MHz or 10 MHz silently snaps to the nearest supported rate and logs a warning. Always check the startup log to confirm the rate the device actually accepted.
 - **`sdr_gain_db: auto` is not real AGC.** SoapyAirspy reports `hasGainMode == True` but the underlying R2 hardware does not provide a working closed-loop AGC. Substation detects this and falls back to a fixed manual gain of `LNA=10, MIX=5, VGA=12` (27 dB total) - the same LNA-first values you would set by hand. This works well for typical PMR / VHF / UHF reception. If you want different values, set `sdr_gain_db` (numeric) or `sdr_gain_elements` (per-stage dict) explicitly in your band config.
-- For per-element tuning, **maximise LNA first**, set Mixer moderate, fine-tune with VGA (this is the LNA-first principle described in [Gain Tuning](#gain-tuning) below). The element names and ranges are logged at DEBUG level when the device starts up, so run with `--log-level DEBUG` when configuring a new device.
+- For per-element tuning, **maximise LNA first**, set Mixer moderate, fine-tune with VGA (this is the LNA-first principle described in [Gain tuning](#gain-tuning) below). The element names and ranges are logged at DEBUG level when the device starts up, so run with `--log-level DEBUG` when configuring a new device.
 - Requires a venv built with `--system-site-packages`.
 
 **Working example band** - PMR446 with per-element gain control:
@@ -530,30 +530,7 @@ bands:
 
 ## SoapySDR installation (AirSpy and other devices)
 
-AirSpy devices (and any other `soapy:<driver>` device) require SoapySDR, which is installed at the system level:
-
-```bash
-# Raspberry Pi OS / Debian
-sudo apt install -y soapysdr-tools python3-soapysdr
-sudo apt install -y soapysdr-module-airspy      # AirSpy R2
-sudo apt install -y soapysdr-module-airspyhf    # AirSpy HF+ Discovery
-
-# If soapysdr-module-airspyhf is not in your distro's repos (e.g., Raspberry Pi OS),
-# build from source instead:
-sudo apt install -y libairspyhf-dev libsoapysdr-dev cmake
-git clone https://github.com/pothosware/SoapyAirspyHF.git
-cd SoapyAirspyHF && mkdir build && cd build
-cmake .. && make && sudo make install && cd ../..
-
-# Verify SoapySDR can see connected devices
-SoapySDRUtil --find
-```
-
-The Python virtual environment **must** be created with `--system-site-packages` to access the system-installed SoapySDR bindings:
-
-```bash
-python3 -m venv --system-site-packages venv
-```
+AirSpy devices, and any other `soapy:<driver>` device, need SoapySDR installed at the system level, with a module for each kind of device. The Python virtual environment **must** then be created with `--system-site-packages`, so that it can see SoapySDR's system-installed bindings. The steps for Debian, Ubuntu, Raspberry Pi OS, and Fedora are in [section 4 of INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md#4-soapysdr--airspy-support).
 
 ## Recording metadata
 Each recording embeds metadata directly in the audio file.
