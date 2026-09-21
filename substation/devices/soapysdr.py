@@ -38,6 +38,16 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 	reader thread around SoapySDR's synchronous readStream() API.
 	"""
 
+	# An SDR delivers IQ samples continuously, even from a silent band, so a
+	# stream that has delivered none for this long, in seconds, has lost its
+	# device.  Once an AirSpy HF+ is unplugged, its driver's reads time out
+	# for ever rather than failing.
+	NO_SAMPLES_TIMEOUT_SECONDS = 5.0
+
+	# How long close() waits, in seconds, for the driver to release the
+	# device.  The AirSpy HF+'s driver never returns once it is unplugged.
+	CLOSE_TIMEOUT_SECONDS = 5.0
+
 	def __init__ (self, driver: str, device_index: int = 0) -> None:
 
 		"""
@@ -572,10 +582,11 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 			"""
 			Continuously read from SoapySDR stream and invoke callback.
 
-			Handles SoapySDR error codes:
-			- TIMEOUT: retry silently (normal during quiet periods)
+			Handles SoapySDR's results:
+			- TIMEOUT: retry, unless no samples have arrived for
+			  NO_SAMPLES_TIMEOUT_SECONDS, which means the device has gone
 			- OVERFLOW: log warning, continue (samples were lost but stream is fine)
-			- Other negatives: log error, stop thread
+			- Anything else: log error, stop thread
 			"""
 
 			# Determine read buffer size — use MTU if larger than requested
@@ -588,6 +599,8 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 			else:
 				buf = numpy.empty(read_size, dtype=numpy.complex64)
 
+			last_samples = time.monotonic()
+
 			while not self._stop_event.is_set():
 
 				try:
@@ -597,6 +610,8 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 					break
 
 				if sr.ret > 0:
+
+					last_samples = time.monotonic()
 
 					# Convert format if needed, otherwise just slice and copy
 					if is_cs16:
@@ -611,12 +626,27 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 					self._buffer_samples(samples, num_samples, callback)
 
 				elif sr.ret == self._soapy.SOAPY_SDR_TIMEOUT:
-					# Normal during quiet periods — just retry
+
+					# A moment without samples is a slow start or a USB
+					# hiccup.  For longer, the device has gone, and retrying
+					# would wait on it for ever.
+					if time.monotonic() - last_samples > self.NO_SAMPLES_TIMEOUT_SECONDS:
+						logger.error(f"The SDR has delivered no IQ samples for {self.NO_SAMPLES_TIMEOUT_SECONDS:.0f} seconds, so it has most likely been unplugged")
+						break
+
 					continue
 
 				elif sr.ret == self._soapy.SOAPY_SDR_OVERFLOW:
 					logger.warning("SoapySDR: overflow detected (samples lost)")
 					continue
+
+				elif sr.ret == 0:
+
+					# No samples and no error code, which is what the AirSpy
+					# R2's driver returns once the device is unplugged.
+					# Retrying would wait on a device that has gone.
+					logger.error("The SDR returned no IQ samples and no error, so it has most likely been unplugged")
+					break
 
 				else:
 					# Other negative return codes are fatal errors
@@ -739,8 +769,12 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 		"""
 		Close the device and release all resources.
 
-		Stops any active streaming, deactivates and closes the stream,
-		and releases the SoapySDR device handle.
+		Stops any active streaming, then deactivates and closes the stream
+		and releases the SoapySDR device handle on a separate thread.  Once
+		an AirSpy HF+ has been unplugged, its driver never returns from that
+		teardown, and waiting on it here would stop the scan from ever
+		exiting, even on Ctrl+C.  So close() waits CLOSE_TIMEOUT_SECONDS,
+		and then carries on without it.
 		"""
 
 		try:
@@ -748,14 +782,32 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 		except Exception as exc:
 			logger.debug(f"Error cancelling async read during close: {exc}")
 
-		if self._stream is not None:
-
-			try:
-				self._device.deactivateStream(self._stream)
-				self._device.closeStream(self._stream)
-			except Exception as exc:
-				logger.warning(f"Error closing SoapySDR stream: {exc}")
-
-			self._stream = None
-
+		# The release thread takes the only references to the driver's
+		# handles, so the device is freed there and never on this thread.
+		handles: list[typing.Any] = [self._device, self._stream]
 		self._device = None
+		self._stream = None
+
+		def release () -> None:
+
+			"""Close the stream, then drop the last reference to the device."""
+
+			device, stream = handles
+			handles.clear()
+
+			if device is not None and stream is not None:
+
+				try:
+					device.deactivateStream(stream)
+					device.closeStream(stream)
+				except Exception as exc:
+					logger.warning(f"Error closing SoapySDR stream: {exc}")
+
+			del device
+
+		releaser = threading.Thread(target=release, daemon=True, name='soapy-close')
+		releaser.start()
+		releaser.join(self.CLOSE_TIMEOUT_SECONDS)
+
+		if releaser.is_alive():
+			logger.warning(f"The SoapySDR driver did not release the SDR within {self.CLOSE_TIMEOUT_SECONDS:.0f} seconds, which usually means it was unplugged; carrying on without it")

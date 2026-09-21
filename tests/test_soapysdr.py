@@ -1,6 +1,7 @@
 """Tests for the SoapySDR device wrapper."""
 
 import threading
+import time
 import types
 import unittest.mock
 
@@ -419,6 +420,117 @@ class TestSoapySdrStreaming:
 		mock_device.deactivateStream.assert_called_with('mock_stream')
 		mock_device.closeStream.assert_called_with('mock_stream')
 		assert sdr_device._stream is None
+
+
+def _scripted_device (reads: list[int], then: int) -> tuple:
+
+	"""
+	A SoapySdrDevice whose reads return each result in reads in turn, and
+	then the result then for ever, with short time limits and no IQ
+	calibration to use up the script.  A timeout takes a moment, as it
+	does on a device.
+
+	Returns:
+		(soapy_device, mock_device)
+	"""
+
+	sdr_device, mock_device, mock_soapy = _create_soapy_device('airspyhf')
+	script = list(reads)
+
+	def read (stream, buffers, count, timeoutUs=0):
+		ret = script.pop(0) if script else then
+		if ret == mock_soapy.SOAPY_SDR_TIMEOUT:
+			time.sleep(0.005)
+		elif ret > 0:
+			buffers[0][:ret] = 0.01
+		return types.SimpleNamespace(ret=ret)
+
+	mock_device.readStream.side_effect = read
+	mock_device.getStreamMTU.return_value = 16
+	sdr_device._calibrate_iq_scale = lambda stream, stream_format: 1.0
+	sdr_device.NO_SAMPLES_TIMEOUT_SECONDS = 0.1
+	sdr_device.CLOSE_TIMEOUT_SECONDS = 0.1
+
+	return sdr_device, mock_device
+
+
+def _collect () -> tuple:
+
+	"""A read callback that keeps each block and notes the end of the stream, with the blocks and the end event."""
+
+	blocks: list = []
+	ended = threading.Event()
+
+	def callback (samples, _context) -> None:
+		if samples is None:
+			ended.set()
+		else:
+			blocks.append(samples)
+
+	return callback, blocks, ended
+
+
+class TestSoapySdrDeviceLoss:
+
+	def test_reads_that_time_out_for_ever_end_the_stream (self):
+
+		"""Regression: an unplugged AirSpy HF+ times out every read, and the reader retried for ever, so the scan never ended."""
+
+		sdr_device, _ = _scripted_device([16, 16], then=-1)
+		callback, blocks, ended = _collect()
+
+		sdr_device.read_samples_async(callback, 16)
+
+		assert ended.wait(timeout=2.0)
+		assert len(blocks) == 2
+		sdr_device.close()
+
+	def test_a_brief_pause_does_not_end_the_stream (self):
+
+		"""A few timeouts are a slow start or a USB hiccup, and streaming carries on after them."""
+
+		sdr_device, _ = _scripted_device([-1, -1], then=16)
+		callback, blocks, ended = _collect()
+
+		sdr_device.read_samples_async(callback, 16)
+		deadline = time.monotonic() + 2.0
+		while len(blocks) < 5 and time.monotonic() < deadline:
+			time.sleep(0.01)
+		sdr_device.close()
+
+		assert len(blocks) >= 5
+		assert not ended.is_set()
+
+	def test_a_read_of_nothing_ends_the_stream (self):
+
+		"""An AirSpy R2's driver returns 0 once it is unplugged, and retrying that would wait for ever."""
+
+		sdr_device, _ = _scripted_device([16], then=0)
+		callback, _blocks, ended = _collect()
+
+		sdr_device.read_samples_async(callback, 16)
+
+		assert ended.wait(timeout=2.0)
+		sdr_device.close()
+
+	def test_close_does_not_wait_for_a_driver_that_never_returns (self, caplog):
+
+		"""Regression: closing an unplugged AirSpy HF+ blocked in its driver for ever, so even Ctrl+C could not end the scan."""
+
+		sdr_device, mock_device = _scripted_device([], then=16)
+		release = threading.Event()
+		mock_device.deactivateStream.side_effect = lambda stream: release.wait()
+		sdr_device.read_samples_async(lambda samples, _context: None, 16)
+
+		started = time.monotonic()
+		sdr_device.close()
+		elapsed = time.monotonic() - started
+		closed_while_hung = mock_device.closeStream.called
+		release.set()
+
+		assert elapsed < 1.0
+		assert not closed_while_hung
+		assert "did not release the SDR" in caplog.text
 
 
 class TestSoapySdrSyncRead:
