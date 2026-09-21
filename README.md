@@ -8,6 +8,10 @@ The scanner is designed for unattended, long-running operation. It handles the e
 
 Substation runs comfortably on a Raspberry Pi for 24/7 monitoring, and works equally well as a command-line tool or as a Python module integrated into your own applications.
 
+**Full documentation: [https://subsystem.co/substation/](https://subsystem.co/substation/)**
+
+- Configuration reference: [https://subsystem.co/substation/configuration/](https://subsystem.co/substation/configuration/)
+
 ## Signal processing
 
 Substation's signal processing chain implements industry-standard DSP techniques - the same algorithms used in professional SDR receivers - in Python with NumPy and SciPy for accessibility without sacrificing quality.
@@ -468,85 +472,9 @@ bands:
 
 Use `--config <path>` to specify a different user override file. Use `--list-bands` to see all available bands.
 
-The top-level keys are `scanner`, `recording`, `band_defaults`, and `bands`.
+The top-level sections are `scanner`, `recording`, `band_defaults`, and `bands`. Each entry in `band_defaults` is a template: a band with the same `type` inherits its values, and sets only what differs. Device-specific tuning for a band goes in its `device_overrides`, described below.
 
-Scanner
-```
-scanner:
-  sdr_device_sample_size: 131072
-  band_time_slice_ms: 200
-  sample_queue_maxsize: 200
-  calibration_frequency_hz: null
-  stuck_channel_threshold_seconds: 60
-```
-- `sdr_device_sample_size`: size, in IQ samples, of the blocks each slice is built from. Every slice is rounded up to a whole number of blocks. On an RTL-SDR it must be a multiple of 256.
-- `band_time_slice_ms`: how often the scanner analyses the spectrum, in milliseconds. The scanner reads, queues, and processes IQ samples one slice at a time.
-- `sample_queue_maxsize`: how many slices can wait while processing catches up. Each queued slice holds every IQ sample in it, so the memory a full queue needs grows with the band's sample rate and the slice length, and at 12.5 MHz it runs to gigabytes. Lower it on computers with little memory.
-- `calibration_frequency_hz`: a known strong signal the scanner tunes at startup to measure and correct the receiver's frequency error. `null`, the default, leaves the correction as it is. An FM broadcast station is the usual choice, because it is on air all day at a fixed frequency: in parts of the UK, `93.7e+6` is BBC Radio 4. Requires a device with a PPM correction control, which means RTL-SDR only; other devices skip calibration automatically. If no strong, steady signal is found at that frequency, calibration is skipped with a warning and the receiver's correction is left as it was, so choose a station you can receive well.
-- `stuck_channel_threshold_seconds`: optional duration in seconds after which a radio channel that stays active triggers a `STUCK CHANNEL WARNING` in the log. Useful for identifying interference or stuck transmitters. Set to `null` to disable.
-
-Recording
-```
-recording:
-  buffer_size_seconds: 30
-  disk_flush_interval_seconds: 5
-  audio_sample_rate: 16000
-  audio_format: wav
-  audio_output_dir: "./audio"
-  fade_in_ms: 15
-  fade_out_ms: 50
-  soft_limit_drive: 1.25
-```
-- `buffer_size_seconds`: max in-memory audio per radio channel before drops.
-- `disk_flush_interval_seconds`: how often to flush to disk.
-- `audio_sample_rate`: output rate (Hz).
-- `audio_format`: `wav` (default) or `flac`. WAV embeds Broadcast WAV (BEXT) metadata with the time each recording starts, for timeline placement in audio editors. FLAC is losslessly compressed, to a size that depends on the band and the signal, with text-based metadata tags (no timeline positioning support).
-- `fade_in_ms`/`fade_out_ms`: half-cosine fades applied to the padding region at the start and end of each recording (signal content is never attenuated).
-- `soft_limit_drive`: post-processing soft limiter drive; higher values limit more strongly.
-- `noise_reduction_enabled`: toggle spectral subtraction noise reduction (default: true).
-- `recording_hold_time_ms`: duration in ms to continue recording after signal drops below threshold (default: 500).
-- `discard_empty_enabled`: automatically discard noise-only recordings using spectral flatness analysis (default: true). Applies at two points: before activation (rejects noise triggers without starting a recording) and after recording close (catches recordings that became mostly noise). See [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings).
-- `min_recording_seconds`: discard recordings shorter than this duration (default: 0.5). Catches brief transients (radar pulses, ignition noise) that pass the spectral checks but produce useless sub-second files. Set to `0` to disable.
-- `audio_silence_timeout_ms`: stop recording when demodulated audio has been silent for this duration (default: 3000). Catches AM carriers that persist after voice stops, where RF SNR stays above threshold but there is no useful content. Set to `0` to disable and rely on RF-only detection. Note: a carrier that stays keyed but silent can re-trigger and time out repeatedly (each cycle still has to pass the noise gates); if one radio channel does this persistently, add it to the band's `exclude_channel_indices`.
-- `trim_carrier_transients`: remove the sharp key-on/key-off click transients that AM transmitters produce (default: false). Only trims transients bordered by silence - voice transients (consonants) are never affected. Recommended for AM airband listening.
-
-Band Defaults
-```
-band_defaults:
-  AIR:
-    channel_spacing: 8.333e+3
-    modulation: AM
-    snr_threshold_db: 4.5
-    sdr_gain_db: 30
-```
-These settings are merged into each band of the same `type`.
-
-Bands
-```
-bands:
-  air_civil_bristol:
-    type: AIR
-    freq_start: 125.5e+6
-    freq_end: 126.0e+6
-    sample_rate: 1.0e+6
-    exclude_channel_indices: [33, 34]
-```
-Per-band keys:
-- `freq_start` / `freq_end`: Hz.
-- `channel_spacing`: Hz.
-- `sample_rate`: Hz. Must cover the band plus margins; higher rates increase CPU.
-- `channel_width`: optional; defaults to `channel_spacing * 0.84`.
-- `type`: used to inherit defaults from `band_defaults`.
-- `modulation`: `AM`, `NFM`, `USB`, or `LSB`. USB/LSB use a Weaver-method SSB demodulator and are the right choice for HF voice - amateur convention is LSB below 10 MHz, USB above 10 MHz; HFGCS, VOLMET, and marine HF are all USB.
-- `recording_enabled`: enable recording for this band. Optional, defaults to `false` (can also be set in `band_defaults`).
-- `snr_threshold_db`: detection threshold (dB above noise floor).
-- `hysteresis_db`: margin between ON and OFF thresholds (default 3.0). A radio channel turns OFF when SNR drops below `snr_threshold_db - hysteresis_db`. Lower values (e.g. 1.5) suit weak-signal scanning.
-- `activation_variance_db`: optional minimum power variance (dB) across the detection window required for a radio channel to be considered active. Filters out stationary-noise triggers. Applies to all bands regardless of recording state. See [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings) below. When unset, the built-in threshold of `3.0` applies; set to `0` to disable.
-- `sdr_gain_db`: numeric or `auto`.
-- `sdr_gain_elements`: optional dict mapping gain element names to dB values for per-stage control (e.g., `{LNA: 10, MIX: 5, VGA: 12}`). Available elements are logged at startup. Takes priority over `sdr_gain_db`.
-- `sdr_device_settings`: optional dict of device-specific settings passed via SoapySDR (e.g., `{biastee: "true"}`). Available settings are logged at DEBUG level on startup.
-- `exclude_channel_indices`: 1-based radio channel numbers to skip (no analysis, no recording). These match the radio channel numbers shown in log output and filenames.
-- `device_overrides`: per-device tuning - see [Device-Specific Overrides](#device-specific-overrides) below.
+Every setting, with its type, default, limits, and examples, is in the configuration reference: [https://subsystem.co/substation/configuration/](https://subsystem.co/substation/configuration/)
 
 ### Device-specific overrides
 
@@ -737,20 +665,7 @@ The noise is caught by Gate 1 (variance 0.18 < 3.0). If it somehow passed Gate 1
 
 ### Configuration
 
-```yaml
-recording:
-  discard_empty_enabled: true   # Gates 2 and 3 (default: true)
-
-bands:
-  air_civil_bristol:
-    type: AIR
-    freq_start: 125.5e+6
-    freq_end: 126.0e+6
-    sample_rate: 0.912e6
-    snr_threshold_db: 6
-    activation_variance_db: 3.0  # Gate 1 threshold (default: 3.0)
-    sdr_gain_db: auto
-```
+Gate 1 is set for each band by `activation_variance_db`, Gates 2 and 3b by `discard_empty_enabled` in the `recording` section, and Gate 3a by `min_recording_seconds`. All three gates are on by default. Each setting's default and limits are in the configuration reference: [https://subsystem.co/substation/configuration/](https://subsystem.co/substation/configuration/)
 
 ### How it interacts with other settings
 
@@ -760,7 +675,7 @@ bands:
 | `activation_variance_db` | Gate 1, only on turn-on transitions, only when the SNR check passed. |
 | `discard_empty_enabled` | Gates 2 and 3b. Gate 2 runs after Gate 1 passes. Gate 3b runs on recording close. |
 | `min_recording_seconds` | Gate 3a. Runs on recording close, before Gate 3b. Set to `0` to disable. |
-| Hysteresis (`hysteresis_db`, default 3.0) | Unchanged. Once a recording starts, it continues until SNR drops below `snr_threshold_db - hysteresis_db`. |
+| Hysteresis (`hysteresis_db`) | Unchanged. Once a recording starts, it continues until SNR drops below `snr_threshold_db - hysteresis_db`. |
 | Hold time (`recording_hold_time_ms`) | Unchanged. Brief drops in SNR during active recording are tolerated. Gate 3b may discard if the hold timer extends the recording far beyond the actual signal. |
 
 All three gates suppress silently - no ON callback fires, no recording file is kept. Downstream consumers (OSC bridge, user scripts) only see activations and recordings that passed all applicable gates.
@@ -814,14 +729,9 @@ This is **off by default** and is intended for A/B comparison testing. To enable
 ```yaml
 recording:
     dynamics_curve_enabled: true
-    dynamics_curve:
-        threshold_dbfs: -25.0   # Dividing line between cut and boost regions
-        cut_db: 6.0             # Reduction at the midpoint of the cut S-curve (max = 2× at floor)
-        boost_db: 1.5           # Peak boost in the boost hump
-        floor_dbfs: -60.0       # Hard silence below this level
-        cut_curve: 0.5          # 0..1; 0.5 = symmetric, <0.5 steeper near threshold
-        boost_curve: 0.5        # 0..1; same skew control for the boost hump
 ```
+
+The curve's shape is set by the `dynamics_curve` settings, each described in the configuration reference: [https://subsystem.co/substation/configuration/](https://subsystem.co/substation/configuration/)
 
 The function operates on each audio sample (no envelope follower, no attack/release), so very aggressive parameter values can introduce mild harmonic distortion on signals near the threshold. The defaults are conservative enough that this is benign on voice; if you hear an "edge" on the loudest syllables, lower `cut_db` and `boost_db`. If a recording sounds completely silent, you have probably set `floor_dbfs` too high - try `-60` or lower.
 
@@ -857,6 +767,8 @@ If you see repeated `Sample queue full` warnings, reduce the band's `sample_rate
 
 ## Author
 Written by Simon Holliday ([https://simonholliday.com/](https://simonholliday.com/))
+
+This project is managed with [Subroutine](https://github.com/simonholliday/subroutine).
 
 ## License
 
