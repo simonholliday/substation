@@ -351,7 +351,7 @@ Options:
 - `--device-index`, `-i`: device index (default `0`).
 - `--list-bands`: list available bands and exit. A band wider than its own sample rate can capture is marked as one that cannot be scanned: narrow it, or split it into several bands, in your own configuration.
 - `--init`: write the default configuration to `config.yaml` in the current directory, as a starting point, and exit.
-- `--log-level`: how much to log: `DEBUG`, `INFO`, `WARNING`, or `ERROR` (default `INFO`). `DEBUG` adds what each device reports about itself at startup, such as its gain elements.
+- `--log-level`: how much to log: `DEBUG`, `INFO`, `WARNING`, or `ERROR` (default `INFO`). `DEBUG` adds what each device reports about itself at startup, such as its gain elements, and, when a scan fails, where in Substation it failed.
 - `--iq-file`: path to an IQ WAV file, with I and Q as its two audio channels in 16-bit PCM, for offline playback (replaces live SDR).
 - `--center-freq`: centre frequency of the IQ recording in Hz (required with `--iq-file`).
 - `--start-time`: start time of the recording as `"YYYY-MM-DD HH:MM:SS"` (default: `2000-01-01 00:00:00`).

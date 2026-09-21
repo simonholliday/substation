@@ -89,11 +89,12 @@ class FakePyHackrfDevice:
 
 	def __init__ (self) -> None:
 
-		"""Start idle, recording each call."""
+		"""Start idle, recording each call; set gone to fail as an unplugged HackRF does."""
 
 		self.calls: list[tuple] = []
 		self.rx_callback = None
 		self.streaming = False
+		self.gone = False
 
 	def pyhackrf_set_sample_rate (self, freq_hz: float) -> None:
 		"""Record it."""
@@ -120,15 +121,18 @@ class FakePyHackrfDevice:
 		self.streaming = True
 
 	def pyhackrf_stop_rx (self) -> None:
-		"""Stop streaming."""
+		"""Stop streaming, and record it."""
 		self.streaming = False
+		self.calls.append(("stop_rx",))
 
 	def pyhackrf_is_streaming (self) -> bool:
 		"""Report streaming."""
 		return self.streaming
 
 	def pyhackrf_close (self) -> None:
-		"""Record it."""
+		"""Record it, or fail if the device has gone."""
+		if self.gone:
+			raise RuntimeError("pyhackrf_close() failed: No such device (it may have been disconnected) (-1000)")
 		self.calls.append(("close",))
 
 
@@ -225,6 +229,28 @@ class TestHackRfDevice:
 
 		assert device.rx_callback(device, numpy.zeros(8, dtype=numpy.int8), 8, 8) != 0
 		assert received[-1] is None
+
+	def test_close_after_cancel_stops_receiving_once (self, hackrf_device):
+		"""Regression: close() cancelled again after the scan had, and libhackrf reported an error for stopping a stopped stream."""
+		wrapper, device = hackrf_device
+
+		wrapper.read_samples_async(lambda samples, _context: None, 0)
+		wrapper.cancel_read_async()
+		wrapper.close()
+
+		assert device.calls.count(("stop_rx",)) == 1
+
+	def test_a_close_that_fails_still_releases_the_library (self, hackrf_device, monkeypatch):
+		"""Closing an unplugged HackRF fails, and the HackRF library must be released all the same."""
+		wrapper, device = hackrf_device
+		released = []
+		monkeypatch.setattr(wrapper._module, "pyhackrf_exit", lambda: released.append(True))
+		device.gone = True
+
+		with pytest.raises(RuntimeError, match="No such device"):
+			wrapper.close()
+
+		assert released == [True]
 
 
 class TestHackRfBindingMissing:

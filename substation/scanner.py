@@ -346,6 +346,11 @@ class RadioScanner:
 		# raises it once the processing loop has drained the queue.
 		self._stream_error: BaseException | None = None
 
+		# Set when a live device's stream ends by itself, which means the
+		# device has failed or gone.  Stopping and closing it then fail as a
+		# matter of course, so cleanup does not warn about those.
+		self._device_lost = False
+
 		# Set when scan() starts shutting down, so a file reader waiting for
 		# room in the queue gives up instead of waiting forever.
 		self._stopping = False
@@ -1179,7 +1184,8 @@ class RadioScanner:
 					self.sdr.close()
 					logger.info("SDR device closed")
 				except Exception as e:
-					logger.warning(f"Error closing SDR device (this is normal on interrupt): {e}")
+					log = logger.debug if self._device_lost else logger.warning
+					log(f"Error closing SDR device: {e}")
 
 			if self._processing_executor is not None:
 				self._processing_executor.shutdown(wait=False)
@@ -2338,6 +2344,7 @@ class RadioScanner:
 
 		logger.info("Starting scan...")
 		self._stream_error = None
+		self._device_lost = False
 		self._stopping = False
 		self._processing_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="substation-slice")
 
@@ -2444,6 +2451,9 @@ class RadioScanner:
 			# The loop ends when the stream does.  For file playback that is
 			# the end of the file; a live device streams until the scan
 			# cancels it, so a stream that ends first means the device failed.
+			if self.clock is None:
+				self._device_lost = True
+
 			if self._stream_error is not None:
 				raise self._stream_error
 
@@ -2461,7 +2471,8 @@ class RadioScanner:
 					self.sdr.cancel_read_async()
 					logger.info("Cancelled async SDR streaming")
 				except Exception as e:
-					logger.warning(f"Error cancelling async read: {e}")
+					log = logger.debug if self._device_lost else logger.warning
+					log(f"Error cancelling async read: {e}")
 
 			# The shield looks redundant on Ctrl+C but is load-bearing: the
 			# cleanup task is created *after* asyncio.run's cancel-all-tasks

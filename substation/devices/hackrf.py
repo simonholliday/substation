@@ -86,6 +86,11 @@ class HackRfDevice (substation.devices.base.BaseDevice):
 		# that the stream stopping is expected rather than a device fault.
 		self._rx_cancelled = threading.Event()
 
+		# Whether receiving has started and not yet been stopped.  close()
+		# cancels again after the scan has, and libhackrf reports an error
+		# for stopping a stream that has already stopped.
+		self._rx_running = False
+
 		# Cache hardware state (HackRF doesn't provide getters for these)
 		self._sample_rate: float | None = None
 		self._center_freq: float | None = None
@@ -338,6 +343,8 @@ class HackRfDevice (substation.devices.base.BaseDevice):
 			# Pattern 2: start_rx(callback)
 			self._call_safe('start_rx', wrapper)
 
+		self._rx_running = True
+
 		# libhackrf stops calling back when the device is lost, and nothing
 		# else would tell the scanner, which would then wait forever.
 		if 'is_streaming' in self._funcs:
@@ -362,21 +369,26 @@ class HackRfDevice (substation.devices.base.BaseDevice):
 				return
 
 	def cancel_read_async (self) -> None:
-		"""Stop streaming; the stream watchdog then stops quietly."""
+		"""Stop streaming, once; the stream watchdog then stops quietly."""
 		self._rx_cancelled.set()
-		self._call_safe('stop_rx')
+
+		if self._rx_running:
+			self._rx_running = False
+			self._call_safe('stop_rx')
 
 	def close (self) -> None:
-		"""Stop streaming, close the device, and release the HackRF library."""
+		"""Stop streaming, close the device, and release the HackRF library, even when the device has gone."""
 		try:
 			self.cancel_read_async()
 		except Exception as exc:
 			logger.debug(f"Error cancelling async read during close: {exc}")
-		self._call_safe('close')
 
-		if self._initialized_library and hasattr(self._module, 'pyhackrf_exit'):
-			self._module.pyhackrf_exit()
-			self._initialized_library = False
+		try:
+			self._call_safe('close')
+		finally:
+			if self._initialized_library and hasattr(self._module, 'pyhackrf_exit'):
+				self._module.pyhackrf_exit()
+				self._initialized_library = False
 
 	def _convert_samples (self, data: typing.Any) -> numpy.typing.NDArray[numpy.complex64]:
 		"""

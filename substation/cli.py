@@ -124,6 +124,23 @@ def init_config () -> None:
 	print("Any setting you delete falls back to the built-in default.")
 
 
+def _report_failure (what: str, exc: Exception) -> None:
+
+	"""
+	Log why a scan failed, with its traceback only at DEBUG.
+
+	Most failures concern the receiver, such as one that is missing or has
+	been unplugged, and the message says what happened.  A traceback helps
+	only with a fault in Substation itself, so it waits for --log-level
+	DEBUG, where someone reporting a bug can ask for it.
+	"""
+
+	if logger.isEnabledFor(logging.DEBUG):
+		logger.error(f"{what}: {exc}", exc_info=True)
+	else:
+		logger.error(f"{what}: {exc} (--log-level DEBUG shows where it happened)")
+
+
 async def run_scanner (config_path: pathlib.Path | None, band_name: str, device_type: str, device_index: int) -> None:
 
 	"""
@@ -162,7 +179,7 @@ async def run_scanner (config_path: pathlib.Path | None, band_name: str, device_
 		await scan.scan ()
 
 	except Exception as e:
-		logger.error(f"Error running scanner: {e}", exc_info=True)
+		_report_failure("Error running scanner", e)
 		sys.exit(1)
 
 
@@ -222,7 +239,7 @@ async def run_scanner_file (config_path: pathlib.Path | None, band_name: str, iq
 		await scan.scan()
 
 	except Exception as e:
-		logger.error(f"Error processing IQ file: {e}", exc_info=True)
+		_report_failure("Error processing IQ file", e)
 		sys.exit(1)
 
 

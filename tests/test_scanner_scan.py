@@ -19,6 +19,7 @@ import substation.cli
 import substation.config
 import substation.devices
 import substation.devices.base
+import substation.devices.file
 import substation.scanner
 
 import iq_generators
@@ -108,6 +109,19 @@ class FakeLiveDevice (substation.devices.base.BaseDevice):
 		self.closed = True
 
 
+class GoneDevice (FakeLiveDevice):
+
+	"""An unplugged receiver: its stream ends by itself, and it can be neither stopped nor closed."""
+
+	def cancel_read_async (self) -> None:
+		"""Fail, as stopping a device that has gone does."""
+		raise OSError("No such device")
+
+	def close (self) -> None:
+		"""Fail, as closing a device that has gone does."""
+		raise OSError("No such device")
+
+
 def _write_iq_wav (path, sample_rate: float, seconds: float) -> None:
 
 	"""Write a stereo PCM_16 IQ file of weak noise, the format FileDevice plays."""
@@ -176,6 +190,43 @@ class TestScanEnds:
 
 		assert clock.samples_delivered > 0
 
+	def test_a_device_that_has_gone_is_closed_without_warnings (self, app_config, monkeypatch, caplog):
+		"""Regression: after an unplug, the scan warned that it could not stop or close the device that had gone, once calling it normal on interrupt."""
+		monkeypatch.setattr(substation.devices, "create_device", lambda *args, **kwargs: GoneDevice(blocks=2))
+		scanner = substation.scanner.RadioScanner(config=app_config, band_name="test_nfm", device_type="hackrf")
+		caplog.set_level(logging.DEBUG, logger="substation")
+
+		with pytest.raises(RuntimeError, match="stopped streaming"):
+			asyncio.run(scanner.scan())
+
+		gone = [record for record in caplog.records if "No such device" in record.getMessage()]
+		assert len(gone) == 2
+		assert all(record.levelno == logging.DEBUG for record in gone)
+
+	def test_a_device_still_there_that_cannot_close_is_warned_about (self, app_config, tmp_path, monkeypatch, caplog):
+		"""A device that has not gone should close, so a failure to is worth a warning."""
+		band = app_config.bands["test_nfm"]
+		iq_path = tmp_path / "noise.wav"
+		_write_iq_wav(iq_path, band.sample_rate, seconds=0.5)
+		original_close = substation.devices.file.FileDevice.close
+
+		def close_then_fail (self) -> None:
+			original_close(self)
+			raise OSError("close failed")
+
+		monkeypatch.setattr(substation.devices.file.FileDevice, "close", close_then_fail)
+		scanner = substation.scanner.RadioScanner(
+			config=app_config,
+			band_name="test_nfm",
+			device_type="file",
+			clock=substation.scanner.VirtualClock(datetime.datetime(2000, 1, 1), band.sample_rate),
+			device_kwargs={"file_path": str(iq_path), "center_freq": (band.freq_start + band.freq_end) / 2},
+		)
+
+		asyncio.run(scanner.scan())
+
+		assert any(record.levelno == logging.WARNING and "close failed" in record.getMessage() for record in caplog.records)
+
 
 class TestCliExitStatus:
 
@@ -190,6 +241,22 @@ class TestCliExitStatus:
 				substation.cli.main()
 
 		assert exc_info.value.code == 1
+
+	@pytest.mark.parametrize("level", [logging.INFO, logging.DEBUG], ids=["info", "debug"])
+	def test_a_failure_shows_its_traceback_only_at_debug (self, tmp_path, minimal_config_dict, monkeypatch, caplog, level):
+		"""Regression: every failure printed a full traceback, so an unplugged receiver looked like a crash in Substation."""
+		config_path = tmp_path / "config.yaml"
+		config_path.write_text(yaml.dump(minimal_config_dict))
+		monkeypatch.chdir(tmp_path)
+		monkeypatch.setattr(substation.devices, "create_device", lambda *args, **kwargs: FakeLiveDevice(blocks=1))
+		caplog.set_level(level, logger="substation")
+
+		with pytest.raises(SystemExit):
+			asyncio.run(substation.cli.run_scanner(config_path, "test_nfm", "hackrf", 0))
+
+		failure = next(record for record in caplog.records if record.getMessage().startswith("Error running scanner"))
+		assert (failure.exc_info is not None) == (level == logging.DEBUG)
+		assert ("--log-level DEBUG" in failure.getMessage()) == (level != logging.DEBUG)
 
 
 def _play_transmissions (config_dict, tmp_path, seconds, transmissions, handlers=(), sample_rate=256e3):
