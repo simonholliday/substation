@@ -4,7 +4,7 @@
 
 Connect a USB SDR receiver, point it at a frequency band - Airband, PMR, Maritime, Amateur, or any conventional analogue band - and Substation monitors every radio channel simultaneously, recording each transmission to its own audio file with full metadata.
 
-The scanner is designed for unattended, long-running operation. It handles the entire signal processing chain from raw IQ samples through to clean, archive-ready audio files: signal detection, demodulation (NFM, AM, USB, LSB), noise reduction, carrier transient removal, soft limiting, and automatic file management. Three independent noise rejection stages ensure you get real transmissions, not hiss. Recordings include embedded metadata - frequency, timestamp, modulation, and detected CTCSS/DCS tone codes - so every file is self-documenting.
+The scanner is designed for unattended, long-running operation. It handles the entire signal processing chain from raw IQ samples through to clean, archive-ready audio files: signal detection, demodulation (NFM, AM, USB, LSB), noise reduction, carrier transient removal, soft limiting, and automatic file management. Three independent noise rejection stages ensure you get real transmissions, not hiss. Recordings include embedded metadata - frequency, timestamp, modulation, and any CTCSS or DCS tone detected - so every file is self-documenting.
 
 Substation runs comfortably on a Raspberry Pi for 24/7 monitoring, and works equally well as a command-line tool or as a Python module integrated into your own applications.
 
@@ -34,7 +34,7 @@ High-sensitivity receivers often trigger on noise that crosses the SNR threshold
 
 Each modulation type has a dedicated, stateful demodulator that maintains phase and filter continuity across processing blocks, eliminating the pops and glitches that occur at block boundaries in stateless designs.
 
-**NFM** - the most common mode for PMR, amateur, and public safety - runs through a complete processing chain: IF decimation, polar discriminator, Hampel impulse blanker (suppresses glitches from IQ samples dropped over USB by devices like the AirSpy R2), 300µs de-emphasis, DC blocking, voice bandpass filter (300-3400 Hz), and CTCSS/DCS subaudible tone detection. The voice bandpass removes subaudible signalling tones from the recording while the Goertzel-based detector identifies them and embeds the detected tone code in the file's metadata. The same tone value is also delivered live on the scanner's `channel_state` event (as `ctcss_hz` / `dcs_code` kwargs) so OSC or dashboard consumers see the tone as a property of the activation, with no file parsing required.
+**NFM** - the most common mode for PMR, amateur, and public safety - runs through a complete processing chain: IF decimation, polar discriminator, Hampel impulse blanker (suppresses glitches from IQ samples dropped over USB by devices like the AirSpy R2), 300µs de-emphasis, DC blocking, voice bandpass filter (300-3400 Hz), and CTCSS/DCS subaudible tone detection. The voice bandpass reduces subaudible signalling in the recording: the lowest CTCSS tones strongly, and the highest, near 250 Hz, only slightly, so they can remain faintly audible. A Goertzel detector looks for CTCSS tones and a Golay decoder reads DCS codes. A tone found is embedded in the file's metadata and delivered live on the scanner's `channel_state` event (as `ctcss_hz` / `dcs_code` kwargs), so OSC or dashboard consumers see the tone as a property of the activation, with no file parsing required. Tone detection has not yet been thoroughly tested with real radios, so treat a reported tone as a guide rather than a certainty, and the absence of one as inconclusive.
 
 **AM** - used for civil and military airband - uses envelope detection with an AGC that follows the audio's peaks, rising at once and releasing slowly, so it adapts to varying signal strength without pumping or clipping.
 
@@ -48,7 +48,7 @@ Recordings are not just raw demodulated audio dumped to disk. Each file passes t
 - **Carrier transient trimming** (optional) detects and removes the sharp clicks that AM transmitters produce at key-on and key-off, using shape-based detection that distinguishes carrier transients from voice plosives.
 - **Half-cosine fades** at recording boundaries prevent clicks from sudden onset or cutoff.
 - **Soft limiting** via a tanh waveshaper rounds off peaks as they near full scale: audio up to full scale comes out at no more than 0.98 of it (-0.18 dBFS), leaving headroom for the small overshoot between audio samples that voice-band audio produces.
-- **Broadcast WAV metadata** (BEXT, EBU Tech 3285) embeds each recording's start time, frequency, modulation, and detected CTCSS/DCS codes directly in each file. Audio editors like Audacity, Reaper, and iZotope RX can place recordings on a timeline at their real capture time.
+- **Broadcast WAV metadata** (BEXT, EBU Tech 3285) embeds each recording's start time, frequency, and modulation directly in the file, with any CTCSS tone or DCS code detected. Audio editors like Audacity, Reaper, and iZotope RX can place recordings on a timeline at their real capture time.
 - **FLAC output** (optional) compresses recordings losslessly, to a size that depends on the band and the signal, with metadata stored as Vorbis comments. Its compression level was chosen by encoding real PMR recordings on a Raspberry Pi at every level: the highest levels gave almost no further reduction and cost noticeably more CPU time.
 
 ### Efficiency
@@ -166,6 +166,8 @@ dmr:
     freq_end: 460.5e+6
     sample_rate: 12.5e+6
 ```
+
+Scanning a band this wide in real time also depends on the computer keeping up with it: see [Limitations](#limitations).
 
 **References**
 - Manufacturer page: [https://greatscottgadgets.com/hackrf/one/](https://greatscottgadgets.com/hackrf/one/)
@@ -433,7 +435,7 @@ The sender emits the following OSC messages:
 | `/radio/recording` | Recording finalised on disk | `band_name:str, channel_index:int, file_path:str, ctcss_hz:float, dcs_code:int` |
 | `/sample/import` | Recording finalised (only if `sampler_host` set) | `file_path:str` |
 
-`ctcss_hz` and `dcs_code` carry any subaudible tone detected on the activation. OSC has no native null, so `0.0` / `0` mean "no tone detected" (valid CTCSS tones start at 67 Hz, and DCS codes are always nonzero, so these sentinels are unambiguous). DCS codes are octal, and `dcs_code` is the code's integer value, so DCS 023 arrives as 19; format it in octal to show it as a radio does.
+`ctcss_hz` and `dcs_code` carry any subaudible tone detected on the activation; tone detection has not yet been thoroughly tested with real radios (see [Demodulation](#demodulation)). OSC has no native null, so `0.0` / `0` mean "no tone detected" (valid CTCSS tones start at 67 Hz, and DCS codes are always nonzero, so these sentinels are unambiguous). DCS codes are octal, and `dcs_code` is the code's integer value, so DCS 023 arrives as 19; format it in octal to show it as a radio does.
 
 Sends are non-blocking UDP (fire-and-forget); transient socket errors are logged as warnings and never raised back into the scanner. See [examples/scan_osc.py](https://github.com/simonholliday/substation/blob/main/examples/scan_osc.py) for a working script (in the source repository).
 
@@ -530,7 +532,7 @@ bands:
 
 ## SoapySDR installation (AirSpy and other devices)
 
-AirSpy devices, and any other `soapy:<driver>` device, need SoapySDR installed at the system level, with a module for each kind of device. The Python virtual environment **must** then be created with `--system-site-packages`, so that it can see SoapySDR's system-installed bindings. The steps for Debian, Ubuntu, Raspberry Pi OS, and Fedora are in [section 4 of INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md#4-soapysdr--airspy-support).
+AirSpy devices, and any other `soapy:<driver>` device, need SoapySDR installed at the system level, with a module for each kind of device. The Python virtual environment **must** then be created with `--system-site-packages`, so that it can see SoapySDR's system-installed bindings. The steps for Debian, Ubuntu, Raspberry Pi OS, and Fedora are in [section 4 of INSTALL.md](INSTALL.md#4-soapysdr--airspy-support).
 
 ## Recording metadata
 Each recording embeds metadata directly in the audio file.
@@ -581,6 +583,7 @@ The `snr_threshold_db` setting controls how far above the noise floor a signal m
 - Available gain element names and their valid ranges are logged at DEBUG level on startup. Run with `--log-level DEBUG` and check these before setting values (the *active* values are logged at INFO once applied).
 - Optimal values depend on your antenna, band, and local RF environment - a rooftop antenna in a city needs different gain from a small whip in a rural area.
 - Airband (AM, 118-137 MHz) typically needs less gain than PMR (NFM, 446 MHz) because aircraft transmitters are more powerful (5-25W) than PMR handhelds (0.5W).
+- A transmitter close to the antenna, such as your own handheld radio, can overload the receiver at a band's shipped gain. The scanner then discards every overloaded slice rather than risk false detections, so nothing is recorded, and the log shows `ADC SATURATION` warnings. Lower `sdr_gain_db` for that band, or move the radio further away.
 
 ## Rejecting empty/noise recordings
 
@@ -736,10 +739,10 @@ taskset -c 3 substation --band pmr --device-index 1
 - **Queue size** provides burst tolerance but uses memory: each queued slice holds every IQ sample in it.
 - **RTL-SDR USB buffers**: librtlsdr keeps 15 USB transfers of one slice each in flight, and Linux allows 16 MB of USB transfers by default. A slice of more than about 559,000 IQ samples, about 233 ms at 2.4 MHz once rounded up to whole blocks, therefore fails to stream with `Failed to submit transfer` until that limit is raised (see [INSTALL.md](INSTALL.md#2-system-optimisation-usb-buffering)).
 
-If you see repeated `Sample queue full` warnings, reduce the band's `sample_rate`, exclude radio channels, or increase `sample_queue_maxsize`.
+If you see repeated `Sample queue full` warnings, scan a narrower band at a lower `sample_rate`, or exclude radio channels you do not need. A larger `sample_queue_maxsize` absorbs bursts, such as several radio channels activating at once, but if processing falls behind all the time the queue fills whatever its size.
 
 ## Limitations
-- Processing is slice-based; extremely wide bands or multiple high-rate scans can exceed real-time capacity on low-power CPUs.
+- Processing time grows with a band's sample rate, and most of it runs on one CPU core. The three shipped bands at 12.5 MHz, `air_civil_1`, `air_civil_2`, and `dmr`, have not yet been shown to keep up in real time: on the one desktop computer they have been tested on, processing fell behind and IQ samples were dropped, and faster computers are still to be tested. On a Raspberry Pi, or wherever `Processing overrun` warnings appear, scan a narrower band, such as one of `dmr_1` to `dmr_5`.
 - If you enable `apply_noisereduce` (requires a code change and the `noisereduce` extra), it is CPU-intensive for long chunks; on constrained devices, stick with the default `apply_spectral_subtraction` or reduce `disk_flush_interval_seconds`.
 
 ## Author

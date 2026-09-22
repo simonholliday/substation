@@ -19,7 +19,8 @@ Features:
 - Demodulation of NFM, AM, and SSB (USB/LSB via Weaver's method) with
   streaming polyphase FIR resampler for artifact-free block processing
 - CTCSS (51 standard tones) and DCS (23-bit Golay-coded) subaudible tone
-  detection on NFM, embedded in recording metadata
+  detection on NFM, embedded in recording metadata; not yet thoroughly
+  tested with real radios
 - Automatic per-channel recording in WAV (Broadcast WAV with embedded
   frequency / timestamp / modulation / tone metadata) or FLAC (lossless,
   Vorbis comments) with spectral-subtraction noise reduction and optional
@@ -27,7 +28,7 @@ Features:
 - PPM frequency calibration against a known reference signal
 - Unified event emitter (on / off / emit) — six events covering channel
   state, recording lifecycle, noise floor, and per-slice SNR snapshots;
-  the channel_state event carries the detected CTCSS tone or DCS code
+  the channel_state event carries any CTCSS tone or DCS code detected
   as a property of each activation; used by the OSC bridge
 - Optional OSC event forwarding to downstream tools (MIDI sequencer,
   sampler, VJ software, ...) via substation.osc_sender — install the
