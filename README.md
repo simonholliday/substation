@@ -88,7 +88,7 @@ A high-quality, low-cost general-purpose receiver. The natural starting point fo
 | `--device-type`    | `rtl`, `rtlsdr`, `rtl-sdr`                             |
 | Best for           | General VHF/UHF scanning, low cost, easy setup         |
 
-**Setup** - see [INSTALL.md](INSTALL.md#1-rtl-sdr-blog-v4-driver) for the librtlsdr fork build and the DVB-T driver blacklist step.
+**Setup** - see [INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md#1-rtl-sdr-blog-v4-driver) for the librtlsdr fork build and the DVB-T driver blacklist step.
 
 **Recommended starting config**
 - `snr_threshold_db: 4.5`
@@ -142,7 +142,7 @@ A wideband transceiver covering 1 MHz to 6 GHz with up to 20 MHz of instantaneou
 | `--device-type`    | `hackrf`, `hackrf-one`, `hackrfone`                                |
 | Best for           | Wideband monitoring, multi-band capture in a single tune           |
 
-**Setup** - install the HackRF extra with `pip install "substation[hackrf]"`, which builds the `python_hackrf` binding against the `libhackrf-dev` system package (see [INSTALL.md](INSTALL.md#3-os-dependencies)). See [INSTALL.md](INSTALL.md#2-system-optimisation-usb-buffering) for the USB buffer tuning (`usbcore.usbfs_memory_mb=1000`).
+**Setup** - install the HackRF extra with `pip install "substation[hackrf]"`, which builds the `python_hackrf` binding against the `libhackrf-dev` system package (see [INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md#3-os-dependencies)). See [INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md#2-system-optimisation-usb-buffering) for the USB buffer tuning (`usbcore.usbfs_memory_mb=1000`).
 
 **Recommended starting config**
 - `snr_threshold_db: 6`
@@ -153,7 +153,7 @@ A wideband transceiver covering 1 MHz to 6 GHz with up to 20 MHz of instantaneou
 **Gotchas**
 - **No hardware AGC.** Setting `sdr_gain_db: auto` does not enable AGC - there isn't one. The wrapper logs a warning and sets sensible defaults (LNA=32, VGA=30) so the device still works.
 - A numeric `sdr_gain_db` sets both the LNA and the VGA, each clamped and stepped to its own grid: asking for 35 dB sets the LNA to 32 dB (8 dB steps) and the VGA to 34 dB (2 dB steps). The startup log shows the values applied.
-- High sample rates (~16-20 MHz) require raising the kernel USB buffer limit; otherwise IQ samples are dropped. See [INSTALL.md](INSTALL.md#2-system-optimisation-usb-buffering).
+- High sample rates (~16-20 MHz) require raising the kernel USB buffer limit; otherwise IQ samples are dropped. See [INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md#2-system-optimisation-usb-buffering).
 - The 8-bit ADC has the same dynamic-range caveats as the RTL-SDR - wide captures including a strong station can desensitise weak ones.
 - Multiple Python bindings exist (`python_hackrf`, `hackrf`, `pyhackrf`) with different APIs; the wrapper auto-detects whichever is installed.
 
@@ -189,7 +189,7 @@ A high-dynamic-range VHF/UHF receiver with a 12-bit ADC (≈16-bit effective fro
 | `--device-type`    | `airspy`, `airspy-r2`, `airspyr2`                                             |
 | Best for           | High-quality VHF/UHF, wide single-band capture, weak-signal work              |
 
-**Setup** - see [INSTALL.md](INSTALL.md#4-soapysdr--airspy-support) for the SoapySDR core and the AirSpy module. The Python venv **must** be created with `--system-site-packages` so it can access the system-installed SoapySDR Python bindings.
+**Setup** - see [INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md#4-soapysdr--airspy-support) for the SoapySDR core and the AirSpy module. The Python venv **must** be created with `--system-site-packages` so it can access the system-installed SoapySDR Python bindings.
 
 **Recommended starting config**
 - `snr_threshold_db: 6` (the higher sensitivity makes the RTL default 4.5 dB too noisy)
@@ -244,7 +244,7 @@ A precision HF and lower-VHF receiver. Exceptional sensitivity and dynamic range
 | `--device-type`    | `airspyhf`, `airspy-hf`, `airspyhf+`                                               |
 | Best for           | HF and lower-VHF precision work, weak-signal listening, narrow-band scanning       |
 
-**Setup** - see [INSTALL.md](INSTALL.md#4-soapysdr--airspy-support). On Raspberry Pi OS the `soapysdr-module-airspyhf` package may not be available in the distro repos; the install guide covers building it from source. As with the AirSpy R2, the venv **must** be created with `--system-site-packages`.
+**Setup** - see [INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md#4-soapysdr--airspy-support). On Raspberry Pi OS the `soapysdr-module-airspyhf` package may not be available in the distro repos; the install guide covers building it from source. As with the AirSpy R2, the venv **must** be created with `--system-site-packages`.
 
 **Recommended starting config**
 - `snr_threshold_db: 6` (essential - the device is sensitive enough that the RTL default 4.5 dB triggers on near-noise)
@@ -301,7 +301,7 @@ The same `sdr_gain_db`, `sdr_gain_elements`, and `sdr_device_settings` config ke
 **Reference:** [SoapySDR project](https://github.com/pothosware/SoapySDR)
 
 ## Quick start
-1) Install the SDR drivers and platform dependencies (see [INSTALL.md](INSTALL.md)).
+1) Install the SDR drivers and platform dependencies (see [INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md)).
 2) Install substation:
 ```bash
 pip install substation                                    # from PyPI
@@ -532,7 +532,7 @@ bands:
 
 ## SoapySDR installation (AirSpy and other devices)
 
-AirSpy devices, and any other `soapy:<driver>` device, need SoapySDR installed at the system level, with a module for each kind of device. The Python virtual environment **must** then be created with `--system-site-packages`, so that it can see SoapySDR's system-installed bindings. The steps for Debian, Ubuntu, Raspberry Pi OS, and Fedora are in [section 4 of INSTALL.md](INSTALL.md#4-soapysdr--airspy-support).
+AirSpy devices, and any other `soapy:<driver>` device, need SoapySDR installed at the system level, with a module for each kind of device. The Python virtual environment **must** then be created with `--system-site-packages`, so that it can see SoapySDR's system-installed bindings. The steps for Debian, Ubuntu, Raspberry Pi OS, and Fedora are in [section 4 of INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md#4-soapysdr--airspy-support).
 
 ## Recording metadata
 Each recording embeds metadata directly in the audio file.
@@ -737,7 +737,7 @@ taskset -c 3 substation --band pmr --device-index 1
 - **Overrun warnings** indicate the processing of a slice exceeded its real-time window. This can lead to dropped IQ blocks (`Sample queue full`).
 - **Noise reduction** runs during write/flush if enabled (default). It uses `apply_spectral_subtraction`, which is efficient, and estimates the noise once per recording, from the quietest frames of the first audio written. The alternative `apply_noisereduce` implementation exists in `substation/dsp/noise_reduction.py` for reference but is not used by default as it is significantly more CPU-intensive. It needs the `noisereduce` library, installed with `pip install "substation[noisereduce]"`.
 - **Queue size** provides burst tolerance but uses memory: each queued slice holds every IQ sample in it.
-- **RTL-SDR USB buffers**: librtlsdr keeps 15 USB transfers of one slice each in flight, and Linux allows 16 MB of USB transfers by default. A slice of more than about 559,000 IQ samples, about 233 ms at 2.4 MHz once rounded up to whole blocks, therefore fails to stream with `Failed to submit transfer` until that limit is raised (see [INSTALL.md](INSTALL.md#2-system-optimisation-usb-buffering)).
+- **RTL-SDR USB buffers**: librtlsdr keeps 15 USB transfers of one slice each in flight, and Linux allows 16 MB of USB transfers by default. A slice of more than about 559,000 IQ samples, about 233 ms at 2.4 MHz once rounded up to whole blocks, therefore fails to stream with `Failed to submit transfer` until that limit is raised (see [INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md#2-system-optimisation-usb-buffering)).
 
 If you see repeated `Sample queue full` warnings, scan a narrower band at a lower `sample_rate`, or exclude radio channels you do not need. A larger `sample_queue_maxsize` absorbs bursts, such as several radio channels activating at once, but if processing falls behind all the time the queue fills whatever its size.
 
@@ -758,4 +758,4 @@ This project is licensed under the **GNU Affero General Public License v3.0 (AGP
 - **Attribution**: You must give appropriate credit to the original author (Simon Holliday).
 - **Commercial Use**: Permitted, provided you comply with the copyleft obligations of the AGPL-3.0.
 
-See the [LICENSE](LICENSE) file for the full legal text.
+See the [LICENSE](https://github.com/simonholliday/substation/blob/main/LICENSE) file for the full legal text.
