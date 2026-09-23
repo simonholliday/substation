@@ -4,21 +4,34 @@
 # `python -m substation.generate_default_config`, after the settings that
 # script generates from substation/config.py.  Edit the bands here, then run
 # the script.
+#
+# Every band has a reception_class, which says how UK law treats listening to
+# it, and decides whether it records when it does not set recording_enabled:
+#   general      what Ofcom calls general reception: licensed broadcasting,
+#                amateur and CB radio, and weather and navigation
+#                transmissions.  These bands record.
+#   not_general  anything else, which Ofcom says it is illegal to listen to.
+#                These bands only detect activity.
+#   unsettled    bands where the position is unclear, such as civil airband.
+#                These also only detect activity.
+# This describes UK law and is not legal advice.  Where your own law allows
+# it, set recording_enabled: true for a band in your config.yaml.
 
 band_defaults:
 
     # Generic narrow-FM voice bands (UHF business radio, amateur 2m,
     # marine VHF, fire ground, etc.).  Each band sets its own
     # channel_spacing because conventions differ between services.
+    # Most are not general reception; amateur_2m, which is, says so.
     NFM:
         modulation: NFM
-        recording_enabled: false
+        reception_class: not_general
 
     # Default settings for PMR bands
     PMR:
         channel_spacing: 12.5e+3
         modulation: NFM
-        recording_enabled: true
+        reception_class: not_general
         snr_threshold_db: 4.5
         sdr_gain_db: 36
 
@@ -26,14 +39,17 @@ band_defaults:
     DMR:
         channel_spacing: 12.5e+3
         modulation: NFM
+        reception_class: not_general
         snr_threshold_db: 15
         sdr_gain_db: 24
 
-    # Default settings for airband voice (AM)
+    # Default settings for airband voice (AM).  Civil airband is
+    # unsettled: Ofcom will not say that listening to it is an offence.
+    # Military airband, which is not general reception, says so.
     AIR:
         channel_spacing: !fraction 25000/3
         modulation: AM
-        recording_enabled: true
+        reception_class: unsettled
         snr_threshold_db: 4.5
         sdr_gain_db: 30
 
@@ -44,12 +60,13 @@ band_defaults:
     TETRA:
         channel_spacing: 25.0e+3
         modulation: TETRA
+        reception_class: not_general
         snr_threshold_db: 3.5
         sdr_gain_db: 36
 
     # HF / shortwave on AirSpy HF+ Discovery.
-    # Each HF band sets its own modulation (USB / LSB / AM) explicitly,
-    # because the right choice depends on the band's content:
+    # Each HF band sets its own reception_class, and its own modulation
+    # (USB / LSB / AM) explicitly, because both depend on the band's content:
     #   - 80m, 40m  → LSB by amateur convention (below 10 MHz)
     #   - 20m, 17m, 15m, 12m, 10m, HFGCS, VOLMET → USB (above 10 MHz)
     #   - International broadcast and pirate radio → AM
@@ -57,7 +74,6 @@ band_defaults:
     # SSB transmission per radio channel.
     HF:
         channel_spacing: 5.0e+3
-        recording_enabled: true
         snr_threshold_db: 6
         sdr_gain_db: auto
 
@@ -65,15 +81,16 @@ band_defaults:
     CB:
         channel_spacing: 10.0e+3
         modulation: NFM
-        recording_enabled: true
+        reception_class: general
         snr_threshold_db: 4.5
         sdr_gain_db: 36
 
     # Digital data bands (ACARS, VDL Mode 2, etc.).  Detection only -
-    # there is no demodulator for these protocols, so recording is
-    # disabled by default.
+    # there is no demodulator for these protocols.  Messages between
+    # aircraft and the ground are not among the transmissions Ofcom
+    # lists as general reception.
     DATA:
-        recording_enabled: false
+        reception_class: not_general
 
 bands:
 
@@ -127,6 +144,7 @@ bands:
     # hear at once: scanning it needs a copy narrowed to the part you want.
     air_military_uhf:
         type: AIR
+        reception_class: not_general
         freq_start: 225.0e+6
         freq_end: 400.0e+6
         channel_spacing: 25.0e+3
@@ -169,6 +187,7 @@ bands:
     # Amateur Radio 2m Band (UK)
     amateur_2m:
         type: NFM
+        reception_class: general
         freq_start: 144.0e+6
         freq_end: 146.0e+6
         channel_spacing: 12.5e+3
@@ -424,6 +443,7 @@ bands:
     # 80m amateur phone - European LSB voice, many languages, night band.
     hf_amateur_80m:
         type: HF
+        reception_class: general
         modulation: LSB
         freq_start: 3.600e+6
         freq_end: 3.800e+6
@@ -441,6 +461,7 @@ bands:
     # pattern crosses the threshold (the default 3.0 would suppress it).
     hf_night_4mhz:
         type: HF
+        reception_class: not_general
         modulation: USB
         freq_start: 4.100e+6
         freq_end: 4.750e+6
@@ -455,6 +476,7 @@ bands:
     # sampling" choice.
     hf_pirate_48m:
         type: HF
+        reception_class: not_general
         modulation: AM
         freq_start: 6.200e+6
         freq_end: 6.400e+6
@@ -465,6 +487,7 @@ bands:
     # different skip distances.
     hf_amateur_40m:
         type: HF
+        reception_class: general
         modulation: LSB
         freq_start: 7.100e+6
         freq_end: 7.200e+6
@@ -473,8 +496,11 @@ bands:
     # 11 MHz day band - HFGCS US Air Force day frequency (11175 USB,
     # the busy one with most Skyking traffic), Shannon VOLMET aviation
     # weather (11253 USB), naval weather FAX (11086.5).  All USB.
+    # The weather broadcasts are general reception, but HFGCS is military,
+    # so the band as a whole is not.
     hf_day_11mhz:
         type: HF
+        reception_class: not_general
         modulation: USB
         freq_start: 10.950e+6
         freq_end: 11.550e+6
@@ -485,6 +511,7 @@ bands:
     # variety when propagation is open.
     hf_amateur_20m:
         type: HF
+        reception_class: general
         modulation: USB
         freq_start: 14.150e+6
         freq_end: 14.350e+6

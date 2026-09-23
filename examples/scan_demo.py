@@ -76,7 +76,9 @@ async def run_custom_scanner () -> None:
 		# You can specify the band, device type, and device index here
 		scanner = substation.scanner.RadioScanner(
 			config=config_data,
-			band_name='pmr',      # Must match a band in your config.yaml
+			band_name='pmr',      # Must match a band in your config.yaml.  PMR446 is not
+			                      # general reception in the UK, so it only detects, and
+			                      # records once recording_enabled is set where your law allows
 			device_type='rtlsdr', # Or 'hackrf', 'airspy', 'airspyhf', 'soapy:<driver>'
 			device_index=0
 		)

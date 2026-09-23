@@ -61,7 +61,9 @@ async def run_scanner_with_osc () -> None:
 
 		scanner = substation.scanner.RadioScanner(
 			config=config_data,
-			band_name='pmr',        # Must match a band in your config.yaml
+			band_name='pmr',        # Must match a band in your config.yaml.  PMR446 is not
+			                        # general reception in the UK, so it only detects, and
+			                        # records once recording_enabled is set where your law allows
 			device_type='rtlsdr',   # Or 'hackrf', 'airspy', 'airspyhf', etc.
 			device_index=0,
 		)

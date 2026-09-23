@@ -3,6 +3,7 @@
 import fractions
 import logging
 import pathlib
+import typing
 
 import pydantic
 import pytest
@@ -314,7 +315,7 @@ class TestBandDefaults:
 		"""Regression: a user's `air` template sat beside the shipped `AIR` and replaced it whole.
 
 		The shipped AIR bands then lost the settings the user did not repeat:
-		air_civil_bristol stopped recording and dropped to automatic gain.
+		air_civil_bristol lost its reception class and dropped to automatic gain.
 		"""
 		monkeypatch.chdir(tmp_path)
 		shipped = substation.config.load_config().bands["air_civil_bristol"]
@@ -323,8 +324,8 @@ class TestBandDefaults:
 		user_cfg.write_text(yaml.dump({"band_defaults": {"air": {"snr_threshold_db": 12}}}))
 		adjusted = substation.config.load_config(user_cfg).bands["air_civil_bristol"]
 
-		assert shipped.recording_enabled
-		assert adjusted.recording_enabled
+		assert shipped.reception_class == "unsettled"
+		assert adjusted.reception_class == "unsettled"
 		assert adjusted.sdr_gain_db == shipped.sdr_gain_db
 
 	def test_unknown_type_warns (self, minimal_config_dict, caplog):
@@ -414,6 +415,91 @@ class TestRecordingNeedsADemodulator:
 		import substation.dsp.demodulation
 
 		assert set(substation.constants.DEMODULATED_MODULATIONS) == set(substation.dsp.demodulation.DEMODULATORS)
+
+
+def _unset_recording_band (config_dict: dict, **settings: typing.Any) -> substation.config.BandConfig:
+
+	"""The test band with recording_enabled left unset and these settings, validated."""
+
+	band = config_dict["bands"]["test_nfm"]
+	del band["recording_enabled"]
+	band.update(settings)
+	return substation.config.validate_config(config_dict).bands["test_nfm"]
+
+
+class TestReceptionClass:
+
+	def test_a_general_band_records_when_it_does_not_say (self, minimal_config_dict):
+		"""A band UK law opens to general reception, such as amateur or CB radio, records by default."""
+		assert _unset_recording_band(minimal_config_dict, reception_class="general").recording_enabled is True
+
+	@pytest.mark.parametrize("reception_class", ["not_general", "unsettled", None])
+	def test_any_other_band_only_detects_when_it_does_not_say (self, minimal_config_dict, reception_class):
+		"""A band UK law does not open to general reception, or whose position is unclear or unknown, only detects by default."""
+		assert _unset_recording_band(minimal_config_dict, reception_class=reception_class).recording_enabled is False
+
+	def test_recording_enabled_switches_on_a_band_that_is_not_general (self, minimal_config_dict):
+		"""Where the user's own law allows it, recording_enabled records any band, whatever its class."""
+		band = minimal_config_dict["bands"]["test_nfm"]
+		band["reception_class"] = "not_general"
+		band["recording_enabled"] = True
+
+		assert substation.config.validate_config(minimal_config_dict).bands["test_nfm"].recording_enabled is True
+
+	def test_recording_enabled_switches_off_a_general_band (self, minimal_config_dict):
+		"""recording_enabled: false makes even a general band detection only."""
+		band = minimal_config_dict["bands"]["test_nfm"]
+		band["reception_class"] = "general"
+		band["recording_enabled"] = False
+
+		assert substation.config.validate_config(minimal_config_dict).bands["test_nfm"].recording_enabled is False
+
+	def test_a_general_band_with_nothing_to_demodulate_only_detects_quietly (self, minimal_config_dict, caplog):
+		"""General reception with no demodulator records nothing, and is not warned about as if recording had been asked for."""
+		with caplog.at_level(logging.WARNING):
+			band = _unset_recording_band(minimal_config_dict, reception_class="general", modulation="TETRA")
+
+		assert band.recording_enabled is False
+		assert "no demodulator" not in caplog.text
+
+	def test_a_band_takes_its_class_from_its_template_and_can_override_it (self, minimal_config_dict):
+		"""A template's class reaches every band of its type, and a band that differs says so."""
+		band = minimal_config_dict["bands"]["test_nfm"]
+		del band["recording_enabled"]
+		band["type"] = "NFM"
+		minimal_config_dict["bands"]["test_amateur"] = dict(band, reception_class="general")
+		minimal_config_dict["band_defaults"] = {"NFM": {"reception_class": "not_general"}}
+
+		bands = substation.config.validate_config(minimal_config_dict).bands
+
+		assert (bands["test_nfm"].reception_class, bands["test_nfm"].recording_enabled) == ("not_general", False)
+		assert (bands["test_amateur"].reception_class, bands["test_amateur"].recording_enabled) == ("general", True)
+
+	def test_an_unknown_class_is_refused (self, minimal_config_dict):
+		"""Only the three classes are accepted, so a typo cannot quietly turn recording off."""
+		minimal_config_dict["bands"]["test_nfm"]["reception_class"] = "public"
+
+		with pytest.raises(pydantic.ValidationError, match="reception_class"):
+			substation.config.validate_config(minimal_config_dict)
+
+
+class TestShippedReceptionClasses:
+
+	def test_every_shipped_band_has_a_reception_class (self, tmp_path, monkeypatch):
+		"""Whether a shipped band records is never left to a class nobody set."""
+		monkeypatch.chdir(tmp_path)
+		bands = substation.config.load_config().bands
+
+		assert [name for name, band in bands.items() if band.reception_class is None] == []
+
+	def test_shipped_bands_record_only_general_reception (self, tmp_path, monkeypatch):
+		"""Ofcom says listening to anything but general reception is illegal in the UK, so out of the box only amateur and CB bands record."""
+		monkeypatch.chdir(tmp_path)
+		bands = substation.config.load_config().bands
+		recording = {name for name, band in bands.items() if band.recording_enabled}
+
+		assert recording == {"amateur_2m", "hf_amateur_80m", "hf_amateur_40m", "hf_amateur_20m", "cb_uk", "cb_cept"}
+		assert {bands[name].reception_class for name in recording} == {"general"}
 
 
 class TestAudioSampleRate:

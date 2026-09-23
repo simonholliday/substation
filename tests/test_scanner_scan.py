@@ -531,6 +531,34 @@ class TestBandTooWide:
 
 		assert "Cannot be scanned" in capsys.readouterr().out
 
+	def test_list_bands_shows_the_reception_class_and_whether_a_band_records (self, tmp_path, minimal_config_dict, capsys):
+		"""--list-bands says how UK law treats each band, and whether it records."""
+		band = minimal_config_dict["bands"]["test_nfm"]
+		del band["recording_enabled"]
+		band["reception_class"] = "unsettled"
+		config_path = tmp_path / "config.yaml"
+		config_path.write_text(yaml.dump(minimal_config_dict))
+
+		substation.cli.list_bands(config_path)
+
+		listing = capsys.readouterr().out.split("\ntest_nfm:\n")[1].split("\n\n")[0]
+		assert "Reception class: unsettled" in listing
+		assert "Records: no, detection only" in listing
+
+	@pytest.mark.parametrize("reception_class, why", [("not_general", "does not open this band to general reception"), ("unsettled", "position under UK law is unsettled")])
+	def test_a_band_that_only_detects_says_why_at_startup (self, minimal_config_dict, caplog, reception_class, why):
+		"""A user who wonders why nothing records is told why, and what to set where their law allows it."""
+		band = minimal_config_dict["bands"]["test_nfm"]
+		del band["recording_enabled"]
+		band["reception_class"] = reception_class
+		config = substation.config.validate_config(minimal_config_dict)
+
+		with caplog.at_level(logging.INFO, logger="substation"):
+			substation.scanner.RadioScanner(config=config, band_name="test_nfm", device_type="rtlsdr")
+
+		assert why in caplog.text
+		assert "set recording_enabled: true" in caplog.text
+
 
 class FakeSoapyDevice (FakeLiveDevice):
 

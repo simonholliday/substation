@@ -21,6 +21,9 @@ Features:
 - CTCSS (51 standard tones) and DCS (23-bit Golay-coded) subaudible tone
   detection on NFM, embedded in recording metadata; not yet thoroughly
   tested with real radios
+- A reception class on every shipped band, saying how UK law treats
+  listening to it; out of the box only general-reception bands, such as
+  amateur and CB radio, record, and the rest only detect activity
 - Automatic per-channel recording in WAV (Broadcast WAV with embedded
   frequency / timestamp / modulation / tone metadata) or FLAC (lossless,
   Vorbis comments) with spectral-subtraction noise reduction and optional

@@ -396,6 +396,13 @@ class RecordingConfig(pydantic.BaseModel):
 	"""
 
 
+# How UK law treats listening to a band (see the README's "Reception and the
+# law").  The code knows no jurisdiction: the band library carries the UK
+# classes as data, and the class only decides whether a band records when it
+# does not say.
+ReceptionClass = typing.Literal['general', 'not_general', 'unsettled']
+
+
 class BandTypeConfig(pydantic.BaseModel):
 	"""
 	A template of settings shared by one type of radio service, such as DMR,
@@ -436,10 +443,23 @@ class BandTypeConfig(pydantic.BaseModel):
 	LSB below 10 MHz and USB above, and HFGCS, VOLMET, and marine HF use USB.
 	"""
 
-	recording_enabled: bool = False
+	recording_enabled: bool | None = None
 	"""
-	Whether the scanner records audio from detected transmissions. Set to false
-	for detection only, with no audio files.
+	Whether bands of this type record audio from detected transmissions. When
+	null, each band decides from its `reception_class`.
+	"""
+
+	reception_class: ReceptionClass | None = None
+	"""
+	How UK law treats listening to bands of this type. `general` is what Ofcom calls general
+	reception, which anyone may receive: licensed broadcasting, amateur and CB
+	radio, and weather and navigation transmissions. `not_general` is anything
+	else, such as PMR446, business radio, marine, military airband, and emergency
+	services, which Ofcom says it is illegal to listen to. `unsettled` is for
+	bands where the position is unclear, such as civil airband. A band that does
+	not set `recording_enabled` records only when it is `general`. This describes
+	UK law and is not legal advice: the law where you are decides what you may
+	receive and record.
 	"""
 
 	snr_threshold_db: float | None = pydantic.Field(default=None)
@@ -578,10 +598,25 @@ class BandConfig(pydantic.BaseModel):
 	below 10 MHz and USB above, and HFGCS, VOLMET, and marine HF use USB.
 	"""
 
-	recording_enabled: bool = False
+	recording_enabled: bool | None = None
 	"""
-	Whether the scanner records audio from active radio channels. Set to false
-	for detection only, with no audio files.
+	Whether the scanner records audio from active radio channels. When not set, a
+	band records only if its `reception_class` is `general` and its modulation has
+	a demodulator. Set it to true to record a band where your law allows it, or
+	to false for detection only, with no audio files.
+	"""
+
+	reception_class: ReceptionClass | None = None
+	"""
+	How UK law treats listening to this band. `general` is what Ofcom calls general
+	reception, which anyone may receive: licensed broadcasting, amateur and CB
+	radio, and weather and navigation transmissions. `not_general` is anything
+	else, such as PMR446, business radio, marine, military airband, and emergency
+	services, which Ofcom says it is illegal to listen to. `unsettled` is for
+	bands where the position is unclear, such as civil airband. A band that does
+	not set `recording_enabled` records only when it is `general`. This describes
+	UK law and is not legal advice: the law where you are decides what you may
+	receive and record.
 	"""
 
 	exclude_channel_indices: list[int] = pydantic.Field(default_factory=list)
@@ -765,6 +800,11 @@ class BandConfig(pydantic.BaseModel):
 		# Default radio channel width to 84% of spacing (leaves guard bands)
 		if self.channel_width is None:
 			self.channel_width = self.channel_spacing * substation.constants.CHANNEL_WIDTH_FRACTION
+
+		# A band that does not say whether it records does so only where UK
+		# law opens it to general reception, and only if it can be demodulated.
+		if self.recording_enabled is None:
+			self.recording_enabled = self.reception_class == 'general' and self.modulation in substation.constants.DEMODULATED_MODULATIONS
 
 		# Recording needs a demodulator.  A label with none, such as a typo
 		# for NFM, would otherwise turn recording off with only an INFO line.

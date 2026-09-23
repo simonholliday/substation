@@ -2,7 +2,7 @@
 
 **An SDR band scanner that detects, demodulates, and records radio transmissions automatically.**
 
-Connect a USB SDR receiver, point it at a frequency band - Airband, PMR, Maritime, Amateur, or any conventional analogue band - and Substation monitors every radio channel simultaneously, recording each transmission to its own audio file with full metadata.
+Connect a USB SDR receiver, point it at a frequency band - Amateur, CB, Airband, PMR, Maritime, or any conventional analogue band - and Substation monitors every radio channel simultaneously, detecting each transmission and recording it to its own audio file with full metadata. Out of the box it records only the bands that UK law opens to anyone, such as amateur and CB radio, and detects activity on the rest: see [Reception and the law](#reception-and-the-law).
 
 The scanner is designed for unattended, long-running operation. It handles the entire signal processing chain from raw IQ samples through to clean, archive-ready audio files: signal detection, demodulation (NFM, AM, USB, LSB), noise reduction, carrier transient removal, soft limiting, and automatic file management. Three independent noise rejection stages ensure you get real transmissions, not hiss. Recordings include embedded metadata - frequency, timestamp, modulation, and any CTCSS or DCS tone detected - so every file is self-documenting.
 
@@ -317,10 +317,32 @@ substation --init          # writes ./config.yaml, the fully-commented defaults
 substation --band air_civil_bristol --device-type rtlsdr --device-index 0
 ```
 
-Audio files are written to:
+The scanner logs each radio channel as it becomes active. Whether it also records depends on the band's reception class, described next: out of the box amateur and CB bands record, and `air_civil_bristol`, like other airband, only detects. Recordings are written to:
 ```
 ./audio/YYYY-MM-DD/<band>/<date>_<time>_<band>_<channel>_<freq>_<snr>dB_<device>_<index>.wav
 ```
+
+## Reception and the law
+
+Many radio services may not lawfully be listened to without permission, and the law differs from country to country. Every band Substation ships carries a `reception_class` saying how UK law treats it, and the class decides whether the band records out of the box:
+
+| Class | What it covers | Out of the box |
+| :--- | :--- | :--- |
+| `general` | What Ofcom calls general reception: licensed broadcasting, amateur and CB radio, and weather and navigation transmissions | Records |
+| `not_general` | Everything else, such as PMR446, business radio, marine, military airband, and emergency services, which Ofcom says it is illegal to listen to | Detects activity without recording |
+| `unsettled` | Bands where the position is unclear, such as civil airband, where Ofcom will not say that listening is an offence | Detects activity without recording |
+
+In the UK, using a receiver to learn what is said in a transmission that is not general reception is an offence under the Wireless Telegraphy Act 2006, even if you tell no one. Elsewhere the law differs: the United States, for example, allows receiving unencrypted public-safety, marine, and air radio, and Germany forbids it. The classes describe UK law only, and are not legal advice: the law where you are decides what you may receive and record.
+
+Where your law allows it, switch recording on for a band in your `config.yaml`:
+
+```yaml
+bands:
+  air_civil_bristol:
+    recording_enabled: true
+```
+
+`--list-bands` shows each band's class and whether it records. A band you define yourself records only if you give it `reception_class: general` or `recording_enabled: true`.
 
 ## Utility scripts
 
@@ -351,7 +373,7 @@ Options:
 - `--band`, `-b`: band name to scan (required unless `--list-bands`).
 - `--device-type`, `-t`: `rtlsdr`, `hackrf`, `airspy`, `airspyhf`, or `soapy:<driver>` (default `rtlsdr`).
 - `--device-index`, `-i`: device index (default `0`).
-- `--list-bands`: list available bands and exit. A band wider than its own sample rate can capture is marked as one that cannot be scanned: narrow it, or split it into several bands, in your own configuration.
+- `--list-bands`: list available bands, with each band's reception class and whether it records, and exit. A band wider than its own sample rate can capture is marked as one that cannot be scanned: narrow it, or split it into several bands, in your own configuration.
 - `--init`: write the default configuration to `config.yaml` in the current directory, as a starting point, and exit.
 - `--log-level`: how much to log: `DEBUG`, `INFO`, `WARNING`, or `ERROR` (default `INFO`). `DEBUG` adds what each device reports about itself at startup, such as its gain elements, and, when a scan fails, where in Substation it failed.
 - `--iq-file`: path to an IQ WAV file, with I and Q as its two audio channels in 16-bit PCM, for offline playback (replaces live SDR).
@@ -371,7 +393,7 @@ import substation.scanner
 def my_state_handler (band: str, ch: int, active: bool, snr: float) -> None:
 	print (f"Channel {ch} is now {'ON' if active else 'OFF'} ({snr:.1f} dB)")
 
-# Recording Callback: Triggered when a file is finalised and closed
+# Recording Callback: Triggered when a file is finalised and closed, on a band that records
 def my_recording_handler (band: str, ch: int, file_path: str) -> None:
 	print (f"Recording finished: {file_path}")
 
@@ -387,7 +409,7 @@ async def main () -> None:
 	# Initialise scanner instance
 	scanner = substation.scanner.RadioScanner (
 		config=config_data,
-		band_name="pmr",
+		band_name="pmr",  # detects only, out of the box: see "Reception and the law"
 		device_type="rtlsdr"
 	)
 
@@ -474,7 +496,7 @@ bands:
 
 Use `--config <path>` to specify a different user override file. Use `--list-bands` to see all available bands.
 
-The top-level sections are `scanner`, `recording`, `band_defaults`, and `bands`. Each entry in `band_defaults` is a template: a band with the same `type` inherits its values, and sets only what differs. Device-specific tuning for a band goes in its `device_overrides`, described below.
+The top-level sections are `scanner`, `recording`, `band_defaults`, and `bands`. Each entry in `band_defaults` is a template: a band with the same `type` inherits its values, and sets only what differs. A band's `reception_class` decides whether it records when it does not set `recording_enabled` (see [Reception and the law](#reception-and-the-law)). Device-specific tuning for a band goes in its `device_overrides`, described below.
 
 Every setting, with its type, default, limits, and examples, is in the configuration reference: [https://subsystem.co/substation/configuration/](https://subsystem.co/substation/configuration/)
 

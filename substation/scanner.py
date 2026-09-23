@@ -157,7 +157,8 @@ class RadioScanner:
 		# DEMODULATORS dict, so can_demod below still correctly resolves to
 		# False for detection-only bands.
 		self.modulation: str = self.band_config.modulation or 'Unknown'
-		self.recording_enabled = self.band_config.recording_enabled
+		# Always a bool once the band is validated: unset, it follows the band's reception class
+		self.recording_enabled = bool(self.band_config.recording_enabled)
 		self.audio_sample_rate = self.recording_config.audio_sample_rate
 		self.buffer_size_seconds = self.recording_config.buffer_size_seconds
 		self.disk_flush_interval = self.recording_config.disk_flush_interval_seconds
@@ -387,6 +388,10 @@ class RadioScanner:
 			logger.info(f"Recording: ENABLED ({self.audio_sample_rate} Hz mono {self.audio_format.upper()} to {self.audio_output_dir})")
 		elif self.recording_enabled:
 			logger.warning(f"Recording: DISABLED (no demodulator for {self.modulation})")
+		elif self.band_config.reception_class == 'not_general':
+			logger.info("Recording: DISABLED (UK law does not open this band to general reception; set recording_enabled: true to record it where your law allows)")
+		elif self.band_config.reception_class == 'unsettled':
+			logger.info("Recording: DISABLED (this band's position under UK law is unsettled; set recording_enabled: true to record it where your law allows)")
 		else:
 			logger.info("Recording: DISABLED")
 

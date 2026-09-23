@@ -60,6 +60,9 @@ def list_bands (config_path: pathlib.Path | None) -> None:
 			print(f"  Frequency range: {freq_start:.3f} - {freq_end:.3f} MHz")
 			print(f"  Modulation: {modulation}")
 			print(f"  Radio channel spacing: {channel_spacing:.1f} kHz")
+			if band_config.reception_class:
+				print(f"  Reception class: {band_config.reception_class}")
+			print(f"  Records: {'yes' if band_config.recording_enabled else 'no, detection only'}")
 
 			# A band that cannot fit its own sample rate cannot be scanned, and
 			# would otherwise fail only after its device had been opened.
