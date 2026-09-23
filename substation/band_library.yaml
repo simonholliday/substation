@@ -10,8 +10,8 @@
 #   general      what Ofcom calls general reception: licensed broadcasting,
 #                amateur and CB radio, and weather and navigation
 #                transmissions.  These bands record.
-#   not_general  anything else, which Ofcom says it is illegal to listen to.
-#                These bands only detect activity.
+#   not_general  services outside general reception, which Ofcom says it is
+#                illegal to listen to.  These bands only detect activity.
 #   unsettled    bands where the position is unclear, such as civil airband.
 #                These also only detect activity.
 # This describes UK law and is not legal advice.  Where your own law allows
@@ -98,7 +98,7 @@ bands:
     # - RTL-SDR Blog V4: 2.4MHz
     # - HackRF One: 16MHz
     # - AirSpy R2: 10MHz
-    # - AirSpy HF+ Discovery: 768kHz
+    # - AirSpy HF+ Discovery: 912kHz
 
     pmr:
         type: PMR

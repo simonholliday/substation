@@ -386,14 +386,22 @@ class RadioScanner:
 
 		if self.can_record:
 			logger.info(f"Recording: ENABLED ({self.audio_sample_rate} Hz mono {self.audio_format.upper()} to {self.audio_output_dir})")
-		elif self.recording_enabled:
-			logger.warning(f"Recording: DISABLED (no demodulator for {self.modulation})")
+		elif not self.can_demod:
+			# No setting can make this band record, so none is suggested.  A
+			# band that asked to record is warned; one that did not is told.
+			reason = f"no demodulator for {self.modulation}" if self.band_config.modulation else "the band sets no modulation"
+			if self.recording_enabled:
+				logger.warning(f"Recording: DISABLED ({reason})")
+			else:
+				logger.info(f"Recording: DISABLED ({reason})")
 		elif self.band_config.reception_class == 'not_general':
 			logger.info("Recording: DISABLED (UK law does not open this band to general reception; set recording_enabled: true to record it where your law allows)")
 		elif self.band_config.reception_class == 'unsettled':
 			logger.info("Recording: DISABLED (this band's position under UK law is unsettled; set recording_enabled: true to record it where your law allows)")
+		elif self.band_config.reception_class is None:
+			logger.info("Recording: DISABLED (this band has no reception_class; set reception_class: general or recording_enabled: true to record it where your law allows)")
 		else:
-			logger.info("Recording: DISABLED")
+			logger.info("Recording: DISABLED (recording_enabled is set to false)")
 
 
 	def _now (self) -> float:

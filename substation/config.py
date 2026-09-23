@@ -453,9 +453,10 @@ class BandTypeConfig(pydantic.BaseModel):
 	"""
 	How UK law treats listening to bands of this type. `general` is what Ofcom calls general
 	reception, which anyone may receive: licensed broadcasting, amateur and CB
-	radio, and weather and navigation transmissions. `not_general` is anything
-	else, such as PMR446, business radio, marine, military airband, and emergency
-	services, which Ofcom says it is illegal to listen to. `unsettled` is for
+	radio, and weather and navigation transmissions. `not_general` is a service
+	outside general reception, such as PMR446, business radio, marine, military
+	airband, and emergency services, which Ofcom says it is illegal to listen to.
+	`unsettled` is for
 	bands where the position is unclear, such as civil airband. A band that does
 	not set `recording_enabled` records only when it is `general`. This describes
 	UK law and is not legal advice: the law where you are decides what you may
@@ -610,9 +611,10 @@ class BandConfig(pydantic.BaseModel):
 	"""
 	How UK law treats listening to this band. `general` is what Ofcom calls general
 	reception, which anyone may receive: licensed broadcasting, amateur and CB
-	radio, and weather and navigation transmissions. `not_general` is anything
-	else, such as PMR446, business radio, marine, military airband, and emergency
-	services, which Ofcom says it is illegal to listen to. `unsettled` is for
+	radio, and weather and navigation transmissions. `not_general` is a service
+	outside general reception, such as PMR446, business radio, marine, military
+	airband, and emergency services, which Ofcom says it is illegal to listen to.
+	`unsettled` is for
 	bands where the position is unclear, such as civil airband. A band that does
 	not set `recording_enabled` records only when it is `general`. This describes
 	UK law and is not legal advice: the law where you are decides what you may

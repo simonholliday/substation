@@ -559,6 +559,43 @@ class TestBandTooWide:
 		assert why in caplog.text
 		assert "set recording_enabled: true" in caplog.text
 
+	def test_a_band_with_no_demodulator_is_not_told_a_setting_would_record_it (self, minimal_config_dict, caplog):
+		"""A TETRA band cannot record whatever it sets, so startup gives the reason and no advice."""
+		band = minimal_config_dict["bands"]["test_nfm"]
+		del band["recording_enabled"]
+		band["modulation"] = "TETRA"
+		band["reception_class"] = "not_general"
+		config = substation.config.validate_config(minimal_config_dict)
+
+		with caplog.at_level(logging.INFO, logger="substation"):
+			substation.scanner.RadioScanner(config=config, band_name="test_nfm", device_type="rtlsdr")
+
+		assert "Recording: DISABLED (no demodulator for TETRA)" in caplog.text
+		assert "set recording_enabled" not in caplog.text
+
+	def test_a_band_with_no_class_says_what_would_record_it (self, minimal_config_dict, caplog):
+		"""A band of the user's own with no class only detects, and startup names the settings that record it."""
+		del minimal_config_dict["bands"]["test_nfm"]["recording_enabled"]
+		config = substation.config.validate_config(minimal_config_dict)
+
+		with caplog.at_level(logging.INFO, logger="substation"):
+			substation.scanner.RadioScanner(config=config, band_name="test_nfm", device_type="rtlsdr")
+
+		assert "this band has no reception_class" in caplog.text
+		assert "set reception_class: general or recording_enabled: true" in caplog.text
+
+	def test_a_general_band_switched_off_says_it_was_switched_off (self, minimal_config_dict, caplog):
+		"""A general band records unless told not to, as a config.yaml written by an older --init tells amateur_2m, so startup names the setting."""
+		band = minimal_config_dict["bands"]["test_nfm"]
+		band["recording_enabled"] = False
+		band["reception_class"] = "general"
+		config = substation.config.validate_config(minimal_config_dict)
+
+		with caplog.at_level(logging.INFO, logger="substation"):
+			substation.scanner.RadioScanner(config=config, band_name="test_nfm", device_type="rtlsdr")
+
+		assert "Recording: DISABLED (recording_enabled is set to false)" in caplog.text
+
 
 class FakeSoapyDevice (FakeLiveDevice):
 

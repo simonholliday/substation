@@ -53,7 +53,7 @@ Recordings are not just raw demodulated audio dumped to disk. Each file passes t
 
 ### Efficiency
 
-The scanner is designed for 24/7 operation on low-power hardware. All DSP runs through NumPy and SciPy's compiled backends. FFT segments use zero-copy memory stride tricks. Expensive per-radio-channel analysis (segment PSD, demodulation) is performed lazily - only when a state transition is detected. Audio buffering for each radio channel uses a pre-allocated ring buffer with modulo wrap-around, avoiding per-flush memory allocation. IIR filter states use float64 precision to prevent rounding drift in long-running sessions.
+The scanner is designed for 24/7 operation on low-power hardware. All DSP runs through NumPy and SciPy's compiled backends. FFT segments use zero-copy memory stride tricks. Expensive work runs only when it is needed: the segment PSD only when a radio channel changes state, and demodulation only while a radio channel records, or briefly when one turns on, to check it for noise. Audio buffering for each radio channel uses a pre-allocated ring buffer with modulo wrap-around, avoiding per-flush memory allocation. IIR filter states use float64 precision to prevent rounding drift in long-running sessions.
 
 ---
 
@@ -68,7 +68,7 @@ To use this software, a compatible Software Defined Radio (SDR) USB device is re
 | RTL-SDR Blog V4 / V3    | 24 MHz - 1.766 GHz             | 2.4 MHz  | 8-bit  | General VHF/UHF, low cost |
 | HackRF One              | 1 MHz - 6 GHz                  | 20 MHz   | 8-bit  | Wideband monitoring       |
 | AirSpy R2               | 24 MHz - 1.8 GHz               | 10 MHz   | 12-bit | High-quality VHF/UHF      |
-| AirSpy HF+ Discovery    | 0.5 kHz - 31 MHz, 60 - 260 MHz | 768 kHz  | 18-bit | HF / VHF precision        |
+| AirSpy HF+ Discovery    | 0.5 kHz - 31 MHz, 64 - 260 MHz | 912 kHz  | 18-bit | HF / VHF precision        |
 
 Any other device with a SoapySDR driver module installed can be used too - see [Other SoapySDR devices](#other-soapysdr-devices) below.
 
@@ -230,12 +230,12 @@ substation --band pmr_airspy --device-type airspy --device-index 0
 
 ### AirSpy HF+ Discovery
 
-A precision HF and lower-VHF receiver. Exceptional sensitivity and dynamic range in its bands; not a wideband scanner - its maximum bandwidth is 768 kHz. Best in class for HF listening, weak-signal work, and narrow-band airband / amateur scanning.
+A precision HF and lower-VHF receiver. Exceptional sensitivity and dynamic range in its bands; not a wideband scanner - its maximum bandwidth is 912 kHz. Best in class for HF listening, weak-signal work, and narrow-band airband / amateur scanning.
 
 | Spec               | Value                                                                              |
 | :----------------- | :--------------------------------------------------------------------------------- |
-| Frequency range    | 0.5 kHz - 31 MHz, 60 - 260 MHz (two separate bands, not contiguous)                |
-| Max bandwidth      | 768 kHz                                                                            |
+| Frequency range    | 0.5 kHz - 31 MHz, 64 - 260 MHz (two separate bands, not contiguous)                |
+| Max bandwidth      | 912 kHz                                                                            |
 | Sample rates       | Discrete: typically 0.192, 0.228, 0.384, 0.456, 0.650, 0.768, 0.912 MHz (see log)  |
 | ADC resolution     | 18-bit                                                                             |
 | Gain architecture  | LNA on/off (0 or +6 dB) + RF *attenuator* (-48 to 0 dB)                            |
@@ -329,10 +329,10 @@ Many radio services may not lawfully be listened to without permission, and the 
 | Class | What it covers | Out of the box |
 | :--- | :--- | :--- |
 | `general` | What Ofcom calls general reception: licensed broadcasting, amateur and CB radio, and weather and navigation transmissions | Records |
-| `not_general` | Everything else, such as PMR446, business radio, marine, military airband, and emergency services, which Ofcom says it is illegal to listen to | Detects activity without recording |
+| `not_general` | Services outside general reception, such as PMR446, business radio, marine, military airband, and emergency services, which Ofcom says it is illegal to listen to | Detects activity without recording |
 | `unsettled` | Bands where the position is unclear, such as civil airband, where Ofcom will not say that listening is an offence | Detects activity without recording |
 
-In the UK, using a receiver to learn what is said in a transmission that is not general reception is an offence under the Wireless Telegraphy Act 2006, even if you tell no one. Elsewhere the law differs: the United States, for example, allows receiving unencrypted public-safety, marine, and air radio, and Germany forbids it. The classes describe UK law only, and are not legal advice: the law where you are decides what you may receive and record.
+In the UK, using a receiver to learn the contents, sender, or addressee of a transmission that is not general reception is an offence under the Wireless Telegraphy Act 2006, even if you tell no one. Elsewhere the law differs: the United States, for example, allows receiving unencrypted public-safety, marine, and air radio, and Germany forbids it. The classes describe UK law only, and are not legal advice: the law where you are decides what you may receive and record.
 
 Where your law allows it, switch recording on for a band in your `config.yaml`:
 
@@ -342,7 +342,7 @@ bands:
     recording_enabled: true
 ```
 
-`--list-bands` shows each band's class and whether it records. A band you define yourself records only if you give it `reception_class: general` or `recording_enabled: true`.
+`--list-bands` shows each band's class and whether it records. A band you define yourself takes its template's class when it sets none of its own, so a band of `type: CB` records and one of `type: PMR` only detects. A band with no class records only if you give it `reception_class: general` or `recording_enabled: true`.
 
 ## Utility scripts
 
@@ -358,7 +358,7 @@ substation-antenna --freq 4625e3          # use a manual frequency in Hz
 substation-antenna --list                 # list all configured bands
 ```
 
-For HF bands wider than ±2% of their centre frequency the report also shows the dipole's natural SWR window and the antenna lengths at the band edges, so you can decide whether to cut for the centre, an edge, or use a tuner. Lengths are reported in metres for HF/VHF and centimetres for UHF.
+For HF bands wider than ±2% of their centre frequency the report also shows the dipole's natural SWR window and the antenna lengths at the band edges, so you can decide whether to cut for the centre, an edge, or use a tuner. Lengths of a metre or more are in metres, and shorter ones in centimetres.
 
 ## Command line
 ```bash
@@ -696,17 +696,17 @@ All three gates suppress silently - no ON callback fires, no recording file is k
 
 Gate 1 suppression is logged at **DEBUG** level:
 ```
-Channel 18 suppressed: power variance 0.4 dB below threshold 3.0 dB (likely noise)
+Radio channel 18 suppressed: power variance 0.4 dB below threshold 3.0 dB (likely noise)
 ```
 
 Gate 2 suppression is logged at **DEBUG** level:
 ```
-Channel 18 suppressed: audio is noise-only (spectral flatness 0.38)
+Radio channel 18 suppressed: audio is noise-only (spectral flatness 0.38)
 ```
 
 Gate 3 discards are logged at **INFO** level:
 ```
-Discarded empty recording: 2026-04-11_15-09-28_air_civil_bristol_airspyhf_59_6.0dB.wav
+Discarded empty recording: 2026-04-11_15-09-28_air_civil_bristol_59_125.983333MHz_6.0dB_airspyhf_0.wav
 ```
 
 ### Generality
@@ -714,7 +714,7 @@ Discarded empty recording: 2026-04-11_15-09-28_air_civil_bristol_airspyhf_59_6.0
 All three gates are modulation-agnostic:
 
 - Gate 1 operates on raw radio channel power from FFT bins - works for any signal type, including detection-only bands with no demodulator (TETRA)
-- Gates 2 and 3 operate on spectral flatness of demodulated audio - any non-noise signal (voice, data, tones, beacons) produces a peaked spectrum that passes the check. They apply to every band whose modulation has a demodulator, including detection-only bands (e.g. DMR, ACARS) where the demodulation is purely speculative - so radio channel activation events stay clean even when nothing is recorded
+- Gates 2 and 3 operate on spectral flatness of demodulated audio - any non-noise signal (voice, data, tones, beacons) produces a peaked spectrum that passes the check. Gate 2 applies to every band whose modulation has a demodulator, including bands that only detect (e.g. DMR, ACARS), where its demodulation is purely speculative, so radio channel activation events stay clean even when nothing is recorded. Gate 3 applies to every recording
 - No demodulator-specific tuning is needed
 
 ## Dynamics curve (experimental)
@@ -772,12 +772,8 @@ Written by Simon Holliday ([https://simonholliday.com/](https://simonholliday.co
 
 This project is managed with [Subroutine](https://github.com/simonholliday/subroutine).
 
-## License
+## Licence
 
-This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
+Substation is released under the [GNU Affero General Public License v3.0](https://github.com/simonholliday/substation/blob/main/LICENSE) (AGPLv3).
 
-- **Copyleft**: Any modifications or improvements to this software must be shared back under the same license, even if used over a network.
-- **Attribution**: You must give appropriate credit to the original author (Simon Holliday).
-- **Commercial Use**: Permitted, provided you comply with the copyleft obligations of the AGPL-3.0.
-
-See the [LICENSE](https://github.com/simonholliday/substation/blob/main/LICENSE) file for the full legal text.
+You are free to use, modify, and distribute this software under the terms of the AGPL. If you run a modified version of Substation as part of a network service, you must make the source code available to its users.
