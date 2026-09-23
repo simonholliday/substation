@@ -604,6 +604,12 @@ class TestExcludeChannelIndices:
 		with pytest.raises(pydantic.ValidationError):
 			substation.config.validate_config(minimal_config_dict)
 
+	def test_the_shipped_pmr_band_skips_no_radio_channels (self, tmp_path, monkeypatch):
+		"""Regression: a local exclusion of radio channels 1 to 3, among them the busiest, reached every user of the shipped pmr band."""
+		monkeypatch.chdir(tmp_path)
+
+		assert substation.config.load_config().bands["pmr"].exclude_channel_indices == []
+
 
 class TestDeviceOverrides:
 

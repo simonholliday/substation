@@ -88,7 +88,6 @@ bands:
         freq_start: 446.00625e+6
         freq_end: 446.19375e+6
         sample_rate: 1.024e6
-        exclude_channel_indices: [1, 2, 3]
 
     # Air
 
