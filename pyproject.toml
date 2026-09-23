@@ -11,7 +11,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "substation"
 dynamic = ["version"]
-description = "A versatile SDR band scanner for RTL-SDR, HackRF, AirSpy, and SoapySDR devices"
+description = "An SDR band scanner for RTL-SDR, HackRF, AirSpy, and SoapySDR devices"
 authors = [
     { name = "Simon Holliday", email = "simon.holliday@protonmail.com" }
 ]
@@ -90,6 +90,7 @@ hackrf = [
 ]
 
 [project.urls]
+Documentation = "https://subsystem.co/substation/"
 Repository = "https://github.com/simonholliday/substation"
 Issues = "https://github.com/simonholliday/substation/issues"
 

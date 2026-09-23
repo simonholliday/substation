@@ -1,14 +1,14 @@
-# Substation Installation Guide
+# Substation installation guide
 
 Platform-specific setup for SDR drivers, system dependencies, and the Python environment. See [README.md](README.md) for usage, configuration, and features.
 
 Tested on:
-- Debian 12 / Ubuntu 24.04 / Raspberry Pi OS (Bookworm)
-- Fedora 43 Server (x86_64)
+- Ubuntu 24.04 (x86_64) in September 2026, with an RTL-SDR Blog V4, a HackRF One, an AirSpy R2, and an AirSpy HF+ Discovery
+- Debian 12, Raspberry Pi OS (Bookworm), and Fedora 43 Server (x86_64) in April 2026, and not since
 
 ---
 
-## 1. RTL-SDR Blog V4 Driver
+## 1. RTL-SDR Blog V4 driver
 
 The RTL-SDR Blog V4 needs the RTL-SDR Blog fork of librtlsdr, which supports the V4's R828D tuner and its built-in HF upconverter; most distribution packages of the standard osmocom driver do not. Substation's pinned pyrtlsdr works with either library.
 
@@ -73,7 +73,7 @@ cd ../..
 
 ---
 
-## 2. System Optimisation (USB Buffering)
+## 2. System optimisation (USB buffering)
 
 High sample rates (e.g. HackRF at 20 MHz) require more USB buffer memory than the kernel default. So do long slices on an RTL-SDR: librtlsdr keeps 15 USB transfers of one slice each in flight, so a slice of more than about 559,000 IQ samples (about 233 ms at 2.4 MHz, once rounded up to whole `sdr_device_sample_size` blocks) fails with `Failed to submit transfer` until the limit is raised.
 
@@ -123,7 +123,7 @@ echo 1000 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb
 
 ---
 
-## 3. OS Dependencies
+## 3. OS dependencies
 
 ### Debian / Ubuntu / Raspberry Pi OS
 
@@ -147,7 +147,7 @@ sudo dnf install -y hackrf hackrf-devel
 
 ---
 
-## 4. SoapySDR + AirSpy Support
+## 4. SoapySDR + AirSpy support
 
 Required only if using AirSpy R2, AirSpy HF+ Discovery, or other SoapySDR-compatible devices.
 
@@ -186,7 +186,7 @@ sudo dnf install -y SoapySDR SoapySDR-devel python3-SoapySDR
 sudo dnf install -y soapy-rtlsdr        # RTL-SDR via SoapySDR
 sudo dnf install -y soapy-airspyhf      # AirSpy HF+ Discovery
 
-# AirSpy R2 module is not in the Fedora repos — build from source:
+# The AirSpy R2 module is not in the Fedora repos, so build it from source:
 sudo dnf install -y airspyone_host-devel SoapySDR-devel cmake
 git clone https://github.com/pothosware/SoapyAirspy.git
 cd SoapyAirspy
@@ -202,7 +202,7 @@ SoapySDRUtil --find
 
 ---
 
-## 5. Python Environment
+## 5. Python environment
 
 The same for all platforms.
 
@@ -229,7 +229,7 @@ pip install substation
 # From GitHub (latest, no release needed)
 pip install git+https://github.com/simonholliday/substation.git
 
-# From a local clone, editable — for development
+# From a local clone, editable, for development
 pip install -e .
 ```
 
@@ -264,10 +264,10 @@ python3 -m substation --list-bands
 
 ---
 
-## Platform-Specific Notes
+## Platform-specific notes
 
 ### Fedora
 
 - **SELinux**: Fedora enables SELinux in enforcing mode by default. If USB devices aren't accessible even after udev rules are in place, check for denials with `sudo ausearch -m avc -ts recent`. Typically the udev rules are sufficient.
-- **Firewalld**: If using OSC event forwarding or other network features, you may need to open ports: `sudo firewall-cmd --add-port=9000/udp --permanent && sudo firewall-cmd --reload`.
+- **Firewalld**: Substation sends OSC events and listens for nothing, so a firewall on the machine it runs on needs no change. If the application receiving them runs on another Fedora machine, open the port it listens on there, which is 9000/udp by default for the sequencer endpoint, and the sampler's port too if you set `sampler_host`. For example: `sudo firewall-cmd --add-port=9000/udp --permanent && sudo firewall-cmd --reload`.
 - **lib vs lib64**: Fedora uses `/usr/lib64` for 64-bit libraries. The `ldconfig` step after building RTL-SDR should handle this, but if you get "library not found" errors, check that `/usr/local/lib64` is listed in `/etc/ld.so.conf.d/` and re-run `sudo ldconfig`.
