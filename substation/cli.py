@@ -6,7 +6,7 @@ for selecting bands, SDR devices, and listing available configuration.
 
 Typical usage:
 	substation --init                              # Write a starter config.yaml
-	substation --band pmr                          # Scan PMR band
+	substation --band amateur_2m                   # Scan the 2 m amateur band
 	substation --list-bands                        # Show available bands
 	substation --band air_civil_bristol --device-type hackrf  # Use HackRF
 	substation --band pmr --iq-file recording.wav --center-freq 446059313
@@ -123,7 +123,7 @@ def init_config () -> None:
 
 	print(f"Created {target}")
 	print("This is the full default configuration, fully commented. Edit it to suit")
-	print("your hardware and bands, then start a scan, e.g. `substation --band pmr`.")
+	print("your hardware and bands, then start a scan, e.g. `substation --band amateur_2m`.")
 	print("Any setting you delete falls back to the built-in default.")
 
 
@@ -264,7 +264,7 @@ def main () -> int:
 		epilog="""
 Examples:
   substation --init                        # Write a starter config.yaml here
-  substation --band pmr                    # Scan PMR band with RTL-SDR
+  substation --band amateur_2m             # Scan the 2 m amateur band with RTL-SDR
   substation --band marine_vhf_calling --device-type hackrf  # Scan marine VHF with HackRF
   substation --list-bands                  # List all available bands
   substation --band pmr --iq-file rec.wav --center-freq 446059313  # File playback

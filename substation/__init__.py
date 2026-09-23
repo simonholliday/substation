@@ -39,7 +39,7 @@ Features:
 
 Typical usage:
     substation --init                              # Write a starter config.yaml
-    substation --band pmr
+    substation --band amateur_2m
     substation --list-bands
     substation --band air_civil_1 --device-type hackrf
     substation --band air_civil_bristol --device-type airspyhf

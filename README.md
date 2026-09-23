@@ -314,10 +314,10 @@ substation --init          # writes ./config.yaml, the fully-commented defaults
 4) Run:
 
 ```bash
-substation --band air_civil_bristol --device-type rtlsdr --device-index 0
+substation --band amateur_2m --device-type rtlsdr --device-index 0
 ```
 
-The scanner logs each radio channel as it becomes active. Whether it also records depends on the band's reception class, described next: out of the box amateur and CB bands record, and `air_civil_bristol`, like other airband, only detects. Recordings are written to:
+The scanner logs each radio channel on the 2 m amateur band as it becomes active, and records each transmission to its own file. Out of the box only amateur and CB bands record: the rest, such as airband and PMR446, only detect, as the next section explains. Recordings are written to:
 ```
 ./audio/YYYY-MM-DD/<band>/<date>_<time>_<band>_<channel>_<freq>_<snr>dB_<device>_<index>.wav
 ```
