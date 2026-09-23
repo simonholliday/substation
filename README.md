@@ -6,7 +6,7 @@ Connect a USB SDR receiver, point it at a frequency band - Amateur, CB, Airband,
 
 The scanner is designed for unattended, long-running operation. It handles the entire signal processing chain from raw IQ samples through to clean, archive-ready audio files: signal detection, demodulation (NFM, AM, USB, LSB), noise reduction, carrier transient removal, soft limiting, and automatic file management. Noise rejection checks each activation's RF power variance and audio spectral flatness, and each finished recording's length and spectral flatness, and discards what looks like hiss. Recordings include embedded metadata - frequency, timestamp, modulation, and any CTCSS or DCS tone detected - so every file is self-documenting.
 
-Substation runs as a command-line tool or as a Python module in your own applications, including on low-power hardware such as a Raspberry Pi scanning a narrower band. Some parts have not yet been thoroughly tested: whether the widest shipped bands, at 12.5 MHz, keep up in real time, and CTCSS and DCS tone detection with real radios. See [Limitations](#limitations).
+Substation runs as a command-line tool or as a Python module in your own applications, including on low-power hardware such as a Raspberry Pi scanning a narrower band. The widest shipped bands, at 12.5 MHz, have not yet been shown to keep up in real time, and CTCSS and DCS tone detection has not yet been thoroughly tested with real radios: see [Limitations](#limitations).
 
 **Full documentation: [https://subsystem.co/substation/](https://subsystem.co/substation/)**
 
@@ -317,7 +317,7 @@ substation --init          # writes ./config.yaml, the fully-commented defaults
 substation --band amateur_2m --device-type rtlsdr --device-index 0
 ```
 
-The scanner logs each radio channel on the 2 m amateur band as it becomes active, and records each transmission to its own file. Out of the box only amateur and CB bands record: the rest, such as airband and PMR446, only detect, as the next section explains. Recordings are written to:
+The scanner logs each radio channel on the 2 m amateur band as it becomes active, and records each transmission to its own file. The scan is running once the log says `Detection enabled`. The 2 m band can be quiet, so a first recording may take a while. Out of the box only amateur and CB bands record: the rest, such as airband and PMR446, only detect, as the next section explains. Recordings are written to:
 ```
 ./audio/YYYY-MM-DD/<band>/<date>_<time>_<band>_<channel>_<freq>_<snr>dB_<device>_<index>.wav
 ```
