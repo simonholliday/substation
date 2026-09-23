@@ -666,15 +666,13 @@ class BandConfig(pydantic.BaseModel):
 	starts.
 	"""
 
-	activation_variance_db: float | None = pydantic.Field(default=None, ge=0)
+	activation_variance_db: float | None = pydantic.Field(default=substation.constants.ACTIVATION_VARIANCE_DB, ge=0)
 	"""
 	Power variance in dB, across a detection slice, that a radio channel must
 	show to turn on. It suppresses triggers from stationary noise that crosses
 	the SNR threshold with no real signal: voice and data vary by 5-15 dB or more
 	over a slice, and stationary noise by under 2 dB. It applies whether or not
-	the band records. When null, the scanner uses
-	`substation.constants.ACTIVATION_VARIANCE_DB`. Set to 0 to turn the check
-	off.
+	the band records. Set to 0 to turn the check off.
 	"""
 
 	device_overrides: dict[str, DeviceOverrideConfig] | None = pydantic.Field(

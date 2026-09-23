@@ -249,7 +249,7 @@ A precision HF and lower-VHF receiver, with high sensitivity and dynamic range i
 **Recommended starting config**
 - `snr_threshold_db: 6` (essential - the device is sensitive enough that the RTL default 4.5 dB triggers on near-noise)
 - `sdr_gain_db: auto` (engages the well-tuned hardware multi-loop AGC)
-- `activation_variance_db: 3.0` (**also essential** - without it the high sensitivity surfaces stationary noise as false radio channel activations; see [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings))
+- `activation_variance_db: 3.0`, the default (**also essential** - with the check turned off, the high sensitivity surfaces stationary noise as false radio channel activations; see [Rejecting empty/noise recordings](#rejecting-emptynoise-recordings))
 - `sample_rate: 0.912e6` for the widest capture
 
 **Gotchas**
@@ -597,7 +597,7 @@ The general principle is: **maximise gain early in the chain** (LNA) and **minim
 
 The `snr_threshold_db` setting controls how far above the noise floor a signal must be before it's detected. Each device card above lists a sensible starting value for that hardware. To adjust:
 
-- If you're getting recordings that are mostly noise, raise the threshold by 1-2 dB at a time, *and* enable [`activation_variance_db`](#rejecting-emptynoise-recordings) if you haven't already - variance rejection catches the noise triggers that the SNR check can't distinguish.
+- If you're getting recordings that are mostly noise, raise the threshold by 1-2 dB at a time, *and* make sure [`activation_variance_db`](#rejecting-emptynoise-recordings) has not been set to 0, which turns variance rejection off - it catches the noise triggers that the SNR check can't distinguish.
 - If you're missing transmissions you can hear on a handheld scanner, lower the threshold.
 - The OFF threshold is `snr_threshold_db - hysteresis_db` (default 3 dB below ON) to prevent rapid toggling. Set `hysteresis_db` lower for weak-signal scanning.
 

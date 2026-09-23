@@ -568,9 +568,15 @@ class TestActivationVariance:
 		config = substation.config.validate_config(minimal_config_dict)
 		assert config.bands["test_nfm"].activation_variance_db == 0.0
 
-	def test_activation_variance_db_none_by_default (self, app_config):
-		"""activation_variance_db should be None when not specified."""
-		assert app_config.bands["test_nfm"].activation_variance_db is None
+	def test_activation_variance_db_defaults_to_the_shipped_threshold (self, app_config):
+		"""A band that sets no threshold gets the shipped one, so the configuration reference shows a number rather than null."""
+		assert app_config.bands["test_nfm"].activation_variance_db == substation.constants.ACTIVATION_VARIANCE_DB
+
+	def test_activation_variance_db_null_still_loads (self, minimal_config_dict):
+		"""null meant the shipped threshold before the default was a number, and a config that says so still loads."""
+		minimal_config_dict["bands"]["test_nfm"]["activation_variance_db"] = None
+		config = substation.config.validate_config(minimal_config_dict)
+		assert config.bands["test_nfm"].activation_variance_db is None
 
 	def test_activation_variance_db_negative_rejected (self, minimal_config_dict):
 		"""Negative values should fail validation (ge=0 constraint)."""
