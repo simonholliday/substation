@@ -800,10 +800,11 @@ bands:
     # HF / Shortwave (for AirSpy HF+ Discovery or similar)
     # -----------------------------------------------------------------
     #
-    # Curated for capturing random multilingual voice, numbers stations,
-    # military comms, pirates, amateur DX, utility signals.  All bands
-    # deliberately AVOID ITU international broadcast windows so they
-    # will not pick up music or news stations.
+    # Amateur voice, which records out of the box, and numbers stations,
+    # military, utility and pirate transmissions, which UK law does not
+    # open to general reception, so those bands only detect activity.
+    # All bands deliberately AVOID ITU international broadcast windows so
+    # they will not pick up music or news stations.
     #
     # Each band specifies its own modulation explicitly (USB, LSB, or AM)
     # so the demodulator matches what's actually being transmitted.

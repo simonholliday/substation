@@ -4,9 +4,9 @@
 
 Connect a USB SDR receiver, point it at a frequency band - Amateur, CB, Airband, PMR, Maritime, or any conventional analogue band - and Substation monitors every radio channel simultaneously, detecting each transmission and recording it to its own audio file with full metadata. Out of the box it records only the bands that UK law opens to anyone, such as amateur and CB radio, and detects activity on the rest: see [Reception and the law](#reception-and-the-law).
 
-The scanner is designed for unattended, long-running operation. It handles the entire signal processing chain from raw IQ samples through to clean, archive-ready audio files: signal detection, demodulation (NFM, AM, USB, LSB), noise reduction, carrier transient removal, soft limiting, and automatic file management. Three independent noise rejection stages ensure you get real transmissions, not hiss. Recordings include embedded metadata - frequency, timestamp, modulation, and any CTCSS or DCS tone detected - so every file is self-documenting.
+The scanner is designed for unattended, long-running operation. It handles the entire signal processing chain from raw IQ samples through to clean, archive-ready audio files: signal detection, demodulation (NFM, AM, USB, LSB), noise reduction, carrier transient removal, soft limiting, and automatic file management. Noise rejection checks each activation's RF power variance and audio spectral flatness, and each finished recording's length and spectral flatness, and discards what looks like hiss. Recordings include embedded metadata - frequency, timestamp, modulation, and any CTCSS or DCS tone detected - so every file is self-documenting.
 
-Substation runs comfortably on a Raspberry Pi for 24/7 monitoring, and works equally well as a command-line tool or as a Python module integrated into your own applications.
+Substation runs as a command-line tool or as a Python module in your own applications, including on low-power hardware such as a Raspberry Pi scanning a narrower band. Some parts have not yet been thoroughly tested: whether the widest shipped bands, at 12.5 MHz, keep up in real time, and CTCSS and DCS tone detection with real radios. See [Limitations](#limitations).
 
 **Full documentation: [https://subsystem.co/substation/](https://subsystem.co/substation/)**
 
@@ -14,21 +14,21 @@ Substation runs comfortably on a Raspberry Pi for 24/7 monitoring, and works equ
 
 ## Signal processing
 
-Substation's signal processing chain implements industry-standard DSP techniques - the same algorithms used in professional SDR receivers - in Python with NumPy and SciPy for accessibility without sacrificing quality.
+Substation's signal processing is written in Python, with NumPy and SciPy doing the numerical work.
 
 ### Detection
 
 The scanner divides the SDR's bandwidth into radio channels and analyses each one several times a second using Welch's Power Spectral Density method. Welch averaging across multiple overlapping FFT segments reduces noise variance, producing stable SNR measurements that don't jitter between slices. The noise floor tracks slowly via an exponential moving average, so brief transmissions stand out clearly against a stable background. A warmup period at startup absorbs the transient spikes that SDR hardware produces while its PLL and AGC settle.
 
-The centre frequency is automatically shifted by half a radio channel spacing whenever a radio channel would fall on the DC spike - a common SDR artifact caused by LO leakage - so no radio channel is ever masked.
+The centre frequency is automatically shifted by half a radio channel spacing whenever a radio channel would fall on the DC spike - a common SDR artefact caused by LO leakage - so no radio channel is ever masked.
 
 ### Noise rejection
 
-High-sensitivity receivers often trigger on noise that crosses the SNR threshold. Substation applies three independent rejection stages to eliminate these false recordings:
+High-sensitivity receivers often trigger on noise that crosses the SNR threshold. Substation rejects these false activations with independent checks:
 
 1. **RF power variance** - real signals (voice, data) fluctuate in power across the detection window; stationary noise does not. Radio channels with low variance are rejected before any demodulation occurs.
 2. **Spectral flatness** - when a radio channel first activates, the audio is speculatively demodulated and its spectral flatness (Wiener entropy) is measured. Noise has a flat spectrum; any real signal has a peaked one. Flat-spectrum activations are rejected before a recording starts.
-3. **Post-recording check** - after a recording finishes, the complete file is analysed for spectral flatness. Recordings that are predominantly noise (e.g. a brief signal followed by hold-timer padding) are discarded.
+3. **Post-recording checks** - after a recording finishes, it is discarded if it is shorter than `min_recording_seconds`, or if the complete file, analysed for spectral flatness, is predominantly noise (e.g. a brief signal followed by hold-timer padding).
 
 ### Demodulation
 
@@ -42,9 +42,9 @@ Each modulation type has a dedicated, stateful demodulator that maintains phase 
 
 ### Recording quality
 
-Recordings are not just raw demodulated audio dumped to disk. Each file passes through several stages designed to produce clean, ready-to-use output:
+Each recording passes through several stages between demodulation and disk:
 
-- **Spectral subtraction** noise reduction estimates the background hiss from the quietest moments of each recording's first audio, and reduces it while preserving voice clarity. A 2D gain-mask smoothing kernel minimises musical noise artifacts.
+- **Spectral subtraction** noise reduction estimates the background hiss from the quietest moments of each recording's first audio, and reduces it while preserving voice clarity. A 2D gain-mask smoothing kernel minimises musical noise artefacts.
 - **Carrier transient trimming** (optional) detects and removes the sharp clicks that AM transmitters produce at key-on and key-off, using shape-based detection that distinguishes carrier transients from voice plosives.
 - **Half-cosine fades** at recording boundaries prevent clicks from sudden onset or cutoff.
 - **Soft limiting** via a tanh waveshaper rounds off peaks as they near full scale: audio up to full scale comes out at no more than 0.98 of it (-0.18 dBFS), leaving headroom for the small overshoot between audio samples that voice-band audio produces.
@@ -74,7 +74,7 @@ Any other device with a SoapySDR driver module installed can be used too - see [
 
 ### RTL-SDR Blog V4 / V3
 
-A high-quality, low-cost general-purpose receiver. The natural starting point for new users - well-supported, easy to drive, and good enough for most VHF/UHF scanning. Limited dynamic range from its 8-bit ADC.
+A high-quality, low-cost general-purpose receiver. The natural starting point for new users - well supported, and good enough for most VHF/UHF scanning. Limited dynamic range from its 8-bit ADC.
 
 | Spec               | Value                                                  |
 | :----------------- | :----------------------------------------------------- |
@@ -86,7 +86,7 @@ A high-quality, low-cost general-purpose receiver. The natural starting point fo
 | AGC                | Hardware AGC                                           |
 | Driver             | `pyrtlsdr` - Python binding (version range in `pyproject.toml`) |
 | `--device-type`    | `rtl`, `rtlsdr`, `rtl-sdr`                             |
-| Best for           | General VHF/UHF scanning, low cost, easy setup         |
+| Best for           | General VHF/UHF scanning at low cost                   |
 
 **Setup** - see [INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md#1-rtl-sdr-blog-v4-driver) for the librtlsdr fork build and the DVB-T driver blacklist step.
 
@@ -128,7 +128,7 @@ The excluded radio channels and the AirSpy HF+ overrides were both tuned for one
 
 ### HackRF One
 
-A wideband transceiver covering 1 MHz to 6 GHz with up to 20 MHz of instantaneous bandwidth - by far the widest single-tune capture of any device here. The trade-off is no hardware AGC and the same 8-bit ADC dynamic-range limit as the RTL-SDR.
+A wideband transceiver covering 1 MHz to 6 GHz with up to 20 MHz of instantaneous bandwidth - the widest single-tune capture of any device here. The trade-off is no hardware AGC and the same 8-bit ADC dynamic-range limit as the RTL-SDR.
 
 | Spec               | Value                                                              |
 | :----------------- | :----------------------------------------------------------------- |
@@ -175,7 +175,7 @@ Scanning a band this wide in real time also depends on the computer keeping up w
 
 ### AirSpy R2
 
-A high-dynamic-range VHF/UHF receiver with a 12-bit ADC (≈16-bit effective from oversampling) and three independently tuneable gain stages. Considerably more sensitive than the RTL-SDR for the same money tier, with enough bandwidth (10 MHz) to cover practical surveillance bands in a single tune.
+A high-dynamic-range VHF/UHF receiver with a 12-bit ADC (≈16-bit effective from oversampling) and three independently tuneable gain stages. Its 10 MHz of bandwidth covers a wide band in a single tune.
 
 | Spec               | Value                                                                         |
 | :----------------- | :---------------------------------------------------------------------------- |
@@ -230,7 +230,7 @@ substation --band pmr_airspy --device-type airspy --device-index 0
 
 ### AirSpy HF+ Discovery
 
-A precision HF and lower-VHF receiver. Exceptional sensitivity and dynamic range in its bands; not a wideband scanner - its maximum bandwidth is 912 kHz. Best in class for HF listening, weak-signal work, and narrow-band airband / amateur scanning.
+A precision HF and lower-VHF receiver, with high sensitivity and dynamic range in its bands. It is not a wideband scanner: its maximum bandwidth is 912 kHz. It suits HF listening, weak-signal work, and narrow-band airband and amateur scanning.
 
 | Spec               | Value                                                                              |
 | :----------------- | :--------------------------------------------------------------------------------- |
@@ -481,7 +481,7 @@ Substation uses a two-layer configuration system:
 - **`config.yaml.default`** ships bundled inside the package and contains every setting at its default value, and all known bands. This file is always loaded first, so the scanner works out of the box with no config file at all.
 - **`config.yaml`** (optional) is your user override file. Put it in the working directory and specify only the settings you want to change - everything else inherits from the defaults. Run `substation --init` to drop a copy of the fully-commented defaults into the current directory as a starting point (it won't overwrite an existing `config.yaml`).
 
-For example, to override just the audio output directory:
+For example, to override only the audio output directory:
 ```yaml
 recording:
   audio_output_dir: /mnt/ssd/audio
@@ -615,9 +615,9 @@ SNR thresholds detect any signal that's louder than the noise floor - but they c
 
 What's needed is a way to tell **noise** apart from **real signals** - and a single check isn't enough, because noise comes in different flavours that fool different detectors.
 
-### The solution: three-layer noise rejection
+### The solution: layered noise rejection
 
-The scanner applies three independent gates, each catching a different kind of false positive. All three are modulation-agnostic - they work for voice, data, tones, beacons, and any future modulation type.
+The scanner applies independent gates, each catching a different kind of false positive. Every gate is modulation-agnostic: it works for voice, data, tones, and beacons alike.
 
 #### Gate 1 - RF power variance (`activation_variance_db`)
 
@@ -625,17 +625,17 @@ Real signals fluctuate over time: syllables, frame structure, and bursts all pro
 
 At the moment a radio channel turns ON, the scanner measures the standard deviation of its power across the 8 Welch PSD segments. If the standard deviation falls below `activation_variance_db` (default 3.0 dB), the activation is suppressed - no ON event fires, no recording starts.
 
-This is the cheapest check (~0.1 ms, reuses already-computed PSD data). It catches broadband stationary noise that happens to sit a few dB above the noise floor.
+This is the cheapest check, since it reuses PSD data already computed. It catches broadband stationary noise that happens to sit a few dB above the noise floor.
 
 #### Gate 2 - audio spectral flatness (`discard_empty_enabled`)
 
 Some noise passes Gate 1 - for example, narrowband interference with enough temporal variance to look "active" in the RF domain, but no actual signal content when demodulated. Gate 2 catches this by speculatively demodulating the first IQ block and computing the **spectral flatness** (Wiener entropy) of the resulting audio.
 
-Noise has a flat power spectrum (flatness 0.3-0.5). Any real signal - voice, data, tones - has a peaked spectrum (flatness < 0.04). The threshold of 0.15 sits in the large gap between the two groups, providing robust separation without per-modulation tuning.
+Noise has a flat power spectrum (flatness 0.3-0.5). Any real signal - voice, data, tones - has a peaked spectrum (flatness < 0.04). The threshold of 0.15 sits in the large gap between the two groups, so no per-modulation tuning is needed.
 
 If the flatness exceeds 0.15, the activation is suppressed - same as Gate 1. The speculative demodulation result is discarded; the main demodulation path runs fresh with proper trim boundaries if the check passes.
 
-This check is more expensive (~10-20 ms, requires demodulation + FFT) so it only runs after Gate 1 passes. Controlled by `discard_empty_enabled` (default: true).
+This check costs more, since it demodulates the audio and computes an FFT, so it runs only after Gate 1 passes. Controlled by `discard_empty_enabled` (default: true).
 
 #### Gate 3 - post-recording spectral flatness (`discard_empty_enabled`)
 
@@ -649,10 +649,10 @@ After the WAV file is closed, the scanner reads it back and computes spectral fl
 
 | Gate | Domain | When | What it catches | Cost |
 | :--- | :--- | :--- | :--- | :--- |
-| 1. Variance | RF PSD | Turn-ON | Broadband stationary noise | ~0.1 ms |
-| 2. Flatness (preview) | Demodulated audio | Turn-ON | Narrowband noise that passes Gate 1 | ~10-20 ms |
-| 3a. Min duration | Recording metadata | Turn-OFF | Brief transients (radar, ignition) that pass spectral checks | ~0 ms |
-| 3b. Flatness (whole file) | Demodulated audio | Turn-OFF | Recordings that started real but became mostly noise | ~10-20 ms |
+| 1. Variance | RF PSD | Turn-ON | Broadband stationary noise | Lowest: reuses the PSD already computed |
+| 2. Flatness (preview) | Demodulated audio | Turn-ON | Narrowband noise that passes Gate 1 | Demodulates the first block and computes an FFT |
+| 3a. Min duration | Recording metadata | Turn-OFF | Brief transients (radar, ignition) that pass spectral checks | Reads the recording's length |
+| 3b. Flatness (whole file) | Demodulated audio | Turn-OFF | Recordings that started real but became mostly noise | Reads the file back and analyses it |
 
 ### Example
 
@@ -667,7 +667,7 @@ The noise is caught by Gate 1 (variance 0.18 < 3.0). If it somehow passed Gate 1
 
 ### Configuration
 
-Gate 1 is set for each band by `activation_variance_db`, Gates 2 and 3b by `discard_empty_enabled` in the `recording` section, and Gate 3a by `min_recording_seconds`. All three gates are on by default. Each setting's default and limits are in the configuration reference: [https://subsystem.co/substation/configuration/](https://subsystem.co/substation/configuration/)
+Gate 1 is set for each band by `activation_variance_db`, Gates 2 and 3b by `discard_empty_enabled` in the `recording` section, and Gate 3a by `min_recording_seconds`. Every gate is on by default. Each setting's default and limits are in the configuration reference: [https://subsystem.co/substation/configuration/](https://subsystem.co/substation/configuration/)
 
 ### How it interacts with other settings
 
@@ -680,7 +680,7 @@ Gate 1 is set for each band by `activation_variance_db`, Gates 2 and 3b by `disc
 | Hysteresis (`hysteresis_db`) | Unchanged. Once a recording starts, it continues until SNR drops below `snr_threshold_db - hysteresis_db`. |
 | Hold time (`recording_hold_time_ms`) | Unchanged. Brief drops in SNR during active recording are tolerated. Gate 3b may discard if the hold timer extends the recording far beyond the actual signal. |
 
-All three gates suppress silently - no ON callback fires, no recording file is kept. Downstream consumers (OSC bridge, user scripts) only see activations and recordings that passed all applicable gates.
+Gates 1 and 2 suppress an activation silently: no ON callback fires, and no recording starts. Gate 3 deletes a finished recording before `recording_saved` fires, and emits `recording_discarded` instead. Downstream consumers (OSC bridge, user scripts) see only activations that passed Gates 1 and 2, and only saved recordings that passed Gate 3.
 
 ### Tuning guidance
 
@@ -711,7 +711,7 @@ Discarded empty recording: 2026-04-11_15-09-28_air_civil_bristol_59_125.983333MH
 
 ### Generality
 
-All three gates are modulation-agnostic:
+Every gate is modulation-agnostic:
 
 - Gate 1 operates on raw radio channel power from FFT bins - works for any signal type, including detection-only bands with no demodulator (TETRA)
 - Gates 2 and 3 operate on spectral flatness of demodulated audio - any non-noise signal (voice, data, tones, beacons) produces a peaked spectrum that passes the check. Gate 2 applies to every band whose modulation has a demodulator, including bands that only detect (e.g. DMR, ACARS), where its demodulation is purely speculative, so radio channel activation events stay clean even when nothing is recorded. Gate 3 applies to every recording
@@ -765,6 +765,7 @@ If you see repeated `Sample queue full` warnings, scan a narrower band at a lowe
 
 ## Limitations
 - Processing time grows with a band's sample rate, and most of it runs on one CPU core. The three shipped bands at 12.5 MHz, `air_civil_1`, `air_civil_2`, and `dmr`, have not yet been shown to keep up in real time: on the one desktop computer they have been tested on, processing fell behind and IQ samples were dropped, and faster computers are still to be tested. On a Raspberry Pi, or wherever `Processing overrun` warnings appear, scan a narrower band, such as one of `dmr_1` to `dmr_5`.
+- CTCSS and DCS tone detection has not yet been thoroughly tested with real radios, so treat a reported tone as a guide rather than a certainty, and the absence of one as inconclusive.
 - If you enable `apply_noisereduce` (requires a code change and the `noisereduce` extra), it is CPU-intensive for long chunks; on constrained devices, stick with the default `apply_spectral_subtraction` or reduce `disk_flush_interval_seconds`.
 
 ## Author

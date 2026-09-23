@@ -11,13 +11,14 @@ Supported hardware:
 
 Features:
 - Automatic channel detection using SNR (Signal-to-Noise Ratio) with
-  per-band configurable hysteresis and three-layer noise rejection
-  (RF variance, audio spectral flatness, post-recording flatness
-  check) to eliminate false recordings
+  per-band configurable hysteresis and layered noise rejection (RF
+  power variance and audio spectral flatness at turn-on, then minimum
+  length and spectral flatness after recording) to reject false
+  recordings
 - Audio silence timeout to stop recording when an AM carrier persists
   after voice ends
 - Demodulation of NFM, AM, and SSB (USB/LSB via Weaver's method) with
-  streaming polyphase FIR resampler for artifact-free block processing
+  streaming polyphase FIR resampler for artefact-free block processing
 - CTCSS (51 standard tones) and DCS (23-bit Golay-coded) subaudible tone
   detection on NFM, embedded in recording metadata; not yet thoroughly
   tested with real radios
