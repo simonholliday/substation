@@ -112,7 +112,7 @@ def init_config () -> None:
 
 	if target.exists():
 		print(
-			f"Refusing to overwrite existing {target} — nothing was created. "
+			f"Refusing to overwrite existing {target}: nothing was created. "
 			"Edit it directly, or move it aside and re-run --init.",
 			file=sys.stderr,
 		)
@@ -234,7 +234,7 @@ async def run_scanner_file (config_path: pathlib.Path | None, band_name: str, iq
 		)
 
 		logger.info(
-			f"IQ file playback: {iq_file} — "
+			f"IQ file playback: {iq_file}, "
 			f"center {center_freq/1e6:.6f} MHz, "
 			f"start {start_time.strftime('%Y-%m-%d %H:%M:%S')}"
 		)

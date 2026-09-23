@@ -193,7 +193,7 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 
 		if settings_info:
 			for info in settings_info:
-				logger.debug(f"Device setting: {info.key} — {info.description} (default: {info.value})")
+				logger.debug(f"Device setting {info.key}: {info.description} (default: {info.value})")
 
 	@property
 	def sample_rate (self) -> float | None:
@@ -496,7 +496,7 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 		# changes the meaning of every subsequent sample amplitude.
 		target_rms = 0.01
 		scale = target_rms / median_rms
-		logger.info(f"IQ sample scale: median RMS {median_rms:.6f} — applying {scale:.1f}x normalisation")
+		logger.info(f"IQ sample scale: median RMS {median_rms:.6f}, applying {scale:.1f}x normalisation")
 		return scale
 
 	def _convert_cs16_to_complex64 (self, buf: numpy.ndarray, count: int) -> numpy.typing.NDArray[numpy.complex64]:

@@ -156,7 +156,7 @@ class FileDevice (substation.devices.base.BaseDevice):
 
 		duration = self._frames / self._sample_rate
 		logger.info(
-			f"IQ file: {file_path} — {self._sample_rate/1e6:.3f} MHz, "
+			f"IQ file: {file_path}, {self._sample_rate/1e6:.3f} MHz, "
 			f"{self._frames} frames ({duration:.0f}s / {duration/3600:.1f}h), "
 			f"center {self._center_freq/1e6:.6f} MHz"
 		)
@@ -237,7 +237,7 @@ class FileDevice (substation.devices.base.BaseDevice):
 
 		target_rms = 0.01
 		scale = target_rms / median_rms
-		logger.info(f"IQ scale: median RMS {median_rms:.6f} — applying {scale:.1f}x normalisation")
+		logger.info(f"IQ scale: median RMS {median_rms:.6f}, applying {scale:.1f}x normalisation")
 		return scale
 
 	def read_samples_async (self, callback: typing.Callable, num_samples: int) -> None:

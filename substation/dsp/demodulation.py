@@ -88,7 +88,7 @@ def _pick_if_decimation (sample_rate: float, audio_sample_rate: int, oversample:
 
 	if not candidates:
 		logger.warning(
-			f"No integer divisor of {sr_int} in [{search_min}, {search_max}] — "
+			f"No integer divisor of {sr_int} in [{search_min}, {search_max}]: "
 			f"falling back to {ideal} (rational resample path)"
 		)
 		return ideal

@@ -155,7 +155,7 @@ def format_antenna_report (
 	lengths = compute_antenna_lengths(frequency_hz)
 
 	lines = []
-	lines.append("Antenna calculator — Substation")
+	lines.append("Substation antenna calculator")
 
 	# Header — different shape for band vs single frequency
 	if band_name is not None and freq_start_hz is not None and freq_end_hz is not None:
@@ -269,7 +269,7 @@ def format_antenna_report (
 				f"  centre ± ~2%  →  {window_low_hz / 1e6:.3f} - {window_high_hz / 1e6:.3f} MHz"
 				f"  (~4% useful bandwidth)"
 			)
-			lines.append("The full band is wider than this — if you want both the band edges and")
+			lines.append("The full band is wider than this. If you want both the band edges and")
 			lines.append("the middle, consider:")
 			lines.append("  - cutting the dipole for the lower edge (longer = covers low freqs better)")
 			lines.append("  - using a tuner / matching network")

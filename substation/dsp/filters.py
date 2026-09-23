@@ -188,7 +188,7 @@ def _decimate_common (
 			logger.error(
 				f"Refusing pathological resample {sr} -> {ar} Hz "
 				f"(up={up}, down={down}, max={max(up, down)} > {_RESAMPLE_MAX_FACTOR}).  "
-				f"This is almost certainly a configuration bug — pick a target rate "
+				f"This is almost certainly a configuration bug: pick a target rate "
 				f"with a small-gcd ratio to the source rate."
 			)
 			return numpy.array([], dtype=signal.dtype), state
