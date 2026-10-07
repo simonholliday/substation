@@ -317,7 +317,7 @@ substation --init          # writes ./config.yaml, the fully-commented defaults
 substation --band amateur_2m --device-type rtlsdr --device-index 0
 ```
 
-The scanner logs each radio channel on the 2 m amateur band as it becomes active, and records each transmission to its own file. The scan is running once the log says `Detection enabled`. The 2 m band can be quiet, so a first recording may take a while. Out of the box only amateur and CB bands record: the rest, such as airband and PMR446, only detect, as the next section explains. Recordings are written to:
+The scanner logs each radio channel on the 2m amateur band as it becomes active, and records each transmission to its own file. The scan is running once the log says `Detection enabled`. The 2m band can be quiet, so a first recording may take a while. Out of the box only amateur and CB bands record: the rest, such as airband and PMR446, only detect, as the next section explains. Recordings are written to:
 ```
 ./audio/YYYY-MM-DD/<band>/<date>_<time>_<band>_<channel>_<freq>_<snr>dB_<device>_<index>.wav
 ```
