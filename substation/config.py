@@ -477,7 +477,8 @@ class BandTypeConfig(pydantic.BaseModel):
 	sdr_gain_db: float | str | None = 'auto'
 	"""
 	SDR gain in dB, or `auto` for automatic gain control. Higher gain is more
-	sensitive, and also amplifies noise and can cause clipping.
+	sensitive, and also amplifies noise and can cause clipping. What `auto` does
+	on each receiver is described under a band's `sdr_gain_db`.
 	"""
 
 	@pydantic.field_validator('modulation', mode='before')
@@ -511,7 +512,8 @@ class DeviceOverrideConfig(pydantic.BaseModel):
 
 	sdr_gain_db: float | str | None = None
 	"""
-	SDR gain in dB on this device, or `auto` for automatic gain control.
+	SDR gain in dB on this device, or `auto` for automatic gain control. What
+	`auto` does on each receiver is described under a band's `sdr_gain_db`.
 	"""
 
 	sdr_gain_elements: dict[str, float] | None = pydantic.Field(default=None, examples=[{'LNA': 10, 'MIX': 5, 'VGA': 12}])
@@ -651,7 +653,14 @@ class BandConfig(pydantic.BaseModel):
 	sdr_gain_db: float | str | None = 'auto'
 	"""
 	SDR gain in dB, or `auto` for automatic gain control. `auto` is convenient,
-	but a manual gain, for example 20-40 dB on RTL-SDR, often works better.
+	but a manual gain, for example 20-40 dB on RTL-SDR, often works better. What
+	`auto` does depends on the receiver. An RTL-SDR, an AirSpy HF+, and any other
+	SoapySDR device with automatic gain control use their own. The HackRF One
+	has none, so `auto` sets 32 dB on its LNA and 30 dB on its VGA, with a
+	warning. The AirSpy R2 reports automatic gain control that does not work,
+	so `auto` sets 10 dB on its LNA, 5 dB on its mixer and 12 dB on its VGA,
+	27 dB in all. Any other SoapySDR device without automatic gain control is
+	set to the middle of its gain range, with a warning.
 	"""
 
 	sdr_gain_elements: dict[str, float] | None = pydantic.Field(default=None, examples=[{'LNA': 10, 'MIX': 5, 'VGA': 12}])
