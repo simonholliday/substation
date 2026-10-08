@@ -30,7 +30,8 @@ def create_device (device_type: str, device_index: int = 0, **kwargs: typing.Any
 
 	Supported devices:
 	- RTL-SDR (aliases: 'rtl', 'rtlsdr', 'rtl-sdr')
-	  Low-cost receiver, 24 MHz - 1.7 GHz, up to 2.4 MHz sample rate
+	  Low-cost receiver, 24 MHz - 1.766 GHz on the tuner alone, down to 500 kHz
+	  on the RTL-SDR Blog V4 and V3 through their driver, up to 2.56 MHz sample rate
 
 	- HackRF (aliases: 'hackrf', 'hackrf-one', 'hackrfone')
 	  Wideband transceiver, 1 MHz - 6 GHz, 2-20 MHz sample rate

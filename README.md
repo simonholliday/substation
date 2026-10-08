@@ -65,7 +65,7 @@ To use this software, a compatible Software Defined Radio (SDR) USB device is re
 
 | Device                  | Frequency range                | Max BW   | ADC    | Best for                  |
 | :---------------------- | :----------------------------- | :------- | :----- | :------------------------ |
-| RTL-SDR Blog V4 / V3    | 24 MHz - 1.766 GHz             | 2.4 MHz  | 8-bit  | General VHF/UHF, low cost |
+| RTL-SDR Blog V4 / V3    | 500 kHz - 1.766 GHz            | 2.56 MHz | 8-bit  | General VHF/UHF, low cost |
 | HackRF One              | 1 MHz - 6 GHz                  | 20 MHz   | 8-bit  | Wideband monitoring       |
 | AirSpy R2               | 24 MHz - 1.8 GHz               | 10 MHz   | 12-bit | High-quality VHF/UHF      |
 | AirSpy HF+ Discovery    | 0.5 kHz - 31 MHz, 64 - 260 MHz | 912 kHz  | 18-bit | HF / VHF precision        |
@@ -74,13 +74,13 @@ Any other device with a SoapySDR driver module installed can be used too - see [
 
 ### RTL-SDR Blog V4 / V3
 
-A high-quality, low-cost general-purpose receiver. The natural starting point for new users - well supported, and good enough for most VHF/UHF scanning. Limited dynamic range from its 8-bit ADC.
+A high-quality, low-cost general-purpose receiver. The natural starting point for new users - well supported, and good enough for most VHF/UHF scanning. Limited dynamic range from its 8-bit ADC. RTL-SDR Blog no longer makes the V4, and sells the V4L (Lite) in its place, which has not yet been tested with Substation. The V3 is still made.
 
 | Spec               | Value                                                  |
 | :----------------- | :----------------------------------------------------- |
-| Frequency range    | 24 MHz - 1.766 GHz (with gaps)                         |
-| Max bandwidth      | 2.4 MHz                                                |
-| Sample rates       | Continuous, up to 2.4 MHz (typical: 2.048 MHz)         |
+| Frequency range    | 500 kHz - 1.766 GHz (with gaps), by the V4's datasheet; below 24 MHz not yet tested with Substation |
+| Max bandwidth      | 2.56 MHz stable, by the V4's datasheet (3.2 MHz with dropped IQ samples) |
+| Sample rates       | Continuous, up to 2.56 MHz (typical: 2.048 MHz)        |
 | ADC resolution     | 8-bit                                                  |
 | Gain architecture  | Single stage                                           |
 | AGC                | Hardware AGC                                           |
@@ -97,6 +97,8 @@ A high-quality, low-cost general-purpose receiver. The natural starting point fo
 - `sample_rate: 2.048e6` for most bands
 
 **Gotchas**
+- **HF has not yet been tested with Substation.** Below 24 MHz the V4 receives through its built-in upconverter, and the V3 through direct sampling, which the RTL-SDR Blog driver switches on by itself. Substation has nothing of its own for HF on an RTL-SDR: it tunes the frequency, and the driver does the rest. Whether the shipped HF bands scan on either receiver is still to be tested.
+- **2.56 MHz has not yet been tested with Substation.** The V4's datasheet gives it as the highest stable rate.
 - The Blog V4 needs the [rtl-sdr-blog fork](https://github.com/rtlsdrblog/rtl-sdr-blog) of librtlsdr. The standard distro `librtlsdr` is missing the `rtlsdr_set_dithering` symbol that newer pyrtlsdr releases need, which is why `pyproject.toml` holds pyrtlsdr below the release that requires it.
 - The default Linux DVB-T driver claims the device on insertion as a TV tuner - it must be blacklisted (INSTALL.md covers this).
 - The 8-bit ADC limits dynamic range. A strong adjacent station can desensitise weak ones in the same capture.
