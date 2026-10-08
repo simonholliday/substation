@@ -1,5 +1,6 @@
 """Tests for CLI argument parsing and entry points."""
 
+import argparse
 import sys
 import unittest.mock
 
@@ -100,3 +101,30 @@ class TestLogLevel:
 			assert substation.cli.main() == 0
 
 		assert levels == [substation.cli.logging.DEBUG]
+
+
+class TestParser:
+
+	def test_building_the_parser_parses_nothing (self, monkeypatch):
+		"""subsystem.co builds the parser to generate the command-line reference, so building it must not read the command line (#4717)."""
+		monkeypatch.setattr(sys, "argv", ["substation", "--no-such-option"])
+		command = substation.cli.parser()
+
+		assert isinstance(command, argparse.ArgumentParser)
+		assert command.prog == "substation"
+
+	def test_the_help_says_each_exit_status (self):
+		"""The exit status is said in the help, which the command-line reference prints, as well as in the README."""
+		text = substation.cli.parser().format_help()
+
+		assert "Exit status:" in text
+		for status in ("  0  The scan ended", "  1  A scan stopped because of an error", "  2  The command line was not understood"):
+			assert status in text
+
+	def test_an_unknown_option_exits_2 (self, capsys):
+		"""The help says an option it does not recognise exits 2."""
+		with unittest.mock.patch("sys.argv", ["substation", "--no-such-option"]):
+			with pytest.raises(SystemExit) as exc_info:
+				substation.cli.main()
+
+		assert exc_info.value.code == 2

@@ -246,6 +246,132 @@ async def run_scanner_file (config_path: pathlib.Path | None, band_name: str, iq
 		sys.exit(1)
 
 
+def parser () -> argparse.ArgumentParser:
+
+	"""
+	Build the parser for `substation`, without parsing anything.
+
+	Building is kept apart from parsing so that subsystem.co can read every
+	option and its help without running a scan, and generate the published
+	command-line reference from them (#4717).  The help is therefore where a
+	fact about one option belongs, rather than the README.
+	"""
+
+	command = argparse.ArgumentParser(
+		prog='substation',
+		description='An SDR band scanner that detects, demodulates, and records radio transmissions.',
+		formatter_class=argparse.RawDescriptionHelpFormatter,
+		epilog="""
+Examples:
+  substation --init                        # Write a starter config.yaml here
+  substation --band amateur_2m             # Scan the 2m amateur band with RTL-SDR
+  substation --band marine_vhf_calling --device-type hackrf  # Scan marine VHF with HackRF
+  substation --list-bands                  # List all available bands
+  substation --band pmr --iq-file rec.wav --center-freq 446059313  # File playback
+
+Exit status:
+  0  The scan ended: an IQ recording played to its end, or Ctrl+C stopped
+     it. --init and --list-bands exit 0 when they succeed.
+  1  A scan stopped because of an error, such as a receiver that fails or
+     is unplugged, so a service manager can restart it. Also when Substation
+     cannot start: --band is missing or names no band, an option it needs is
+     missing or malformed, the configuration or the IQ recording cannot be
+     read, or --init finds a config.yaml already there.
+  2  The command line was not understood: an unknown option, or a value of
+     the wrong kind.
+"""
+	)
+
+	# User config override file (merged on top of config.yaml.default)
+	command.add_argument(
+		'--config', '-c',
+		default=None,
+		help='Your configuration file, merged over the shipped defaults (default: config.yaml in the current directory, if there is one)'
+	)
+
+	# Which band to scan (required for scanning, not for --list-bands)
+	command.add_argument(
+		'--band', '-b',
+		default=None,
+		help='The band to scan, by the name --list-bands shows. Required unless --init or --list-bands is given.'
+	)
+
+	# Which SDR hardware to use
+	command.add_argument(
+		'--device-type', '-t',
+		default='rtlsdr',
+		help='The receiver: rtlsdr, hackrf, airspy, airspyhf, or soapy:<driver> for any other SoapySDR device (default: rtlsdr)'
+	)
+
+	# Device index for systems with multiple SDRs
+	command.add_argument(
+		'--device-index', '-i',
+		type=int,
+		default=0,
+		help='Which receiver of that type to use, counting from 0, when more than one is plugged in (default: 0)'
+	)
+
+	# Utility flag to list available bands
+	command.add_argument(
+		'--list-bands',
+		action='store_true',
+		help=(
+			"List the available bands, with each band's reception class and whether it records, and exit. "
+			"A band too wide for its receiver to capture at its configured rate is marked as one that cannot "
+			"be scanned: narrow it, or split it into several bands, in your own configuration."
+		)
+	)
+
+	# Scaffold a starter config.yaml in the current directory
+	command.add_argument(
+		'--init',
+		action='store_true',
+		help='Create a starter config.yaml (a copy of the documented defaults) in the current directory and exit. Refuses to overwrite an existing file.'
+	)
+
+	# IQ file playback
+	command.add_argument(
+		'--iq-file',
+		default=None,
+		help=(
+			"Play back an IQ recording in place of a receiver: a WAV file whose two audio channels hold I and Q "
+			"as 16-bit PCM, at any number of IQ samples per second, which is read from the file. RF64 and "
+			"WAVE_FORMAT_EXTENSIBLE files work, and so do files over 4 GB whose header sizes have overflowed. "
+			"The file is read as fast as it can be processed, not in real time, and each recording takes its "
+			"time from --start-time. A band wider than the file can hold is refused."
+		)
+	)
+
+	command.add_argument(
+		'--center-freq',
+		type=float,
+		default=None,
+		help="The frequency, in Hz, the receiver was tuned to when it made the IQ recording. Required with --iq-file. It need not be the band's centre."
+	)
+
+	command.add_argument(
+		'--start-time',
+		default=None,
+		help='When the IQ recording began, as "YYYY-MM-DD HH:MM:SS": the time and filename of each recording count from it (default: 2000-01-01 00:00:00)'
+	)
+
+	# How much the scanner logs; DEBUG adds what each device reports about
+	# itself at startup, such as its gain elements
+	command.add_argument(
+		'--log-level',
+		default='INFO',
+		choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+		type=str.upper,
+		help=(
+			"How much to log: DEBUG, INFO, WARNING, or ERROR (default: INFO). DEBUG adds what each device "
+			"reports about itself at startup, such as its gain elements, and, when a scan fails, where in "
+			"Substation it failed."
+		)
+	)
+
+	return command
+
+
 def main () -> int:
 
 	"""
@@ -258,93 +384,7 @@ def main () -> int:
 		Exit code: 0 for success, 1 for error
 	"""
 
-	parser = argparse.ArgumentParser(
-		description='Substation - Software-defined radio band scanner',
-		formatter_class=argparse.RawDescriptionHelpFormatter,
-		epilog="""
-Examples:
-  substation --init                        # Write a starter config.yaml here
-  substation --band amateur_2m             # Scan the 2m amateur band with RTL-SDR
-  substation --band marine_vhf_calling --device-type hackrf  # Scan marine VHF with HackRF
-  substation --list-bands                  # List all available bands
-  substation --band pmr --iq-file rec.wav --center-freq 446059313  # File playback
-		"""
-	)
-
-	# User config override file (merged on top of config.yaml.default)
-	parser.add_argument(
-		'--config', '-c',
-		default=None,
-		help='Path to user config override file (default: config.yaml in CWD if it exists)'
-	)
-
-	# Which band to scan (required for scanning, not for --list-bands)
-	parser.add_argument(
-		'--band', '-b',
-		default=None,
-		help='Band to scan (required unless using --list-bands)'
-	)
-
-	# Which SDR hardware to use
-	parser.add_argument(
-		'--device-type', '-t',
-		default='rtlsdr',
-		help='SDR device type: rtlsdr, hackrf, airspy, airspyhf, soapy:<driver> (default: rtlsdr)'
-	)
-
-	# Device index for systems with multiple SDRs
-	parser.add_argument(
-		'--device-index', '-i',
-		type=int,
-		default=0,
-		help='SDR device index for multi-device setups (default: 0)'
-	)
-
-	# Utility flag to list available bands
-	parser.add_argument(
-		'--list-bands',
-		action='store_true',
-		help='List available bands and exit'
-	)
-
-	# Scaffold a starter config.yaml in the current directory
-	parser.add_argument(
-		'--init',
-		action='store_true',
-		help='Create a starter config.yaml (a copy of the documented defaults) in the current directory and exit. Refuses to overwrite an existing file.'
-	)
-
-	# IQ file playback
-	parser.add_argument(
-		'--iq-file',
-		default=None,
-		help='IQ WAV file to process (2-channel I/Q, 16-bit PCM). Replaces live SDR device.'
-	)
-
-	parser.add_argument(
-		'--center-freq',
-		type=float,
-		default=None,
-		help='Center frequency of the IQ recording in Hz (required with --iq-file)'
-	)
-
-	parser.add_argument(
-		'--start-time',
-		default=None,
-		help='Start time of the recording as "YYYY-MM-DD HH:MM:SS" (default: 2000-01-01 00:00:00)'
-	)
-
-	# How much the scanner logs; DEBUG adds what each device reports about
-	# itself at startup, such as its gain elements
-	parser.add_argument(
-		'--log-level',
-		default='INFO',
-		choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
-		type=str.upper,
-		help='How much to log: DEBUG, INFO, WARNING, or ERROR (default: INFO)'
-	)
-
-	args = parser.parse_args()
+	args = parser().parse_args()
 
 	logging.basicConfig(
 		level=getattr(logging, args.log_level),

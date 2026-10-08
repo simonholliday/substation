@@ -1,6 +1,9 @@
 """Tests for the substation/antenna.py utility."""
 
+import argparse
 import math
+import sys
+import unittest.mock
 
 import pytest
 
@@ -125,3 +128,29 @@ class TestAntennaCalculator:
 		assert 'Frequency:' in report
 		assert 'Band:' not in report
 		assert 'NOTE' not in report
+
+
+class TestParser:
+
+	def test_building_the_parser_parses_nothing (self, monkeypatch):
+		"""subsystem.co builds the parser to generate the command-line reference, so building it must not read the command line (#4717)."""
+		monkeypatch.setattr(sys, "argv", ["substation-antenna"])
+		command = substation.antenna.parser()
+
+		assert isinstance(command, argparse.ArgumentParser)
+		assert command.prog == "substation-antenna"
+
+	def test_the_help_says_the_exit_status (self):
+		"""The exit status is said in the help, which the command-line reference prints."""
+		text = substation.antenna.parser().format_help()
+
+		assert "Exit status:" in text
+		assert "  0  The report or the list was printed." in text
+
+	@pytest.mark.parametrize("arguments", [["--freq", "-5"], ["--band", "no_such_band"], ["--list", "--config", "no-such-config.yaml"]])
+	def test_each_error_the_help_names_exits_2 (self, arguments, tmp_path, monkeypatch, capsys):
+		"""A frequency that is not positive, an unknown band, and a missing configuration file each exit 2, as the help says."""
+		monkeypatch.chdir(tmp_path)
+
+		with unittest.mock.patch("sys.argv", ["substation-antenna", *arguments]):
+			assert substation.antenna.main() == 2

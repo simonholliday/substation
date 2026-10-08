@@ -286,6 +286,58 @@ def format_antenna_report (
 	return "\n".join(lines)
 
 
+def parser () -> argparse.ArgumentParser:
+
+	"""
+	Build the parser for `substation-antenna`, without parsing anything.
+
+	Kept apart from main() so that subsystem.co can generate the
+	command-line reference from it without running the command (#4717).
+	"""
+
+	command = argparse.ArgumentParser(
+		prog='substation-antenna',
+		# RawDescriptionHelpFormatter (for the epilog's layout) prints this
+		# unwrapped, so the line break is written in.
+		description=(
+			'Calculate antenna lengths for a Substation band or a frequency: a half-wave\n'
+			'dipole, a quarter-wave vertical, a 5/8-wave vertical, and a full-wave loop.'
+		),
+		formatter_class=argparse.RawDescriptionHelpFormatter,
+		epilog="""
+Examples:
+  substation-antenna --band hf_night_4mhz   # Use a configured band's centre frequency
+  substation-antenna --freq 4625e3          # Use a frequency in Hz
+  substation-antenna --list                 # List the configured bands
+
+For a band wider than 2% either side of its centre frequency, the report also
+shows the dipole's natural SWR window and the antenna lengths at the band
+edges, so you can decide whether to cut for the centre, an edge, or use a
+tuner. Lengths of a metre or more are in metres, and shorter ones in
+centimetres.
+
+Exit status:
+  0  The report or the list was printed.
+  2  The command line was not understood, the configuration file or the
+     band was not found, or the frequency was not positive.
+"""
+	)
+
+	group = command.add_mutually_exclusive_group(required=True)
+	group.add_argument('--band', metavar='NAME', help="A band from the configuration, by name: the lengths are for its centre frequency")
+	group.add_argument('--freq', type=float, help='A frequency in Hz (e.g. 4625e3 or 446.0e6)')
+	group.add_argument('--list', action='store_true', help="List the configured bands' names, and exit")
+
+	command.add_argument(
+		'--config',
+		type=pathlib.Path,
+		default=None,
+		help='Your configuration file, merged over the shipped defaults (default: config.yaml in the current directory, if there is one)',
+	)
+
+	return command
+
+
 def main () -> int:
 
 	"""
@@ -296,24 +348,7 @@ def main () -> int:
 	process exit code.
 	"""
 
-	parser = argparse.ArgumentParser(
-		prog='substation-antenna',
-		description='Calculate optimal antenna lengths for a Substation band or frequency.',
-	)
-
-	group = parser.add_mutually_exclusive_group(required=True)
-	group.add_argument('--band', metavar='NAME', help='Configured band name from config.yaml')
-	group.add_argument('--freq', type=float, help='Frequency in Hz (e.g. 4625e3 or 446.0e6)')
-	group.add_argument('--list', action='store_true', help='List all configured bands')
-
-	parser.add_argument(
-		'--config',
-		type=pathlib.Path,
-		default=None,
-		help='Path to a user config override file (default: config.yaml in CWD if it exists, otherwise the bundled defaults)',
-	)
-
-	args = parser.parse_args()
+	args = parser().parse_args()
 
 	# --list mode.  load_config falls back to the bundled defaults when no
 	# user config.yaml exists — same behaviour as the main substation CLI —
