@@ -5,6 +5,7 @@ Platform-specific setup for SDR drivers, system dependencies, and the Python env
 Tested on:
 - Ubuntu 24.04 (x86_64) in September 2026, with an RTL-SDR Blog V4, a HackRF One, an AirSpy R2, and an AirSpy HF+ Discovery
 - Debian 12, Raspberry Pi OS (Bookworm), and Fedora 43 Server (x86_64) in April 2026, and not since
+- A Raspberry Pi 5 with an RTL-SDR Blog V3, with an early version of Substation, around March or April 2026, and not since
 
 ---
 
