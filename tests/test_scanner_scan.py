@@ -507,6 +507,31 @@ class TestPlaybackKeepsEverySample:
 		assert not any("Buffer overflow" in r.getMessage() for r in caplog.records)
 
 
+
+class TestMinimumLength:
+
+	@pytest.mark.parametrize(("length_s", "kept"), [(0.15, False), (0.3, False), (0.8, True)])
+	def test_the_minimum_length_measures_the_transmission_not_its_hold (self, minimal_config_dict, tmp_path, length_s, kept):
+		"""Regression: Gate 3a measured a recording with its hold, so at the defaults a brief transient was never discarded.
+
+		The hold is recorded after every transmission, and recording_hold_time_ms
+		and min_recording_seconds both default to 0.5 s, so every recording was
+		long enough to keep.  Both are at their defaults here.
+		"""
+		events = []
+		scanner = _play_transmissions(minimal_config_dict, tmp_path, 5.0, [(3, 2.0, 2.0 + length_s)], handlers=_recorder(events))
+
+		assert scanner.recording_config.recording_hold_time_ms == 500.0
+		assert scanner.recording_config.min_recording_seconds == 0.5
+
+		outcomes = [(name, payload) for name, payload in events if name in ('recording_saved', 'recording_discarded')]
+		assert [name for name, _ in outcomes] == (['recording_saved'] if kept else ['recording_discarded'])
+
+		if kept:
+			# The hold is still recorded: only the measure leaves it out.
+			assert soundfile.info(outcomes[0][1]['file_path']).duration > length_s + 0.3
+
+
 class TestBandTooWide:
 
 	def test_band_wider_than_its_sample_rate_fails_before_the_device_opens (self, minimal_config_dict, monkeypatch):

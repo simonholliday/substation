@@ -15,7 +15,7 @@ Features:
   power variance and audio spectral flatness at turn-on, then minimum
   length and spectral flatness after recording) to reject false
   recordings; at present the flatness checks reject hiss only on AM
-  bands, and the length check counts the hold time
+  bands
 - Audio silence timeout to stop recording when an AM carrier persists
   after voice ends
 - Demodulation of NFM, AM, and SSB (USB/LSB via Weaver's method) with

@@ -565,6 +565,11 @@ class ChannelRecorder:
 		# Track total samples written (for logging)
 		self.total_samples_written = 0
 
+		# Audio frames appended up to the end of the last slice in which the
+		# radio channel's signal was above its threshold: the transmission
+		# itself, without the hold recorded after it.  Gate 3a measures this.
+		self.signal_frames = 0
+
 		# Async flush task (will be set by caller) - can be Task or Future depending on how it's created
 		self.flush_task: typing.Any = None
 
@@ -647,6 +652,35 @@ class ChannelRecorder:
 
 		if self.bext_metadata:
 			self.bext_metadata['time_reference'] = self.time_reference
+
+	def mark_signal (self) -> None:
+
+		"""
+		Note that the audio appended so far belongs to the transmission.
+
+		The scanner calls this after appending each slice in which the radio
+		channel's signal was above its threshold.  Audio appended after the
+		last call, the hold that keeps a radio channel recording through a
+		brief fade, is left out of transmission_seconds.
+		"""
+
+		with self._buffer_lock:
+			self.signal_frames = self._ring_frames_written
+
+	@property
+	def transmission_seconds (self) -> float:
+
+		"""
+		The transmission's length, in seconds, without the hold recorded after it.
+
+		It runs from the recording's start to the end of the last slice in
+		which the signal was above its threshold.  The signal can end up to
+		a slice before that, so a brief transient reads a little long, which
+		errs towards keeping it; a transmission that fades below the
+		threshold before it ends is measured without the faded part.
+		"""
+
+		return self.signal_frames / self.audio_sample_rate
 
 	def append_audio (self, samples: numpy.typing.NDArray[numpy.float32]) -> None:
 

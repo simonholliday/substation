@@ -4,7 +4,7 @@
 
 Connect a USB SDR receiver, point it at a frequency band - Amateur, CB, Airband, PMR, Maritime, or any conventional analogue band - and Substation monitors every radio channel simultaneously, detecting each transmission and recording it to its own audio file with full metadata. Out of the box it records only the bands that UK law opens to anyone, such as amateur and CB radio, and detects activity on the rest: see [Reception and the law](#reception-and-the-law).
 
-The scanner is designed for unattended, long-running operation. It handles the entire signal processing chain from raw IQ samples through to clean, archive-ready audio files: signal detection, demodulation (NFM, AM, USB, LSB), noise reduction, carrier transient removal, soft limiting, and automatic file management. Noise rejection checks each activation's RF power variance and audio spectral flatness, and each finished recording's length and spectral flatness, and discards what looks like hiss. At present the flatness checks reject hiss only on AM bands, and at the default settings the length check keeps brief transients: see [Limitations](#limitations). Recordings include embedded metadata - frequency, timestamp, modulation, and any CTCSS or DCS tone detected - so every file is self-documenting.
+The scanner is designed for unattended, long-running operation. It handles the entire signal processing chain from raw IQ samples through to clean, archive-ready audio files: signal detection, demodulation (NFM, AM, USB, LSB), noise reduction, carrier transient removal, soft limiting, and automatic file management. Noise rejection checks each activation's RF power variance and audio spectral flatness, and each finished recording's length and spectral flatness, and discards what looks like hiss. At present the flatness checks reject hiss only on AM bands: see [Limitations](#limitations). Recordings include embedded metadata - frequency, timestamp, modulation, and any CTCSS or DCS tone detected - so every file is self-documenting.
 
 Substation runs as a command-line tool or as a Python module in your own applications, including on low-power hardware such as a Raspberry Pi scanning a narrower band. The widest shipped bands, at 12.5 MHz, have not yet been shown to keep up in real time, and CTCSS and DCS tone detection has not yet been thoroughly tested with real radios: see [Limitations](#limitations).
 
@@ -28,7 +28,7 @@ High-sensitivity receivers often trigger on noise that crosses the SNR threshold
 
 1. **RF power variance** - real signals (voice, data) fluctuate in power across the detection window; stationary noise does not. Radio channels with low variance are rejected before any demodulation occurs.
 2. **Spectral flatness** - when a radio channel first activates, the audio is speculatively demodulated and its spectral flatness (Wiener entropy) is measured. Noise has a flat spectrum; any real signal has a peaked one. Flat-spectrum activations are rejected before a recording starts. At present this works only on AM bands: see [Limitations](#limitations).
-3. **Post-recording checks** - after a recording finishes, it is discarded if it is shorter than `min_recording_seconds`, or if the complete file, analysed for spectral flatness, is predominantly noise (e.g. a brief signal followed by hold-timer padding). At present the length includes the hold time, so at the default settings a brief transient is kept, and the flatness check works only on AM bands: see [Limitations](#limitations).
+3. **Post-recording checks** - after a recording finishes, it is discarded if its transmission was shorter than `min_recording_seconds`, not counting the hold time recorded after it, or if the complete file, analysed for spectral flatness, is predominantly noise (e.g. a brief signal followed by hold-timer padding). At present the flatness check works only on AM bands: see [Limitations](#limitations).
 
 ### Demodulation
 
@@ -617,7 +617,7 @@ What's needed is a way to tell **noise** apart from **real signals** - and a sin
 
 ### The solution: layered noise rejection
 
-The scanner applies independent gates, each catching a different kind of false positive. Gates 2 and 3 are meant to work for voice, data, tones, and beacons alike, but at present they fall short in two ways, described under [Limitations](#limitations): the flatness checks reject hiss only on AM bands, and the length check counts the hold time.
+The scanner applies independent gates, each catching a different kind of false positive. Gates 2 and 3b are meant to work for voice, data, tones, and beacons alike, but at present they reject hiss only on AM bands: see [Limitations](#limitations).
 
 #### Gate 1 - RF power variance (`activation_variance_db`)
 
@@ -641,7 +641,7 @@ This check costs more, since it demodulates the audio and computes an FFT, so it
 
 Gates 1 and 2 both operate at turn-ON time. Gate 3 operates at turn-OFF time, on the finished recording.
 
-A signal can legitimately pass Gates 1 and 2 (the first block has real content) but produce a mostly-empty recording - for example, a brief 200 ms transmission followed by several seconds of hold-timer noise. The overall recording's spectral flatness will be high even though the first block was clean.
+A signal can legitimately pass Gates 1 and 2 (the first block has real content) but produce a mostly-empty recording - for example, a brief transmission followed by a long hold of noise, where `recording_hold_time_ms` is set high. The overall recording's spectral flatness will be high even though the first block was clean.
 
 After the WAV file is closed, the scanner reads it back and computes spectral flatness on the full audio. If the flatness exceeds 0.15, the file is deleted before any recording-finished callbacks fire. Like Gate 2, it rejects hiss only on AM bands at present.
 
@@ -651,7 +651,7 @@ After the WAV file is closed, the scanner reads it back and computes spectral fl
 | :--- | :--- | :--- | :--- | :--- |
 | 1. Variance | RF PSD | Turn-ON | Broadband stationary noise | Lowest: reuses the PSD already computed |
 | 2. Flatness (preview) | Demodulated audio | Turn-ON | Narrowband noise that passes Gate 1, on AM bands only at present | Demodulates the first block and computes an FFT |
-| 3a. Min duration | Recording metadata | Turn-OFF | Brief transients (radar, ignition) that pass spectral checks, though not yet at the default settings | Reads the recording's length |
+| 3a. Min duration | Recording metadata | Turn-OFF | Brief transients (radar, ignition) that pass spectral checks | Reads the transmission's length |
 | 3b. Flatness (whole file) | Demodulated audio | Turn-OFF | Recordings that started real but became mostly noise, on AM bands only at present | Reads the file back and analyses it |
 
 ### Example
@@ -676,9 +676,9 @@ Gate 1 is set for each band by `activation_variance_db`, Gates 2 and 3b by `disc
 | `snr_threshold_db` | Runs first. Radio channels below the SNR threshold never reach the noise gates. |
 | `activation_variance_db` | Gate 1, only on turn-on transitions, only when the SNR check passed. |
 | `discard_empty_enabled` | Gates 2 and 3b. Gate 2 runs after Gate 1 passes. Gate 3b runs on recording close. |
-| `min_recording_seconds` | Gate 3a. Runs on recording close, before Gate 3b. The length it measures includes the hold time. Set to `0` to disable. |
+| `min_recording_seconds` | Gate 3a. Runs on recording close, before Gate 3b. It measures the transmission, not counting the hold time recorded after it. Set to `0` to disable. |
 | Hysteresis (`hysteresis_db`) | Unchanged. Once a recording starts, it continues until SNR drops below `snr_threshold_db - hysteresis_db`. |
-| Hold time (`recording_hold_time_ms`) | Unchanged. Brief drops in SNR during active recording are tolerated. The hold is part of the recording, so Gate 3a counts it, and on AM bands Gate 3b may discard a recording the hold extends far beyond the actual signal. |
+| Hold time (`recording_hold_time_ms`) | Unchanged. Brief drops in SNR during active recording are tolerated. The hold is part of the recording, but not of the transmission Gate 3a measures. On AM bands, Gate 3b may discard a recording the hold extends far beyond the actual signal. |
 
 Gates 1 and 2 suppress an activation silently: no ON callback fires, and no recording starts. Gate 3 deletes a finished recording before `recording_saved` fires, and emits `recording_discarded` instead. Downstream consumers (OSC bridge, user scripts) see only activations that passed Gates 1 and 2, and only saved recordings that passed Gate 3.
 
@@ -766,7 +766,6 @@ If you see repeated `Sample queue full` warnings, scan a narrower band at a lowe
 - Processing time grows with a band's sample rate, and most of it runs on one CPU core. The three shipped bands at 12.5 MHz, `air_civil_1`, `air_civil_2`, and `dmr`, have not yet been shown to keep up in real time: on the one desktop computer they have been tested on, processing fell behind and IQ samples were dropped, and faster computers are still to be tested. On a Raspberry Pi, or wherever `Processing overrun` warnings appear, scan a narrower band, such as one of `dmr_1` to `dmr_5`.
 - CTCSS and DCS tone detection has not yet been thoroughly tested with real radios, so treat a reported tone as a guide rather than a certainty, and the absence of one as inconclusive.
 - The spectral flatness checks, Gates 2 and 3b, reject hiss only on AM bands at present. The NFM, USB, and LSB demodulators filter their audio to the voice band before the checks measure it, and the checks measure the whole audio spectrum, so the empty frequencies outside the voice band make hiss measure as peaked, far below the threshold of 0.15. On those bands, which include every band that records out of the box, both checks keep hiss, and noise rejection rests on the SNR threshold and the RF power variance check, Gate 1. Fixing this needs a measure and a threshold chosen against real recordings of voice and hiss.
-- The minimum length check, Gate 3a, measures a recording with its hold time (`recording_hold_time_ms`) included. Both `min_recording_seconds` and the hold time default to 0.5 seconds, so at the default settings the check keeps the brief transients, such as radar pulses and ignition noise, that it is meant to discard.
 - If you enable `apply_noisereduce` (requires a code change and the `noisereduce` extra), it is CPU-intensive for long chunks; on constrained devices, stick with the default `apply_spectral_subtraction` or reduce `disk_flush_interval_seconds`.
 
 ## Author

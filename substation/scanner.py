@@ -1914,21 +1914,22 @@ class RadioScanner:
 
 		ch_idx = channel_recorder.channel_index
 		filepath = channel_recorder.filepath
-		duration = channel_recorder.total_samples_written / channel_recorder.audio_sample_rate
+		duration = channel_recorder.transmission_seconds
 
-		# Gate 3a (minimum duration): discard recordings shorter than
-		# min_recording_seconds.  Brief transients (radar pulses,
-		# ignition noise) can pass Gates 1 and 2 but produce useless
-		# sub-second files.  Set to 0 in config to disable.  The duration
-		# includes the hold time, so at the defaults (both 0.5 s) a
-		# brief transient is kept (#4765).
+		# Gate 3a (minimum duration): discard recordings whose
+		# transmission is shorter than min_recording_seconds.  Brief
+		# transients (radar pulses, ignition noise) can pass Gates 1 and 2
+		# but produce useless sub-second files.  Set to 0 in config to
+		# disable.  It measures the transmission, not the file: the hold
+		# recorded after it is left out, or at the defaults (both 0.5 s)
+		# every recording would be long enough to keep (#4765).
 		# _stop_channel_recording runs as a coroutine on the event loop,
 		# so emit() calls here don't need loop= (handlers run directly).
 
 		min_dur = self.recording_config.min_recording_seconds
 		if min_dur > 0 and duration < min_dur and os.path.exists(filepath):
 			os.remove(filepath)
-			logger.info(f"Discarded short recording ({duration:.2f}s < {min_dur:.1f}s): {os.path.basename(filepath)}")
+			logger.info(f"Discarded short recording (transmission {duration:.2f}s < {min_dur:.1f}s): {os.path.basename(filepath)}")
 			self.emit('recording_discarded',
 				band=self.band_name, index=int(ch_idx), freq=float(channel_freq))
 			return
@@ -2275,6 +2276,11 @@ class RadioScanner:
 						recorder = self.channel_recorders.get(channel_freq)
 						if recorder:
 							recorder.append_audio(audio)
+							# The hold after a transmission is recorded too,
+							# but is not part of it: Gate 3a measures only up
+							# to the last slice above the threshold.
+							if above_threshold and not turning_off:
+								recorder.mark_signal()
 						elif channel_freq not in self._unrecorded_channels:
 							logger.warning(f"Radio channel {idx}: no recorder found, audio discarded")
 

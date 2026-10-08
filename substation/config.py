@@ -347,7 +347,8 @@ class RecordingConfig(pydantic.BaseModel):
 	recording_hold_time_ms: float = pydantic.Field(default=500.0, ge=0.0)
 	"""
 	Time in milliseconds the scanner keeps recording after a radio channel's
-	signal drops below its off threshold.
+	signal drops below its off threshold. The hold is recorded, but does not
+	count towards `min_recording_seconds`.
 	"""
 
 	discard_empty_enabled: bool = pydantic.Field(default=True)
@@ -362,12 +363,11 @@ class RecordingConfig(pydantic.BaseModel):
 
 	min_recording_seconds: float = pydantic.Field(default=0.5, ge=0.0)
 	"""
-	Shortest recording the scanner keeps, in seconds. It deletes shorter
-	recordings when they close, which is meant to catch brief transients, such
-	as radar pulses and ignition noise, that pass the spectral checks. At
-	present the length it measures includes `recording_hold_time_ms`, so at
-	the default settings a brief transient is kept. Set to 0 to keep every
-	recording.
+	Shortest transmission the scanner keeps a recording of, in seconds, not
+	counting the hold recorded after it (`recording_hold_time_ms`). It deletes
+	the recordings of shorter transmissions when they close, which catches
+	brief transients, such as radar pulses and ignition noise, that pass the
+	spectral checks. Set to 0 to keep every recording.
 	"""
 
 	audio_silence_timeout_ms: float = pydantic.Field(default=3000.0, ge=0.0)
