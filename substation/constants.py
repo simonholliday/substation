@@ -135,11 +135,15 @@ ACTIVATION_VARIANCE_DB = 3.0
 # 0.01 is stable across bands and gain settings.
 AUDIO_SILENCE_RMS_THRESHOLD = 0.01
 
-# Spectral flatness (Wiener entropy) threshold for noise rejection.
-# Noise has a flat spectrum (flatness 0.3-0.5); any real signal — voice,
-# data, tones — has a peaked spectrum (flatness < 0.04).  0.15 sits in
-# the large gap between the two groups.  Used by Gate 2 (turn-ON
+# Spectral flatness (Wiener entropy) threshold for noise rejection: audio
+# flatter than this is treated as noise.  Used by Gate 2 (turn-ON
 # speculative demod check) and Gate 3b (post-recording whole-file check).
+# Both measure the whole audio spectrum, which works only for AM: hiss
+# through the AM demodulator measures about 0.75.  The NFM and SSB
+# demodulators band-pass their audio to the voice band first, and the
+# empty bins outside it pull any audio, hiss included, to about 0.01, so
+# on those modulations neither gate rejects anything.  A fix needs the
+# measure and this threshold chosen against real recordings (#4764).
 SPECTRAL_FLATNESS_THRESHOLD = 0.15
 
 # Most audio the post-recording flatness check (Gate 3b) reads, in seconds,

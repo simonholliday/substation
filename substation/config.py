@@ -354,15 +354,20 @@ class RecordingConfig(pydantic.BaseModel):
 	"""
 	Whether the scanner discards noise-only recordings, using spectral flatness
 	analysis. It rejects noise triggers before a recording starts, and discards
-	files that turn out to be mostly noise when they close.
+	files that turn out to be mostly noise when they close. At present this
+	works only on AM bands: NFM, USB and LSB audio is filtered to the voice
+	band before it is measured, which makes hiss measure as peaked, so on those
+	bands hiss is kept.
 	"""
 
 	min_recording_seconds: float = pydantic.Field(default=0.5, ge=0.0)
 	"""
 	Shortest recording the scanner keeps, in seconds. It deletes shorter
-	recordings when they close, which catches brief transients, such as radar
-	pulses and ignition noise, that pass the spectral checks. Set to 0 to keep
-	every recording.
+	recordings when they close, which is meant to catch brief transients, such
+	as radar pulses and ignition noise, that pass the spectral checks. At
+	present the length it measures includes `recording_hold_time_ms`, so at
+	the default settings a brief transient is kept. Set to 0 to keep every
+	recording.
 	"""
 
 	audio_silence_timeout_ms: float = pydantic.Field(default=3000.0, ge=0.0)

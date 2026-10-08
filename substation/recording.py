@@ -977,11 +977,13 @@ class ChannelRecorder:
 		"""
 		Return True if the finished recording is "empty" (noise-only).
 
-		Uses spectral flatness (Wiener entropy): noise has a flat power
-		spectrum (flatness ~0.3-0.5), while any real signal — voice, data,
-		tones — has a peaked spectrum (flatness < 0.04 typically).  A
-		threshold of 0.15 sits in the large gap between the two, giving
-		robust separation without tuning per modulation type.
+		Uses spectral flatness (Wiener entropy) across the whole audio
+		spectrum: a recording flatter than the threshold is treated as
+		noise.  This works only on AM recordings.  NFM and SSB audio is
+		band-passed to the voice band before it is written, and the empty
+		bins outside that band make any recording, hiss included, measure
+		far below the threshold, so this never reports one as empty for
+		its flatness (#4764).  A recording under 512 frames is always empty.
 
 		Memory stays bounded however long the recording is.  A recording up
 		to EMPTY_CHECK_MAX_SECONDS long is read whole; a longer one, such as

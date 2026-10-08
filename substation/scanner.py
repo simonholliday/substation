@@ -1919,7 +1919,9 @@ class RadioScanner:
 		# Gate 3a (minimum duration): discard recordings shorter than
 		# min_recording_seconds.  Brief transients (radar pulses,
 		# ignition noise) can pass Gates 1 and 2 but produce useless
-		# sub-second files.  Set to 0 in config to disable.
+		# sub-second files.  Set to 0 in config to disable.  The duration
+		# includes the hold time, so at the defaults (both 0.5 s) a
+		# brief transient is kept (#4765).
 		# _stop_channel_recording runs as a coroutine on the event loop,
 		# so emit() calls here don't need loop= (handlers run directly).
 
@@ -1937,7 +1939,8 @@ class RadioScanner:
 		# content (passes Gate 2) but where the bulk of the recording
 		# is noise — e.g. a brief transmission followed by hold-timer
 		# padding.  The spectral flatness of the full file may exceed
-		# the threshold even though the first block was clean.
+		# the threshold even though the first block was clean.  Like
+		# Gate 2, it works only for AM at present (#4764).
 		if self.discard_empty_enabled and os.path.exists(filepath):
 			try:
 				# In an executor, so a long recording's check never stalls the
@@ -2152,6 +2155,9 @@ class RadioScanner:
 				# expensive (~10-20 ms) so it runs only after Gate 1
 				# passes.  Catches narrowband noise that has enough
 				# temporal variance to fool Gate 1 but no signal content.
+				# At present it works only for AM: the NFM and SSB
+				# demodulators band-pass their audio to the voice band, so
+				# hiss measures far below the threshold and passes (#4764).
 				#
 				# Both gates suppress the activation BEFORE
 				# _prepare_channel_transition fires the ON callback or

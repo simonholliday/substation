@@ -14,7 +14,8 @@ Features:
   per-band configurable hysteresis and layered noise rejection (RF
   power variance and audio spectral flatness at turn-on, then minimum
   length and spectral flatness after recording) to reject false
-  recordings
+  recordings; at present the flatness checks reject hiss only on AM
+  bands, and the length check counts the hold time
 - Audio silence timeout to stop recording when an AM carrier persists
   after voice ends
 - Demodulation of NFM, AM, and SSB (USB/LSB via Weaver's method) with
