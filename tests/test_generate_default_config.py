@@ -30,7 +30,7 @@ class TestGeneratedFile:
 		)
 
 	def test_live_values_equal_field_defaults (self):
-		"""Every live scanner and recording value in the shipped file is its field's declared default.
+		"""Every live scanner, recording and OSC value in the shipped file is its field's declared default.
 
 		The shipped file is merged under every user's config.yaml, so a live
 		value that differed from the default would mean the schema says one
@@ -52,6 +52,7 @@ class TestGeneratedFile:
 
 		check(raw["scanner"], substation.config.ScannerConfig)
 		check(raw["recording"], substation.config.RecordingConfig)
+		check(raw["osc"], substation.config.OscConfig)
 
 	@pytest.mark.parametrize("model", [
 		substation.config.BandTypeConfig,

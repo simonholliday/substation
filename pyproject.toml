@@ -40,6 +40,10 @@ dependencies = [
     # is absent (the default in Python 3.12+ venvs).
     "pyrtlsdr>=0.3.0,<0.4.0",
     "PyYAML>=6.0",
+    # Sends the scanner's events as OSC when the configuration's osc settings
+    # ask (#4781).  An ordinary dependency, so a plain install can reach a
+    # sequencer or a sampler with settings alone.
+    "python-osc>=1.8",
     "scipy>=1.10.0",
     "soundfile>=0.12.1",
     "mutagen>=1.45",
@@ -62,14 +66,10 @@ dev = [
     "types-PyYAML",
 ]
 
-# OSC event forwarding — install with `pip install -e ".[osc]"`.
-# Enables substation.osc_sender.OscEventSender to bridge scanner
-# callbacks onto UDP OSC messages (e.g. Subsequence sequencer on
-# port 9000, Subsample sampler on port 9002).  See README section
-# "OSC event forwarding" for the wire format and address table.
-osc = [
-    "python-osc>=1.8",
-]
+# Empty since python-osc became an ordinary dependency (#4781).  Kept so that
+# install commands written for earlier releases, `pip install "substation[osc]"`,
+# still work without pip warning that the extra does not exist.
+osc = []
 
 # The noisereduce library, used only by
 # substation.dsp.noise_reduction.apply_noisereduce, which the scanner does not
@@ -149,8 +149,8 @@ module = [
     "mutagen",
     "noisereduce",
     "soundfile",
-    # python-osc is an optional [osc] extra, so it may legitimately be
-    # absent when type-checking the base package.
+    # Some python-osc releases the dependency allows ship no py.typed marker
+    # (1.8.0 and 1.9.0 among them; 1.8.3 and 1.10 have one).
     "pythonosc",
     "pythonosc.udp_client",
 ]

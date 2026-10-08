@@ -1,27 +1,21 @@
 """
 Tests for substation.osc_sender.
 
-The whole module is skipped cleanly when python-osc isn't installed,
-so a minimal install can still run `pytest` without failure.  Tests
-patch SimpleUDPClient.send_message to capture calls without ever
-opening a real UDP socket.
+Tests patch SimpleUDPClient.send_message to capture calls without ever
+opening a real UDP socket.  tests/test_scanner_scan.py sends real
+datagrams, from a scan the configuration's osc settings turn on.
 """
 
 import logging
 import pathlib
+import socket
 import unittest.mock
 
 import numpy
 import pytest
+import pythonosc.udp_client
 
-
-# Skip the entire module if python-osc isn't available.  Matches how
-# test_soapysdr.py handles its optional dependency.
-pytest.importorskip('pythonosc')
-
-import pythonosc.udp_client  # noqa: E402
-
-import substation.osc_sender  # noqa: E402
+import substation.osc_sender
 
 
 # ---------------------------------------------------------------------------
@@ -186,6 +180,44 @@ class TestOnRecordingSaved:
 
 		sampler_args = patched_send_message.call_args_list[1][0][1]
 		assert type(sampler_args[0]) is str and sampler_args[0] == '/tmp/foo.wav'
+
+
+class TestNoSequencer:
+
+	def test_state_changes_send_nothing (self, patched_send_message):
+
+		"""With host None there is no sequencer, so /radio/state goes nowhere."""
+
+		sender = substation.osc_sender.OscEventSender(host=None, sampler_host='127.0.0.1')
+		sender.on_state_change('pmr', 3, True, 15.2)
+
+		assert patched_send_message.call_count == 0
+
+	def test_a_saved_recording_goes_to_the_sampler_alone (self, patched_send_message):
+
+		"""#4781: a sampler can be sent /sample/import without a sequencer being sent /radio/recording."""
+
+		sender = substation.osc_sender.OscEventSender(host=None, sampler_host='127.0.0.1')
+		sender.on_recording_saved('pmr', 3, '/tmp/foo.wav')
+
+		assert [call.args for call in patched_send_message.call_args_list] == [('/sample/import', ['/tmp/foo.wav'])]
+
+
+class TestHostNotFound:
+
+	@pytest.mark.parametrize(('kwargs', 'named'), [
+		({'host': 'studio.local'}, 'sequencer at studio.local:9000'),
+		({'host': None, 'sampler_host': 'studio.local'}, 'sampler at studio.local:9002'),
+	], ids=['sequencer', 'sampler'])
+	def test_the_error_names_the_receiver_and_its_host (self, kwargs, named):
+
+		"""The resolver's own error says only "Name or service not known", so a mistyped host would fail without saying where."""
+
+		not_found = socket.gaierror(socket.EAI_NONAME, 'Name or service not known')
+
+		with unittest.mock.patch.object(pythonosc.udp_client, 'SimpleUDPClient', side_effect=not_found):
+			with pytest.raises(OSError, match=named):
+				substation.osc_sender.OscEventSender(**kwargs)
 
 
 # ---------------------------------------------------------------------------

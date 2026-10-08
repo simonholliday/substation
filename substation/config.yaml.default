@@ -176,6 +176,43 @@ recording:
         # with a `boost_db` of a few dB a louder input there comes out quieter.
         boost_curve: 0.5
 
+# OSC settings: where the scanner sends its events as OSC (Open Sound Control)
+# messages, so that music software can react to radio activity as it happens.
+#
+# A sequencer, or any program that reacts to radio activity, receives
+# `/radio/state` when a radio channel turns on or off, and `/radio/recording`
+# when a recording is saved. A sampler receives `/sample/import` with the full
+# path of each saved recording, so it can load the new file. Each is sent only
+# when its switch is on, and both are off by default.
+osc:
+
+    # Whether the scanner sends `/radio/state` and `/radio/recording` to a
+    # sequencer, at `sequencer_host` and `sequencer_port`.
+    sequencer_enabled: false
+
+    # Host name or IP address of the sequencer. The default, 127.0.0.1, is the
+    # computer Substation runs on. Substation stops at startup with an error if
+    # no host has this name.
+    sequencer_host: 127.0.0.1
+
+    # UDP port the sequencer listens on. The default, 9000, is Subsequence's.
+    sequencer_port: 9000
+
+    # Whether the scanner sends `/sample/import` to a sampler, at
+    # `sampler_host` and `sampler_port`, each time it saves a recording, so the
+    # sampler can load the new file.
+    sampler_enabled: false
+
+    # Host name or IP address of the sampler. The default, 127.0.0.1, is the
+    # computer Substation runs on. The message carries the recording's full
+    # path on this computer, so a sampler on another computer can load the file
+    # only if it can open that same path. Substation stops at startup with an
+    # error if no host has this name.
+    sampler_host: 127.0.0.1
+
+    # UDP port the sampler listens on. The default, 9002, is Subsample's.
+    sampler_port: 9002
+
 # Band settings
 #
 # `band_defaults` holds templates of settings, and `bands` holds the bands to

@@ -243,7 +243,7 @@ def render () -> str:
 
 	lines = HEADER.splitlines()
 
-	for section in ("scanner", "recording"):
+	for section in ("scanner", "recording", "osc"):
 
 		model = _nested_model(substation.config.AppConfig.model_fields[section])
 		assert model is not None

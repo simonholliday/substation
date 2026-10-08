@@ -5,25 +5,29 @@ Bridges RadioScanner's existing channel-state and recording callbacks
 onto OSC (Open Sound Control) messages, so downstream tools can react
 to radio activity in real time.  Two OSC endpoints are supported:
 
-- **Sequencer** (always): receives `/radio/state` and `/radio/recording`.
-  Defaults to 127.0.0.1:9000, matching the Subsequence generative MIDI
-  sequencer's OSC server.
+- **Sequencer** (unless `host` is None): receives `/radio/state` and
+  `/radio/recording`.  Defaults to 127.0.0.1:9000, matching the
+  Subsequence generative MIDI sequencer's OSC server.
 - **Sampler** (optional): if `sampler_host` is provided, also receives
   `/sample/import` whenever a recording is finalised, so a sample-based
   instrument (e.g. Subsample on 127.0.0.1:9002) can load the new WAV
   without having to watch the output directory.
 
-This module is **not** imported by any other part of Substation.  It
-relies on python-osc, which is only installed when the `osc` optional
-extra is present — keep the import here at module level so the
-ImportError is immediate and obvious if a user forgets to install it.
-Run `pip install -e ".[osc]"` to enable OSC support.
+RadioScanner builds one of these itself when the configuration's `osc`
+section turns either endpoint on (#4781), so `substation --band` sends
+events with no script.  python-osc is an ordinary dependency, so the
+import below always succeeds in an installed Substation.  The scanner
+imports this module and substation.config does not, so importing the
+configuration alone stays free of python-osc (tests/test_package.py).
 
 OSC address / argument reference (the Substation outbound addresses):
 
     /radio/state      band_name:str  channel_index:int  is_active:int(0/1)  snr_db:float  ctcss_hz:float  dcs_code:int
     /radio/recording  band_name:str  channel_index:int  file_path:str  ctcss_hz:float  dcs_code:int
     /sample/import    file_path:str                  (only when sampler_host is set)
+
+/radio/state and /radio/recording go only to the sequencer, and are not
+sent when host is None.
 
 ctcss_hz / dcs_code carry any subaudible tone detected on the activation.
 OSC has no native null, so 0.0 / 0 mean "no tone detected" (valid CTCSS
@@ -62,14 +66,17 @@ class OscEventSender:
 
 	The messages it sends:
 
-	- `/radio/state`, when a radio channel turns ON or OFF: `band_name` (str),
-	  `channel_index` (int), `is_active` (int, 1 or 0), `snr_db` (float),
-	  `ctcss_hz` (float), `dcs_code` (int).
-	- `/radio/recording`, when a recording is saved: `band_name` (str),
-	  `channel_index` (int), `file_path` (str), `ctcss_hz` (float),
-	  `dcs_code` (int).
-	- `/sample/import`, when a recording is saved and `sampler_host` is set:
-	  `file_path` (str).
+	- `/radio/state`, to the sequencer when a radio channel turns ON or OFF:
+	  `band_name` (str), `channel_index` (int), `is_active` (int, 1 or 0),
+	  `snr_db` (float), `ctcss_hz` (float), `dcs_code` (int).
+	- `/radio/recording`, to the sequencer when a recording is saved:
+	  `band_name` (str), `channel_index` (int), `file_path` (str), `ctcss_hz`
+	  (float), `dcs_code` (int).
+	- `/sample/import`, to the sampler when a recording is saved: `file_path`
+	  (str), the recording's full path on this computer.
+
+	A sequencer receives nothing when `host` is None, and a sampler receives
+	nothing unless `sampler_host` is set.
 
 	`ctcss_hz` and `dcs_code` carry any subaudible tone detected on the
 	activation.  OSC has no null, so 0.0 and 0 mean that no tone was detected:
@@ -80,13 +87,16 @@ class OscEventSender:
 
 	Each message goes over UDP without waiting for a reply.  A send that fails,
 	such as one to a host that cannot be reached, is logged as a warning and
-	never stops the scan.  It needs the `osc` extra:
-	`pip install "substation[osc]"`.
+	never stops the scan.
+
+	A scanner builds a sender of its own when its configuration's `osc`
+	settings turn sending on, so a script needs this class only to send
+	somewhere those settings do not.
 	"""
 
 	def __init__ (
 		self,
-		host: str = '127.0.0.1',
+		host: str | None = '127.0.0.1',
 		port: int = 9000,
 		sampler_host: str | None = None,
 		sampler_port: int = 9002,
@@ -97,26 +107,43 @@ class OscEventSender:
 
 		Args:
 			host: The sequencer's host name or IP address.  The default,
-				localhost, suits Subsequence running on the same machine.
-			port: The sequencer's UDP port.  The default is Subsequence's.
+				localhost, suits Subsequence running on the same machine.  None
+				sends nothing to a sequencer, for a sampler alone.
+			port: The sequencer's UDP port, used only when `host` is set.  The
+				default is Subsequence's.
 			sampler_host: The sampler's host name or IP address.  When it is set,
 				each saved recording is also sent to it as `/sample/import`, so
 				the sampler can import the file.  None sends nothing to a sampler.
 			sampler_port: The sampler's UDP port, used only when `sampler_host` is
 				set.  The default is Subsample's.
+
+		Raises:
+			OSError: A host name cannot be found.
 		"""
 
-		self._client = pythonosc.udp_client.SimpleUDPClient(host, port)
+		self._client = self._open_client('sequencer', host, port) if host is not None else None
+		self._sampler_client = self._open_client('sampler', sampler_host, sampler_port) if sampler_host is not None else None
 
-		self._sampler_client: pythonosc.udp_client.SimpleUDPClient | None
-		if sampler_host is not None:
-			self._sampler_client = pythonosc.udp_client.SimpleUDPClient(sampler_host, sampler_port)
-			logger.info(
-				f"OSC sender → sequencer {host}:{port}, sampler {sampler_host}:{sampler_port}"
-			)
-		else:
-			self._sampler_client = None
-			logger.info(f"OSC sender → sequencer {host}:{port} (no sampler)")
+		sequencer_text = f"sequencer {host}:{port}" if host is not None else "no sequencer"
+		sampler_text = f"sampler {sampler_host}:{sampler_port}" if sampler_host is not None else "no sampler"
+		logger.info(f"OSC sender → {sequencer_text}, {sampler_text}")
+
+	@staticmethod
+	def _open_client (role: str, host: str, port: int) -> pythonosc.udp_client.SimpleUDPClient:
+
+		"""
+		Open a UDP client for one receiver, naming it if its host cannot be found.
+
+		SimpleUDPClient looks the host up as it is made, and the resolver's own
+		error ("Name or service not known") does not say which host it was, so
+		a scan started with a mistyped host would fail without saying where.
+		"""
+
+		try:
+			return pythonosc.udp_client.SimpleUDPClient(host, port)
+
+		except OSError as exc:
+			raise OSError(f"Cannot send OSC to the {role} at {host}:{port}: {exc}") from exc
 
 	def on_state_change (
 		self,
@@ -134,6 +161,7 @@ class OscEventSender:
 
 		The message's arguments are `band_name`, `channel_index`, `is_active` as
 		1 or 0, `snr_db`, `ctcss_hz` and `dcs_code`, with 0.0 and 0 for no tone.
+		Nothing is sent when the sender has no sequencer.
 
 		It runs on the scanner's event loop, so it returns quickly.  A failed send
 		is caught and logged; anything else is a fault in Substation, and reaches
@@ -147,6 +175,9 @@ class OscEventSender:
 			ctcss_hz: The CTCSS tone detected, in Hz, or None.
 			dcs_code: The DCS code detected, as its integer value, or None.
 		"""
+
+		if self._client is None:
+			return
 
 		# OSC has no native boolean — encode as 0 or 1.  Explicit ternary
 		# instead of int(is_active) so the intent is obvious at a glance.
@@ -182,8 +213,8 @@ class OscEventSender:
 
 		"""
 		Send `/radio/recording` to the sequencer, and `/sample/import` to the
-		sampler when one is set: the handler for `recording_saved` that `attach()`
-		subscribes.
+		sampler, to each that the sender has: the handler for `recording_saved`
+		that `attach()` subscribes.
 
 		`/radio/recording`'s arguments are `band_name`, `channel_index`,
 		`file_path`, `ctcss_hz` and `dcs_code`, with 0.0 and 0 for no tone.
@@ -205,14 +236,15 @@ class OscEventSender:
 		ctcss_f = float(ctcss_hz) if ctcss_hz is not None else 0.0
 		dcs_i = int(dcs_code) if dcs_code is not None else 0
 
-		try:
-			self._client.send_message(
-				'/radio/recording',
-				[band_name, int(channel_index), path_str, ctcss_f, dcs_i],
-			)
+		if self._client is not None:
+			try:
+				self._client.send_message(
+					'/radio/recording',
+					[band_name, int(channel_index), path_str, ctcss_f, dcs_i],
+				)
 
-		except (OSError, ValueError, TypeError) as exc:
-			logger.warning(f"OSC /radio/recording send failed: {exc}")
+			except (OSError, ValueError, TypeError) as exc:
+				logger.warning(f"OSC /radio/recording send failed: {exc}")
 
 		if self._sampler_client is not None:
 			try:

@@ -15,7 +15,10 @@ Key concepts:
 3. Adding additional custom callbacks alongside the OSC forwarder.
 4. Running the asynchronous scan loop.
 
-Requires the optional OSC extra:  pip install -e ".[osc]"
+No script is needed just to send these messages: the `osc` settings in
+config.yaml make `substation --band` send them.  This script shows the
+Python route, for sending from code of your own.  Leave the `osc` settings
+switched off when you run it, or each message is sent twice.
 """
 
 import asyncio

@@ -35,9 +35,9 @@ Features:
   state, recording lifecycle, noise floor, and per-slice SNR snapshots;
   the channel_state event carries any CTCSS tone or DCS code detected
   as a property of each activation; used by the OSC bridge
-- Optional OSC event forwarding to downstream tools (MIDI sequencer,
-  sampler, VJ software, ...) via substation.osc_sender — install the
-  optional extra with pip install "substation[osc]"
+- OSC event forwarding to downstream tools (MIDI sequencer, sampler,
+  VJ software, ...), switched on by the osc settings in config.yaml, or
+  from Python with substation.osc_sender
 
 Typical usage:
     substation --init                              # Write a starter config.yaml
@@ -56,8 +56,7 @@ if typing.TYPE_CHECKING:
 	# for it: subsystem.co reads these assignments by parsing, never by
 	# importing, and generates the Python reference from them (#4718).  At
 	# run time __getattr__ supplies them instead, so that importing
-	# substation.config stays light, with no NumPy, and no python-osc, which
-	# only the osc extra installs.
+	# substation.config stays light, with neither NumPy nor python-osc.
 
 	import substation.config
 	import substation.osc_sender

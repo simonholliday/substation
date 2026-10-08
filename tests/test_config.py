@@ -258,6 +258,36 @@ class TestRecordingValidation:
 			assert config.recording.audio_format == fmt
 
 
+class TestOscConfig:
+
+	def test_off_by_default_with_each_program_s_port_on_this_computer (self, app_config):
+		"""Nothing is sent until a switch is on; the defaults are Subsequence's port and Subsample's, on 127.0.0.1."""
+		osc = app_config.osc
+		assert (osc.sequencer_enabled, osc.sampler_enabled) == (False, False)
+		assert (osc.sequencer_host, osc.sequencer_port) == ("127.0.0.1", 9000)
+		assert (osc.sampler_host, osc.sampler_port) == ("127.0.0.1", 9002)
+
+	def test_a_user_file_that_only_switches_the_sampler_on_keeps_the_rest (self, tmp_path):
+		"""#4781: `sampler_enabled: true` alone is enough to reach Subsample on the same computer."""
+		user_cfg = tmp_path / "config.yaml"
+		user_cfg.write_text("osc:\n  sampler_enabled: true\n")
+		config = substation.config.load_config(user_cfg)
+		assert config.osc.sampler_enabled is True
+		assert (config.osc.sampler_host, config.osc.sampler_port) == ("127.0.0.1", 9002)
+		assert config.osc.sequencer_enabled is False
+
+	@pytest.mark.parametrize("setting", [
+		{"sequencer_port": 0},
+		{"sampler_port": 65536},
+		{"sampler_host": ""},
+		{"sampler_hots": "127.0.0.1"},
+	], ids=["port 0", "port above 65535", "empty host", "misspelt key"])
+	def test_an_impossible_setting_is_refused (self, minimal_config_dict, setting):
+		minimal_config_dict["osc"] = setting
+		with pytest.raises(pydantic.ValidationError):
+			substation.config.validate_config(minimal_config_dict)
+
+
 # ---------------------------------------------------------------------------
 # Band defaults inheritance
 # ---------------------------------------------------------------------------

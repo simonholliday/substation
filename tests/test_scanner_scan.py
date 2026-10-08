@@ -6,12 +6,15 @@ import datetime
 import json
 import logging
 import pathlib
+import socket
 import threading
 import time
 import unittest.mock
 
 import numpy
 import pytest
+import pythonosc.osc_message
+import pythonosc.udp_client
 import soundfile
 import yaml
 
@@ -20,6 +23,7 @@ import substation.config
 import substation.devices
 import substation.devices.base
 import substation.devices.file
+import substation.osc_sender
 import substation.scanner
 
 import iq_generators
@@ -364,6 +368,95 @@ class TestEventsDuringAScan:
 		states = [payload['is_active'] for name, payload in events if name == 'channel_state']
 		assert states == [True, False]
 		assert async_states == [True, False]
+
+
+def _osc_listener () -> socket.socket:
+
+	"""A UDP socket on this computer, on a free port, for a test to receive OSC on."""
+
+	listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+	listener.bind(("127.0.0.1", 0))
+	listener.setblocking(False)
+	return listener
+
+
+def _osc_received (listener: socket.socket) -> list[tuple[str, list]]:
+
+	"""Every OSC message waiting on a listener, as (address, arguments), in the order sent."""
+
+	messages = []
+
+	while True:
+
+		try:
+			datagram = listener.recv(65536)
+		except BlockingIOError:
+			return messages
+
+		message = pythonosc.osc_message.OscMessage(datagram)
+		messages.append((message.address, list(message.params)))
+
+
+class TestOscSettings:
+
+	def test_the_settings_send_a_scan_s_events_with_no_script (self, minimal_config_dict, tmp_path):
+		"""#4781: with both switches on, a scan sends its events to a sequencer and its recordings to a sampler, from the configuration alone."""
+		events = []
+
+		with _osc_listener() as sequencer, _osc_listener() as sampler:
+
+			minimal_config_dict["osc"] = {
+				"sequencer_enabled": True, "sequencer_port": sequencer.getsockname()[1],
+				"sampler_enabled": True, "sampler_port": sampler.getsockname()[1],
+			}
+			_play_transmissions(minimal_config_dict, tmp_path, 6.0, [(3, 1.5, 4.0)], handlers=_recorder(events))
+
+			to_sequencer = _osc_received(sequencer)
+			to_sampler = _osc_received(sampler)
+
+		saved = [payload['file_path'] for name, payload in events if name == 'recording_saved']
+		assert len(saved) == 1
+		assert pathlib.Path(saved[0]).is_absolute() and pathlib.Path(saved[0]).exists()
+		index = next(payload['index'] for name, payload in events if name == 'channel_state')
+
+		assert [address for address, _ in to_sequencer] == ['/radio/state', '/radio/state', '/radio/recording']
+		assert [args[:3] for _, args in to_sequencer[:2]] == [['test_nfm', index, 1], ['test_nfm', index, 0]]
+		assert to_sequencer[2][1][:3] == ['test_nfm', index, saved[0]]
+		assert to_sampler == [('/sample/import', [saved[0]])]
+
+	def test_the_sampler_alone_leaves_the_sequencer_port_silent (self, minimal_config_dict, tmp_path):
+		"""A musician who switches on only the sampler sends nothing to port 9000, or wherever sequencer_port says."""
+		with _osc_listener() as sequencer, _osc_listener() as sampler:
+
+			minimal_config_dict["osc"] = {
+				"sequencer_port": sequencer.getsockname()[1],
+				"sampler_enabled": True, "sampler_port": sampler.getsockname()[1],
+			}
+			_play_transmissions(minimal_config_dict, tmp_path, 6.0, [(3, 1.5, 4.0)])
+
+			to_sequencer = _osc_received(sequencer)
+			to_sampler = _osc_received(sampler)
+
+		assert to_sequencer == []
+		assert [address for address, _ in to_sampler] == ['/sample/import']
+
+	def test_nothing_is_sent_by_default (self, app_config, monkeypatch):
+		"""The shipped settings send nothing, so a scanner built by a script that attaches its own sender sends each message once."""
+		built = []
+		monkeypatch.setattr(substation.osc_sender, "OscEventSender", lambda **kwargs: built.append(kwargs))
+
+		substation.scanner.RadioScanner(config=app_config, band_name="test_nfm", device_type="rtlsdr")
+
+		assert built == []
+
+	def test_a_host_that_cannot_be_found_stops_the_scanner_before_it_starts (self, minimal_config_dict, monkeypatch):
+		"""A mistyped sampler_host fails at startup, naming it, rather than sending recordings nowhere."""
+		minimal_config_dict["osc"] = {"sampler_enabled": True, "sampler_host": "studio.local"}
+		not_found = socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+		monkeypatch.setattr(pythonosc.udp_client, "SimpleUDPClient", unittest.mock.Mock(side_effect=not_found))
+
+		with pytest.raises(OSError, match="sampler at studio.local:9002"):
+			substation.scanner.RadioScanner(config=minimal_config_dict, band_name="test_nfm", device_type="rtlsdr")
 
 
 def _wav_chunks (path) -> list[bytes]:

@@ -401,6 +401,60 @@ class RecordingConfig(pydantic.BaseModel):
 	"""
 
 
+class OscConfig(pydantic.BaseModel):
+	"""
+	OSC settings: where the scanner sends its events as OSC (Open Sound Control)
+	messages, so that music software can react to radio activity as it happens.
+
+	A sequencer, or any program that reacts to radio activity, receives
+	`/radio/state` when a radio channel turns on or off, and `/radio/recording`
+	when a recording is saved. A sampler receives `/sample/import` with the full
+	path of each saved recording, so it can load the new file. Each is sent only
+	when its switch is on, and both are off by default.
+	"""
+
+	model_config = pydantic.ConfigDict(extra='forbid', use_attribute_docstrings=True)
+
+	sequencer_enabled: bool = False
+	"""
+	Whether the scanner sends `/radio/state` and `/radio/recording` to a
+	sequencer, at `sequencer_host` and `sequencer_port`.
+	"""
+
+	sequencer_host: str = pydantic.Field(default='127.0.0.1', min_length=1)
+	"""
+	Host name or IP address of the sequencer. The default, 127.0.0.1, is the
+	computer Substation runs on. Substation stops at startup with an error if no
+	host has this name.
+	"""
+
+	sequencer_port: int = pydantic.Field(default=9000, ge=1, le=65535)
+	"""
+	UDP port the sequencer listens on. The default, 9000, is Subsequence's.
+	"""
+
+	sampler_enabled: bool = False
+	"""
+	Whether the scanner sends `/sample/import` to a sampler, at `sampler_host`
+	and `sampler_port`, each time it saves a recording, so the sampler can load
+	the new file.
+	"""
+
+	sampler_host: str = pydantic.Field(default='127.0.0.1', min_length=1)
+	"""
+	Host name or IP address of the sampler. The default, 127.0.0.1, is the
+	computer Substation runs on. The message carries the recording's full path on
+	this computer, so a sampler on another computer can load the file only if it
+	can open that same path. Substation stops at startup with an error if no host
+	has this name.
+	"""
+
+	sampler_port: int = pydantic.Field(default=9002, ge=1, le=65535)
+	"""
+	UDP port the sampler listens on. The default, 9002, is Subsample's.
+	"""
+
+
 # How UK law treats listening to a band (see the README's "Reception and the
 # law").  The code knows no jurisdiction: the band library carries the UK
 # classes as data, and the class only decides whether a band records when it
@@ -853,8 +907,8 @@ class AppConfig(pydantic.BaseModel):
 	"""
 	The whole configuration.
 
-	A configuration file has four top-level sections: `scanner`, `recording`,
-	`band_defaults`, and `bands`.
+	A configuration file has five top-level sections: `scanner`, `recording`,
+	`osc`, `band_defaults`, and `bands`.
 	"""
 
 	model_config = pydantic.ConfigDict(extra='forbid', use_attribute_docstrings=True)
@@ -867,6 +921,12 @@ class AppConfig(pydantic.BaseModel):
 	recording: RecordingConfig = pydantic.Field(default_factory=RecordingConfig)
 	"""
 	Recording settings, applying to every band that records.
+	"""
+
+	osc: OscConfig = pydantic.Field(default_factory=OscConfig)
+	"""
+	OSC settings: where the scanner sends its events, such as to a sequencer or
+	a sampler.
 	"""
 
 	band_defaults: dict[str, BandTypeConfig] = pydantic.Field(default_factory=dict)

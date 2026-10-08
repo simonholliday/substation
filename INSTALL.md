@@ -246,10 +246,9 @@ substation --init          # writes ./config.yaml (the fully-commented defaults)
 # HackRF One support: builds the python_hackrf binding, which needs the
 # HackRF development package from section 3
 pip install "substation[hackrf]"
-
-# OSC event forwarding (for MIDI sequencer, sampler, etc.)
-pip install "substation[osc]"
 ```
+
+OSC event forwarding, to a sequencer or a sampler, needs no extra: switch it on in the `osc` settings of `config.yaml`. The `osc` extra that earlier releases needed still installs, and adds nothing.
 
 ---
 
@@ -270,5 +269,5 @@ python3 -m substation --list-bands
 ### Fedora
 
 - **SELinux**: Fedora enables SELinux in enforcing mode by default. If USB devices aren't accessible even after udev rules are in place, check for denials with `sudo ausearch -m avc -ts recent`. Typically the udev rules are sufficient.
-- **Firewalld**: Substation sends OSC events and listens for nothing, so a firewall on the machine it runs on needs no change. If the application receiving them runs on another Fedora machine, open the port it listens on there, which is 9000/udp by default for the sequencer endpoint, and the sampler's port too if you set `sampler_host`. For example: `sudo firewall-cmd --add-port=9000/udp --permanent && sudo firewall-cmd --reload`.
+- **Firewalld**: Substation sends OSC events and listens for nothing, so a firewall on the machine it runs on needs no change. If the application receiving them runs on another Fedora machine, open the port it listens on there, which is 9000/udp by default for a sequencer, and 9002/udp for a sampler. For example: `sudo firewall-cmd --add-port=9000/udp --permanent && sudo firewall-cmd --reload`.
 - **lib vs lib64**: Fedora uses `/usr/lib64` for 64-bit libraries. The `ldconfig` step after building RTL-SDR should handle this, but if you get "library not found" errors, check that `/usr/local/lib64` is listed in `/etc/ld.so.conf.d/` and re-run `sudo ldconfig`.

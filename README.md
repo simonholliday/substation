@@ -433,13 +433,40 @@ See [examples/scan_demo.py](https://github.com/simonholliday/substation/blob/mai
 
 ### OSC event forwarding
 
-Substation can forward radio channel state changes and saved recordings as OSC (Open Sound Control) messages, so downstream tools - MIDI sequencers, sample players, VJ software, lighting rigs - can react to radio activity in real time. Install the optional extra:
+Substation can send radio channel state changes and saved recordings as OSC (Open Sound Control) messages, so downstream tools - MIDI sequencers, sample players, VJ software, lighting rigs - can react to radio activity in real time.
 
-```bash
-pip install "substation[osc]"
+Switch it on in `config.yaml`. To have a sampler such as Subsample, on the same computer, import each recording as it is saved:
+
+```yaml
+osc:
+  sampler_enabled: true
 ```
 
-Then attach an `OscEventSender` to any `RadioScanner` instance:
+To send radio channel activity to a sequencer such as Subsequence as well:
+
+```yaml
+osc:
+  sequencer_enabled: true
+  sampler_enabled: true
+```
+
+Then scan as usual, with `substation --band <name>`, and the log says where the messages go. Each destination has a host and a port: `sequencer_host` and `sequencer_port`, 127.0.0.1 and 9000 by default, which is Subsequence's port, and `sampler_host` and `sampler_port`, 127.0.0.1 and 9002, which is Subsample's. A host that cannot be found stops Substation at startup with an error.
+
+Substation sends these OSC messages:
+
+| Address | Sent to | When | Arguments |
+| :--- | :--- | :--- | :--- |
+| `/radio/state` | Sequencer | Radio channel turns ON or OFF | `band_name:str, channel_index:int, is_active:int(0/1), snr_db:float, ctcss_hz:float, dcs_code:int` |
+| `/radio/recording` | Sequencer | Recording finalised on disk | `band_name:str, channel_index:int, file_path:str, ctcss_hz:float, dcs_code:int` |
+| `/sample/import` | Sampler | Recording finalised on disk | `file_path:str` |
+
+`file_path` is the recording's full path on the computer Substation runs on, so a sampler on another computer can load the file only if it sees it at that same path.
+
+`ctcss_hz` and `dcs_code` carry any subaudible tone detected on the activation; tone detection has not yet been thoroughly tested with real radios (see [Demodulation](#demodulation)). OSC has no native null, so `0.0` / `0` mean "no tone detected" (valid CTCSS tones start at 67 Hz, and DCS codes are always nonzero, so these sentinels are unambiguous). DCS codes are octal, and `dcs_code` is the code's integer value, so DCS 023 arrives as 19; format it in octal to show it as a radio does.
+
+Sends are non-blocking UDP (fire-and-forget); transient socket errors are logged as warnings and never raised back into the scanner.
+
+From Python, a `RadioScanner` follows the same `osc` settings in its configuration. To send somewhere else as well, attach an `OscEventSender` of your own, which takes the same four values; `host=None` sends nothing to a sequencer:
 
 ```python
 import substation.osc_sender
@@ -452,17 +479,7 @@ osc_sender = substation.osc_sender.OscEventSender(
 osc_sender.attach(scanner)
 ```
 
-The sender emits the following OSC messages:
-
-| Address | When | Arguments |
-| :--- | :--- | :--- |
-| `/radio/state` | Radio channel turns ON or OFF | `band_name:str, channel_index:int, is_active:int(0/1), snr_db:float, ctcss_hz:float, dcs_code:int` |
-| `/radio/recording` | Recording finalised on disk | `band_name:str, channel_index:int, file_path:str, ctcss_hz:float, dcs_code:int` |
-| `/sample/import` | Recording finalised (only if `sampler_host` set) | `file_path:str` |
-
-`ctcss_hz` and `dcs_code` carry any subaudible tone detected on the activation; tone detection has not yet been thoroughly tested with real radios (see [Demodulation](#demodulation)). OSC has no native null, so `0.0` / `0` mean "no tone detected" (valid CTCSS tones start at 67 Hz, and DCS codes are always nonzero, so these sentinels are unambiguous). DCS codes are octal, and `dcs_code` is the code's integer value, so DCS 023 arrives as 19; format it in octal to show it as a radio does.
-
-Sends are non-blocking UDP (fire-and-forget); transient socket errors are logged as warnings and never raised back into the scanner. See [examples/scan_osc.py](https://github.com/simonholliday/substation/blob/main/examples/scan_osc.py) for a working script (in the source repository).
+A sender attached to a destination the settings also send to delivers each message twice. See [examples/scan_osc.py](https://github.com/simonholliday/substation/blob/main/examples/scan_osc.py) for a working script (in the source repository).
 
 ### IQ file playback
 
@@ -499,7 +516,7 @@ bands:
 
 Use `--config <path>` to specify a different user override file. Use `--list-bands` to see all available bands.
 
-The top-level sections are `scanner`, `recording`, `band_defaults`, and `bands`. Each entry in `band_defaults` is a template: a band with the same `type` inherits its values, and sets only what differs. A band's `reception_class` decides whether it records when it does not set `recording_enabled` (see [Reception and the law](#reception-and-the-law)). Device-specific tuning for a band goes in its `device_overrides`, described below.
+The top-level sections are `scanner`, `recording`, `osc`, `band_defaults`, and `bands`. Each entry in `band_defaults` is a template: a band with the same `type` inherits its values, and sets only what differs. A band's `reception_class` decides whether it records when it does not set `recording_enabled` (see [Reception and the law](#reception-and-the-law)). Device-specific tuning for a band goes in its `device_overrides`, described below.
 
 Every setting, with its type, default, limits, and examples, is in the configuration reference: [https://subsystem.co/substation/configuration/](https://subsystem.co/substation/configuration/)
 

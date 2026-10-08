@@ -21,6 +21,7 @@ import substation.constants
 import substation.devices
 import substation.dsp.demodulation
 import substation.dsp.filters
+import substation.osc_sender
 import substation.recording
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,11 @@ class RadioScanner:
 	The band, the receiver and every setting come from the configuration.  The
 	scanner's own attributes are its working state while it scans, not settings
 	to change.
+
+	When the configuration's `osc` settings turn sending on, the scanner also
+	sends its events as OSC messages, as `OscEventSender` describes, with no
+	handler to register.  A script that attaches its own `OscEventSender` to
+	the same destination as well sends each message twice.
 	"""
 
 	def __init__ (self, config_path: str | pathlib.Path | None = None, band_name: str = 'pmr', device_type: str = 'rtlsdr', device_index: int = 0, config: typing.Any | None = None, clock: VirtualClock | None = None, device_kwargs: dict | None = None) -> None:
@@ -110,6 +116,8 @@ class RadioScanner:
 		Raises:
 			KeyError: The band is not in the configuration.
 			ValueError: The band is wider than its `sample_rate` can capture.
+			OSError: A host named in the configuration's `osc` settings cannot be
+				found.
 		"""
 
 		if config is None:
@@ -421,6 +429,18 @@ class RadioScanner:
 			logger.info("Recording: DISABLED (this band has no reception_class; set reception_class: general or recording_enabled: true to record it where your law allows)")
 		else:
 			logger.info("Recording: DISABLED (recording_enabled is set to false)")
+
+		# The configuration's osc section sends the events itself, so
+		# `substation --band` needs no script to reach a sequencer or a
+		# sampler (#4781).  The sender logs where it sends.
+		osc = self.config.osc
+		if osc.sequencer_enabled or osc.sampler_enabled:
+			substation.osc_sender.OscEventSender(
+				host=osc.sequencer_host if osc.sequencer_enabled else None,
+				port=osc.sequencer_port,
+				sampler_host=osc.sampler_host if osc.sampler_enabled else None,
+				sampler_port=osc.sampler_port,
+			).attach(self)
 
 
 	def _now (self) -> float:
