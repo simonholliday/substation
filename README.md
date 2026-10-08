@@ -11,6 +11,7 @@ Substation runs as a command-line tool or as a Python module in your own applica
 **Full documentation: [https://subsystem.co/substation/](https://subsystem.co/substation/)**
 
 - Configuration reference: [https://subsystem.co/substation/configuration/](https://subsystem.co/substation/configuration/)
+- For changing Substation's code: [docs/architecture.md](docs/architecture.md)
 
 ## Signal processing
 
