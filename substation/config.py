@@ -403,9 +403,11 @@ class RecordingConfig(pydantic.BaseModel):
 
 class OscConfig(pydantic.BaseModel):
 	"""
-	OSC settings: where the scanner sends its events as OSC (Open Sound Control)
-	messages, so that music software can react to radio activity as it happens.
+	OSC settings: where the scanner sends its events, such as to a sequencer or
+	a sampler.
 
+	These settings send the scanner's events as OSC (Open Sound Control)
+	messages, so that music software can react to radio activity as it happens.
 	A sequencer, or any program that reacts to radio activity, receives
 	`/radio/state` when a radio channel turns on or off, and `/radio/recording`
 	when a recording is saved. A sampler receives `/sample/import` with the full
