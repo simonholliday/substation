@@ -46,3 +46,45 @@ Typical usage:
     substation --band air_civil_1 --device-type hackrf
     substation --band air_civil_bristol --device-type airspyhf
 """
+
+import importlib
+import typing
+
+if typing.TYPE_CHECKING:
+
+	# The documented Python interface, declared where the source can be read
+	# for it: subsystem.co reads these assignments by parsing, never by
+	# importing, and generates the Python reference from them (#4718).  At
+	# run time __getattr__ supplies them instead, so that importing
+	# substation.config stays light, with no NumPy, and no python-osc, which
+	# only the osc extra installs.
+
+	import substation.config
+	import substation.osc_sender
+	import substation.scanner
+
+	load_config = substation.config.load_config
+	RadioScanner = substation.scanner.RadioScanner
+	OscEventSender = substation.osc_sender.OscEventSender
+
+
+__all__ = ["load_config", "RadioScanner", "OscEventSender"]
+
+# The module each name in __all__ is defined in, for __getattr__.
+_EXPORTS = {
+	"load_config": "substation.config",
+	"RadioScanner": "substation.scanner",
+	"OscEventSender": "substation.osc_sender",
+}
+
+
+def __getattr__ (name: str) -> typing.Any:
+
+	"""Import a name in __all__ from its module the first time it is used, as in `substation.RadioScanner`."""
+
+	module = _EXPORTS.get(name)
+
+	if module is None:
+		raise AttributeError(f"module 'substation' has no attribute {name!r}")
+
+	return getattr(importlib.import_module(module), name)

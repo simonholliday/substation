@@ -61,36 +61,55 @@ class VirtualClock:
 class RadioScanner:
 
 	"""
-	Self-contained radio scanner for SDR devices.
+	Scan one band with one receiver: detect each transmission on its radio
+	channels, and record it where the band records.
 
-	Continuously monitors a frequency band and detects active transmissions
-	by analyzing signal-to-noise ratio (SNR). When activity is detected above
-	a threshold, the scanner can optionally demodulate and record the audio.
+	Build one from a loaded configuration, register a handler for each event
+	you want with `on()`, or with the simpler `add_state_callback()` and
+	`add_recording_callback()`, then await `scan()`:
 
-	Uses FFT-based power spectral density analysis with Welch averaging to
-	reduce noise variance. Implements hysteresis (separate on/off thresholds)
-	to prevent rapid state toggling when signals hover near the threshold.
+	```python
+	scanner = substation.scanner.RadioScanner(
+		config=substation.config.load_config(),
+		band_name="amateur_2m",
+		device_type="rtlsdr",
+	)
+	scanner.on("channel_state", handler)
+	await scanner.scan()
+	```
+
+	The band, the receiver and every setting come from the configuration.  The
+	scanner's own attributes are its working state while it scans, not settings
+	to change.
 	"""
 
 	def __init__ (self, config_path: str | pathlib.Path | None = None, band_name: str = 'pmr', device_type: str = 'rtlsdr', device_index: int = 0, config: typing.Any | None = None, clock: VirtualClock | None = None, device_kwargs: dict | None = None) -> None:
 
 		"""
-		Initialize the scanner with configuration
+		Set up a scanner for one band and one receiver.  Nothing is opened until
+		`scan()` runs.
 
 		Args:
-			config_path: Optional path to user config override file (str or pathlib.Path)
-			band_name: Name of the band to scan (default: 'pmr')
-			device_type: SDR type, as for --device-type: 'rtlsdr', 'hackrf',
-				'airspy', 'airspyhf', 'soapy:<driver>', or 'file' for IQ file
-				playback
-			device_index: Device index for the selected SDR type
-			config: A loaded AppConfig, or a dict to validate, used in place of
-				config_path.  A dict does not have config.yaml.default merged
-				under it, so settings it leaves out take their schema defaults
-			clock: A VirtualClock for IQ file playback, which timestamps
-				recordings with the file's time instead of the system clock's
-			device_kwargs: Extra keyword arguments for the device, such as
-				file_path and center_freq for 'file'
+			config_path: A user configuration file, merged over the shipped
+				defaults as `load_config()` merges it.  Used only when `config` is
+				None.
+			band_name: The band to scan, by its name in the configuration.
+			device_type: The receiver, as `--device-type` takes it: `rtlsdr`,
+				`hackrf`, `airspy`, `airspyhf`, `soapy:<driver>`, or `file` for IQ
+				file playback.
+			device_index: Which receiver of that type to use, counting from 0.
+			config: A configuration from `load_config()`, or a dict to validate,
+				used in place of `config_path`.  A dict does not have the shipped
+				defaults merged under it, so the settings it leaves out take their
+				schema defaults.
+			clock: A `VirtualClock` for IQ file playback, which gives recordings the
+				file's time rather than the system clock's.
+			device_kwargs: Extra keyword arguments for the receiver, such as
+				`file_path` and `center_freq` for `file`.
+
+		Raises:
+			KeyError: The band is not in the configuration.
+			ValueError: The band is wider than its `sample_rate` can capture.
 		"""
 
 		if config is None:
@@ -437,53 +456,71 @@ class RadioScanner:
 
 	def on (self, event: str, handler: typing.Callable) -> None:
 
-		"""Subscribe to a scanner event.
+		"""
+		Subscribe a handler to one of the scanner's events.
 
-		Events:
-			channel_state       — (band, index, freq, is_active, snr_db, ctcss_hz, dcs_code)
-			recording_started   — (band, index, freq)
-			recording_saved     — (band, index, freq, file_path, ctcss_hz, dcs_code)
-			recording_discarded — (band, index, freq)
-			noise_floor         — (noise_floor_db, warmup_complete)
-			channel_snr         — (channels: list[dict])
+		The handler is called with the event's values as keyword arguments:
 
-		Every value is a plain Python type (bool, int, float, str, or None),
-		so a payload can go straight to json.dumps.
+		- `channel_state`: `band`, `index`, `freq`, `is_active`, `snr_db`,
+		  `ctcss_hz`, `dcs_code`.
+		- `recording_started`: `band`, `index`, `freq`.
+		- `recording_saved`: `band`, `index`, `freq`, `file_path`, `ctcss_hz`,
+		  `dcs_code`.
+		- `recording_discarded`: `band`, `index`, `freq`.
+		- `noise_floor`: `noise_floor_db`, `warmup_complete`.
+		- `channel_snr`: `channels`, a list with a dict for each radio channel,
+		  holding its `index`, `frequency_mhz`, `snr_db`, `is_active` and
+		  `duration_active_s`.
+
+		Every value is a plain Python type (bool, int, float, str, or None), so a
+		payload can go straight to `json.dumps`.
 
 		When they fire:
-		- channel_state fires when a radio channel turns ON or OFF.  On a
-		  recording band, recording_started for the same activation comes
-		  first, because channel_state waits for the demodulator so that it
-		  can carry the detected tone.  Radio channels still ON when a scan
-		  ends get their OFF during the scan's cleanup.
-		- recording_saved or recording_discarded follows each recording's
-		  close, after that activation's channel_state OFF.
-		- noise_floor fires for every processed slice, warmup included.
-		- channel_snr fires for each slice that measures every radio
-		  channel: not during warmup, not for a slice dropped for ADC
-		  saturation, and not while the whole band is quiet with no radio
-		  channel ON.
 
-		ctcss_hz / dcs_code on channel_state are populated on ON
-		transitions where demod produced tone info; otherwise both are
-		None.  OFF transitions always carry both as None.  On
-		recording_saved the tone fields echo whatever was detected
-		during the activation (persisted across the recording), again
-		None if no tone was detected.
+		- `channel_state` fires when a radio channel turns ON or OFF.  On a
+		  recording band, `recording_started` for the same activation comes first,
+		  because `channel_state` waits for the demodulator so that it can carry
+		  the detected tone.  Radio channels still ON when a scan ends get their
+		  OFF during the scan's cleanup.
+		- `recording_saved` or `recording_discarded` follows each recording's
+		  close, after that activation's `channel_state` OFF.
+		- `noise_floor` fires for every processed slice, warmup included.
+		- `channel_snr` fires for each slice that measures every radio channel: not
+		  during warmup, not for a slice dropped for ADC saturation, and not while
+		  the whole band is quiet with no radio channel ON.
 
-		Handlers may be sync or async.  Async handlers always run on the
-		scanner's event loop, and the end of a scan waits for them.  Sync
-		handlers run on the event loop for channel_state and
-		recording_started, and on the thread that emits the event for the
-		others: the processing thread for noise_floor and channel_snr.  See
-		emit() for details.
+		`ctcss_hz` and `dcs_code` on `channel_state` carry a tone detected when a
+		radio channel turns ON, and are otherwise None; an OFF always carries None.
+		On `recording_saved` they carry whatever tone was detected during the
+		activation, or None.  Tone detection has not yet been thoroughly tested
+		with real radios.
+
+		Handlers may be plain functions or coroutine functions.  A coroutine
+		function always runs on the scanner's event loop, and the end of a scan
+		waits for it.  A plain function runs on the event loop for
+		`channel_state` and `recording_started`, and on the thread that emits the
+		event for the others: the processing thread for `noise_floor` and
+		`channel_snr`.  See `emit()` for the details.
+
+		Args:
+			event: The event's name, one of those above.  A name no event has is
+				accepted, and its handler is never called.
+			handler: A function or coroutine function taking the event's values as
+				keyword arguments.
 		"""
 
 		self._event_handlers.setdefault(event, []).append(handler)
 
 	def off (self, event: str, handler: typing.Callable) -> None:
 
-		"""Unsubscribe a handler from an event."""
+		"""
+		Unsubscribe a handler from an event.  A handler that was not subscribed is
+		ignored.
+
+		Args:
+			event: The event's name.
+			handler: The handler given to `on()`.
+		"""
 
 		handlers = self._event_handlers.get(event)
 		if handlers:
@@ -494,23 +531,32 @@ class RadioScanner:
 
 	def emit (self, event: str, loop: asyncio.AbstractEventLoop | None = None, **kwargs: typing.Any) -> None:
 
-		"""Fire all handlers registered for an event.
+		"""
+		Fire all handlers registered for an event.  The scanner calls this itself;
+		a program embedding it subscribes with `on()`.
 
-		Dispatch rules, by handler type and whether `loop` is supplied:
+		How each handler is called, by its kind and whether `loop` is given:
 
-		- async handler → scheduled via asyncio.run_coroutine_threadsafe()
-		  on `loop`, or on the scanner's own loop when none is given, and
-		  awaited there.  With neither, as before a scan has started, it is
-		  skipped, because emit() is sync and cannot await.
-		- sync handler + loop given → dispatched via
-		  loop.call_soon_threadsafe().
-		- sync handler, no loop → called directly on the caller's
-		  thread (used when emit() is itself called from the event loop,
-		  e.g. inside an async coroutine).
+		- A coroutine function is scheduled with
+		  `asyncio.run_coroutine_threadsafe()` on `loop`, or on the scanner's own
+		  loop when none is given, and awaited there.  With neither, as before a
+		  scan has started, it is skipped, because `emit()` is not async and
+		  cannot await.
+		- A plain function, with `loop` given, is called through
+		  `loop.call_soon_threadsafe()`.
+		- A plain function, with no `loop`, is called directly on the caller's
+		  thread, which is how `emit()` is used from the event loop itself.
 
-		A handler's exception is caught wherever the handler runs, and logged
-		at WARNING with its traceback the first time that handler fails, then
-		at DEBUG.  A misbehaving handler never stops other handlers firing.
+		A handler's exception is caught wherever the handler runs, and logged at
+		WARNING with its traceback the first time that handler fails, then at
+		DEBUG.  A failing handler never stops the other handlers firing.
+
+		Args:
+			event: The event's name.
+			loop: The event loop to call handlers on, when called from another
+				thread.
+			**kwargs: The event's values, passed to each handler as keyword
+				arguments.
 		"""
 
 		handlers = self._event_handlers.get(event)
@@ -612,10 +658,17 @@ class RadioScanner:
 
 	def add_state_callback (self, callback: typing.Callable) -> None:
 
-		"""Backward-compatible wrapper: subscribe to channel_state events.
+		"""
+		Call a function each time a radio channel turns ON or OFF: the
+		`channel_state` event, in a simpler form.
 
-		The callback receives (band_name, channel_index, is_active, snr_db)
-		as positional arguments.
+		The function receives `band_name`, `channel_index`, `is_active` and
+		`snr_db` as positional arguments.  For the radio channel's frequency or a
+		detected tone, subscribe to `channel_state` with `on()` instead.
+
+		Args:
+			callback: A plain function, not a coroutine function, taking those four
+				arguments.
 		"""
 
 		def _adapter (**kwargs: typing.Any) -> None:
@@ -626,10 +679,18 @@ class RadioScanner:
 
 	def add_recording_callback (self, callback: typing.Callable) -> None:
 
-		"""Backward-compatible wrapper: subscribe to recording_saved events.
+		"""
+		Call a function each time a recording is saved: the `recording_saved`
+		event, in a simpler form.  It is not called for a recording the noise
+		checks discard.
 
-		The callback receives (band_name, channel_index, file_path)
-		as positional arguments.
+		The function receives `band_name`, `channel_index` and `file_path` as
+		positional arguments.  For the radio channel's frequency or a detected
+		tone, subscribe to `recording_saved` with `on()` instead.
+
+		Args:
+			callback: A plain function, not a coroutine function, taking those three
+				arguments.
 		"""
 
 		def _adapter (**kwargs: typing.Any) -> None:
@@ -2353,18 +2414,18 @@ class RadioScanner:
 	async def scan (self) -> None:
 
 		"""
-		Main scanning loop.
+		Scan until cancelled, or until an IQ file has been played to its end.
 
-		Sets up the SDR and async pipeline, streams IQ slices in the background,
-		and offloads CPU-heavy processing to the executor to keep the event loop
-		responsive.
+		It opens the receiver, streams IQ samples from it in the background, and
+		processes each slice on a worker thread, so the event loop stays free for
+		the program embedding it.
 
-		Returns when an IQ file has been played to its end, or when the scan
-		is cancelled (Ctrl+C).  Anything that stops the scan early is raised
-		once recordings and the device have been closed: an error opening or
-		configuring the device, an error processing a slice, or a live
-		device that stops streaming, which raises the error it failed with,
-		or RuntimeError when it gave none.
+		Returns when an IQ file has been played to its end, or when the scan is
+		cancelled, as Ctrl+C cancels it.  Anything that stops the scan early is
+		raised once the recordings and the device have been closed: an error
+		opening or configuring the device, an error processing a slice, or a live
+		device that stops streaming, which raises the error it failed with, or
+		RuntimeError when it gave none.
 		"""
 
 		logger.info("Starting scan...")

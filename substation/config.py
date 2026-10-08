@@ -1126,12 +1126,27 @@ def _apply_band_defaults (data: dict) -> dict:
 
 def load_config (path: str | pathlib.Path | None = None) -> AppConfig:
 
-	"""Load configuration, merging config.yaml.default with config.yaml.
+	"""
+	Load the configuration a scan runs with: the shipped defaults, with your own
+	file merged over them.
 
-	Always loads config.yaml.default as the base.  If a user config.yaml exists
-	(or an explicit path is given, as a str or pathlib.Path), it is deep-merged
-	on top so user settings override defaults while unspecified keys inherit
-	default values.
+	`config.yaml.default`, which ships with Substation and holds every setting
+	and band, is always loaded first.  A user configuration file is then merged
+	over it, setting by setting, so what it gives replaces the shipped value and
+	everything it leaves out keeps its default.
+
+	Args:
+		path: The user configuration file, as a str or pathlib.Path.  When
+			None, `config.yaml` in the current directory is used if there is
+			one, and otherwise the shipped defaults alone.
+
+	Returns:
+		The validated configuration, to pass to `RadioScanner` as `config`.
+
+	Raises:
+		FileNotFoundError: `path` names no file.
+		pydantic.ValidationError: The merged configuration is not valid; the
+			error names each setting at fault.
 	"""
 
 	default_path = _locate_default_config()

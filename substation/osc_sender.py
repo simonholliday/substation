@@ -49,20 +49,39 @@ logger = logging.getLogger(__name__)
 class OscEventSender:
 
 	"""
-	Forwards Substation scanner events to an OSC receiver.
+	Send the scanner's events as OSC messages, to a sequencer and, optionally, a
+	sampler.
 
-	Usage:
+	```python
+	osc = substation.osc_sender.OscEventSender(
+		host="127.0.0.1", port=9000,
+		sampler_host="127.0.0.1", sampler_port=9002,
+	)
+	osc.attach(scanner)
+	```
 
-		osc = substation.osc_sender.OscEventSender(
-			host='127.0.0.1', port=9000,
-			sampler_host='127.0.0.1', sampler_port=9002,
-		)
-		osc.attach(scanner)
+	The messages it sends:
 
-	After attach(), channel state changes and saved recordings will be
-	emitted as OSC messages on the event loop thread.  The send calls are
-	non-blocking (UDP sendto) and are wrapped in a narrow exception
-	handler so a transient socket error cannot stall the scanner.
+	- `/radio/state`, when a radio channel turns ON or OFF: `band_name` (str),
+	  `channel_index` (int), `is_active` (int, 1 or 0), `snr_db` (float),
+	  `ctcss_hz` (float), `dcs_code` (int).
+	- `/radio/recording`, when a recording is saved: `band_name` (str),
+	  `channel_index` (int), `file_path` (str), `ctcss_hz` (float),
+	  `dcs_code` (int).
+	- `/sample/import`, when a recording is saved and `sampler_host` is set:
+	  `file_path` (str).
+
+	`ctcss_hz` and `dcs_code` carry any subaudible tone detected on the
+	activation.  OSC has no null, so 0.0 and 0 mean that no tone was detected:
+	CTCSS tones start at 67 Hz, and no DCS code is 0.  A DCS code is octal,
+	and `dcs_code` is its integer value, so DCS 023 arrives as 19; format it in
+	octal, as `f"{dcs_code:03o}"`, to show it as a radio does.  Tone detection
+	has not yet been thoroughly tested with real radios.
+
+	Each message goes over UDP without waiting for a reply.  A send that fails,
+	such as one to a host that cannot be reached, is logged as a warning and
+	never stops the scan.  It needs the `osc` extra:
+	`pip install "substation[osc]"`.
 	"""
 
 	def __init__ (
@@ -74,21 +93,17 @@ class OscEventSender:
 	) -> None:
 
 		"""
-		Construct an OSC sender and open the UDP client(s).
+		Set up the sender, opening a UDP client for each receiver.
 
 		Args:
-			host: Sequencer OSC receiver hostname or IP.  Defaults to
-				localhost, which is correct for the common single-machine
-				setup where Subsequence runs alongside Substation.
-			port: Sequencer OSC receiver UDP port.  Defaults to 9000, the
-				Subsequence default.
-			sampler_host: Optional sampler OSC receiver hostname.  When
-				set, recording-saved events also emit `/sample/import`
-				to this address so the sampler can import the WAV
-				directly.  Leave as None to skip the sampler path.
-			sampler_port: Sampler OSC receiver UDP port.  Defaults to
-				9002, the Subsample default.  Only used when
-				sampler_host is not None.
+			host: The sequencer's host name or IP address.  The default,
+				localhost, suits Subsequence running on the same machine.
+			port: The sequencer's UDP port.  The default is Subsequence's.
+			sampler_host: The sampler's host name or IP address.  When it is set,
+				each saved recording is also sent to it as `/sample/import`, so
+				the sampler can import the file.  None sends nothing to a sampler.
+			sampler_port: The sampler's UDP port, used only when `sampler_host` is
+				set.  The default is Subsample's.
 		"""
 
 		self._client = pythonosc.udp_client.SimpleUDPClient(host, port)
@@ -114,17 +129,23 @@ class OscEventSender:
 	) -> None:
 
 		"""
-		Scanner state-change callback: emit /radio/state to the sequencer.
+		Send `/radio/state` to the sequencer: the handler for `channel_state`
+		that `attach()` subscribes.
 
-		Wire format: [band, channel, is_active, snr_db, ctcss_hz, dcs_code].
-		OSC has no native null — ctcss_hz is 0.0 when no CTCSS tone was
-		detected (valid tones start at 67 Hz); dcs_code is 0 when no DCS
-		code was detected (valid codes are nonzero).
+		The message's arguments are `band_name`, `channel_index`, `is_active` as
+		1 or 0, `snr_db`, `ctcss_hz` and `dcs_code`, with 0.0 and 0 for no tone.
 
-		Runs on the scanner's event loop thread via
-		loop.call_soon_threadsafe(), so it must return quickly.  Send
-		failures are caught and logged here; anything else is a bug, and
-		propagates to the scanner, which logs it with its traceback.
+		It runs on the scanner's event loop, so it returns quickly.  A failed send
+		is caught and logged; anything else is a fault in Substation, and reaches
+		the scanner, which logs it with its traceback.
+
+		Args:
+			band_name: The band's name.
+			channel_index: The radio channel's index in the band.
+			is_active: Whether the radio channel turned ON.
+			snr_db: The radio channel's signal-to-noise ratio, in dB.
+			ctcss_hz: The CTCSS tone detected, in Hz, or None.
+			dcs_code: The DCS code detected, as its integer value, or None.
 		"""
 
 		# OSC has no native boolean — encode as 0 or 1.  Explicit ternary
@@ -160,16 +181,23 @@ class OscEventSender:
 	) -> None:
 
 		"""
-		Scanner recording-saved callback: emit /radio/recording to the
-		sequencer, and /sample/import to the sampler if one is configured.
+		Send `/radio/recording` to the sequencer, and `/sample/import` to the
+		sampler when one is set: the handler for `recording_saved` that `attach()`
+		subscribes.
 
-		Wire format for /radio/recording: [band, channel, file_path,
-		ctcss_hz, dcs_code].  Same sentinel convention as on_state_change
-		— 0.0 / 0 mean "no tone detected".  /sample/import wire format
-		is unchanged (just the file path); the sampler can parse the
-		recording's metadata if it needs the tone.
+		`/radio/recording`'s arguments are `band_name`, `channel_index`,
+		`file_path`, `ctcss_hz` and `dcs_code`, with 0.0 and 0 for no tone.
+		`/sample/import` carries only `file_path`; the sampler can read a tone from
+		the recording's metadata.
 
-		Runs on the scanner's event loop thread.
+		It runs on the scanner's event loop.
+
+		Args:
+			band_name: The band's name.
+			channel_index: The radio channel's index in the band.
+			file_path: The saved recording.
+			ctcss_hz: The CTCSS tone detected during the activation, in Hz, or None.
+			dcs_code: The DCS code detected, as its integer value, or None.
 		"""
 
 		path_str = str(file_path)
@@ -214,9 +242,11 @@ class OscEventSender:
 	def attach (self, scanner: "substation.scanner.RadioScanner") -> None:
 
 		"""
-		Register this sender as a listener on the scanner's event emitter.
+		Subscribe this sender to a scanner's `channel_state` and
+		`recording_saved` events, so each is sent as it happens.
 
-		Subscribes to channel_state and recording_saved events.
+		Args:
+			scanner: The scanner to send events from.
 		"""
 
 		scanner.on('channel_state', self._on_state_event)
