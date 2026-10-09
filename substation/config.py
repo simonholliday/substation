@@ -148,6 +148,12 @@ class ScannerConfig(pydantic.BaseModel):
 	slice up to a whole number of `sdr_device_sample_size` blocks, so at low
 	sample rates a slice can be longer than this. Shorter slices detect brief
 	transmissions sooner; longer slices use less CPU and more memory.
+
+	On an RTL-SDR, a slice of more than about 559,000 IQ samples, once rounded,
+	fails to stream with `Failed to submit transfer` until Linux's limit on USB
+	transfers, 16 MB by default, is raised: the driver keeps 15 transfers of one
+	slice each in flight. At 2.4 MHz with the default `sdr_device_sample_size`,
+	that is any slice longer than about 218 milliseconds.
 	"""
 
 	sample_queue_maxsize: int = pydantic.Field(default=200, gt=0)
@@ -190,7 +196,13 @@ class DynamicsCurveConfig(pydantic.BaseModel):
 	The dynamics curve is a dual-region expander applied to each audio sample: a
 	smoothstep S-curve reduces the level of quiet audio below the threshold,
 	which suppresses noise, and a sin² hump gently boosts audio above the
-	threshold, which gives voice more presence.
+	threshold, which gives voice more presence. It runs after noise reduction and
+	before the soft limiter. Audio at full scale passes through unchanged, and
+	the output never goes beyond full scale.
+
+	It works on each audio sample, with no attack or release, so very aggressive
+	settings can add mild harmonic distortion to audio near the threshold. If
+	you hear an edge on the loudest syllables, lower `cut_db` and `boost_db`.
 	"""
 
 	model_config = pydantic.ConfigDict(extra='forbid', use_attribute_docstrings=True)
@@ -211,13 +223,16 @@ class DynamicsCurveConfig(pydantic.BaseModel):
 	boost_db: float = pydantic.Field(default=1.5, ge=0.0)
 	"""
 	Largest gain boost in dB, at the peak of the boost hump. Set to 0 to turn the
-	boost region off.
+	boost region off. If the boost would take the loudest audio above 0 dBFS,
+	the scanner logs a warning at startup, and the curve is limited at full scale
+	instead of keeping its shape.
 	"""
 
 	floor_dbfs: float = pydantic.Field(default=-60.0, lt=0.0)
 	"""
 	Level in dBFS below which the output is silenced. Must be below
-	`threshold_dbfs`.
+	`threshold_dbfs`. If recordings sound completely silent, this is probably
+	set too high: try -60 or lower.
 	"""
 
 	cut_curve: float = pydantic.Field(default=0.5, ge=0.0, le=1.0)
@@ -306,11 +321,12 @@ class RecordingConfig(pydantic.BaseModel):
 	audio_format: typing.Literal['wav', 'flac'] = 'wav'
 	"""
 	File format for recordings. WAV is uncompressed and embeds Broadcast WAV
-	(BEXT) metadata with the time each recording starts, so audio editors such
-	as Audacity, Reaper, and iZotope RX place each recording on a timeline at
-	its real capture time. FLAC is lossless and smaller than WAV, by an amount that depends on the
-	band and the signal, but cannot carry BEXT timeline
-	metadata: the date, time, and frequency are stored as text tags.
+	(BEXT) metadata with the time each recording starts, so an audio editor that
+	reads it, such as Ardour or REAPER, can place each recording on a timeline at
+	the time it was made. Audacity plays the files but does not read that time.
+	FLAC is lossless and smaller than WAV, by an amount that depends on the band
+	and the signal, but cannot carry BEXT timeline metadata: the date, time, and
+	frequency are stored as text tags.
 	"""
 
 	audio_output_dir: str = './audio'
@@ -335,7 +351,9 @@ class RecordingConfig(pydantic.BaseModel):
 	"""
 	Drive of the soft limiter that keeps recordings from clipping. Higher values
 	compress loud signals more strongly; lower values leave more of the dynamic
-	range untouched.
+	range untouched. Whatever the drive, audio up to full scale comes out at no
+	more than 0.98 of it (-0.18 dBFS), which leaves room for the small overshoot
+	between audio samples that voice-band audio produces.
 	"""
 
 	noise_reduction_enabled: bool = pydantic.Field(default=True)
@@ -348,14 +366,19 @@ class RecordingConfig(pydantic.BaseModel):
 	"""
 	Time in milliseconds the scanner keeps recording after a radio channel's
 	signal drops below its off threshold. The hold is recorded, but does not
-	count towards `min_recording_seconds`.
+	count towards `min_recording_seconds`. On an AM band, a hold much longer than
+	the transmission can make `discard_empty_enabled` discard the recording,
+	because most of what it measures is then hiss.
 	"""
 
 	discard_empty_enabled: bool = pydantic.Field(default=True)
 	"""
-	Whether the scanner discards noise-only recordings, using spectral flatness
-	analysis. It rejects noise triggers before a recording starts, and discards
-	files that turn out to be mostly noise when they close. At present this
+	Whether the scanner rejects noise using spectral flatness analysis. When a
+	radio channel turns on, it rejects a noise trigger before the activation is
+	reported or a recording starts. This happens on every band with a
+	demodulator, including one that only detects, so its `channel_state` events
+	stay clean too. When a recording closes, it discards the file if it turns out
+	to be mostly noise. At present this
 	works only on AM bands: NFM, USB and LSB audio is filtered to the voice
 	band before it is measured, which makes hiss measure as peaked, so on those
 	bands hiss is kept.
@@ -710,10 +733,10 @@ class BandConfig(pydantic.BaseModel):
 	"""
 	SDR gain in dB, or `auto` for automatic gain control. `auto` is convenient,
 	but a manual gain, for example 20-40 dB on RTL-SDR, often works better. What
-	`auto` does depends on the receiver. An RTL-SDR, an AirSpy HF+, and any other
+	`auto` does depends on the receiver. An RTL-SDR, an Airspy HF+, and any other
 	SoapySDR device with automatic gain control use their own. The HackRF One
 	has none, so `auto` sets 32 dB on its LNA and 30 dB on its VGA, with a
-	warning. The AirSpy R2 reports automatic gain control that does not work,
+	warning. The Airspy R2 reports automatic gain control that does not work,
 	so `auto` sets 10 dB on its LNA, 5 dB on its mixer and 12 dB on its VGA,
 	27 dB in all. Any other SoapySDR device without automatic gain control is
 	set to the middle of its gain range, with a warning.
@@ -722,7 +745,7 @@ class BandConfig(pydantic.BaseModel):
 	sdr_gain_elements: dict[str, float] | None = pydantic.Field(default=None, examples=[{'LNA': 10, 'MIX': 5, 'VGA': 12}])
 	"""
 	Gain in dB for each gain stage, on devices with several, keyed by stage name:
-	the AirSpy R2, for example, has `LNA`, `MIX`, and `VGA`. Stage names depend on
+	the Airspy R2, for example, has `LNA`, `MIX`, and `VGA`. Stage names depend on
 	the device, and the scanner logs the available stages and their ranges at
 	startup. When set, it takes priority over `sdr_gain_db`.
 	"""

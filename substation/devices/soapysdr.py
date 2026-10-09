@@ -2,7 +2,7 @@
 SoapySDR device implementation for universal SDR hardware support.
 
 Wraps the SoapySDR API to support any device with a SoapySDR driver module,
-including AirSpy R2, AirSpy HF+ Discovery, and potentially any other
+including Airspy R2, Airspy HF+ Discovery, and potentially any other
 SoapySDR-compatible hardware.
 
 SoapySDR uses a synchronous readStream() API, so this implementation runs
@@ -40,12 +40,12 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 
 	# An SDR delivers IQ samples continuously, even from a silent band, so a
 	# stream that has delivered none for this long, in seconds, has lost its
-	# device.  Once an AirSpy HF+ is unplugged, its driver's reads time out
+	# device.  Once an Airspy HF+ is unplugged, its driver's reads time out
 	# for ever rather than failing.
 	NO_SAMPLES_TIMEOUT_SECONDS = 5.0
 
 	# How long close() waits, in seconds, for the driver to release the
-	# device.  The AirSpy HF+'s driver never returns once it is unplugged.
+	# device.  The Airspy HF+'s driver never returns once it is unplugged.
 	CLOSE_TIMEOUT_SECONDS = 5.0
 
 	def __init__ (self, driver: str, device_index: int = 0) -> None:
@@ -150,7 +150,7 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 
 		# AGC capability — note this is the device's advertised capability,
 		# not whether the Substation code path will actually use it (the
-		# AirSpy R2 reports True here but the auto-gain fallback logs its
+		# Airspy R2 reports True here but the auto-gain fallback logs its
 		# real behaviour at INFO at the gain-setter site).
 
 		has_agc = self._device.hasGainMode(self._soapy.SOAPY_SDR_RX, 0)
@@ -215,7 +215,7 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 		"""
 
 		# Check if the requested rate matches a supported rate.
-		# Some devices (e.g., AirSpy R2) only support discrete rates and
+		# Some devices (e.g., Airspy R2) only support discrete rates and
 		# may silently round to the nearest one without reporting the change.
 
 		supported = self._device.listSampleRates(self._soapy.SOAPY_SDR_RX, 0)
@@ -265,8 +265,8 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 
 		if value == 'auto' or value is None:
 
-			# AirSpy R2 special case.  SoapyAirspy reports hasGainMode(True)
-			# but the underlying AirSpy R2 hardware does not provide a true
+			# Airspy R2 special case.  SoapyAirspy reports hasGainMode(True)
+			# but the underlying Airspy R2 hardware does not provide a true
 			# closed-loop AGC: enabling AGC mode leaves gain at 0 dB and
 			# does not respond to incoming signal levels.  Real-world
 			# symptom is "zero recordings overnight" because the receiver
@@ -275,7 +275,7 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 			# To override, set sdr_gain_db or sdr_gain_elements explicitly.
 			if self._driver == 'airspy':
 				logger.info(
-					"AirSpy R2 'auto' gain requested, but the SoapyAirspy module's "
+					"Airspy R2 'auto' gain requested, but the SoapyAirspy module's "
 					"AGC mode is not effective.  Falling back to manual gain "
 					"(LNA=10, MIX=5, VGA=12, 27 dB total).  Override with "
 					"sdr_gain_db or sdr_gain_elements in config.yaml for finer control."
@@ -320,7 +320,7 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 		Set per-element gain for fine-tuned control of the device's gain stages.
 
 		This allows optimising the noise figure by setting each gain stage
-		independently (e.g., LNA, Mixer, VGA on AirSpy R2).
+		independently (e.g., LNA, Mixer, VGA on Airspy R2).
 
 		Args:
 			value: Mapping of gain element name to dB value.
@@ -381,7 +381,7 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 		Choose the best available stream format for maximum sample resolution.
 
 		Prefers CF32 (complex float32) for full resolution from oversampled
-		ADCs (e.g., AirSpy R2 achieves 16-bit effective from 12-bit ADC).
+		ADCs (e.g., Airspy R2 achieves 16-bit effective from 12-bit ADC).
 		Falls back to CS16 (complex int16) if CF32 is not available.
 
 		Returns:
@@ -410,7 +410,7 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 		normalisation factor.
 
 		Some SoapySDR modules deliver CF32 samples at a much smaller
-		scale than the expected [-1, 1] range (e.g., AirSpy HF+ peaks
+		scale than the expected [-1, 1] range (e.g., Airspy HF+ peaks
 		around 0.001–0.005).  This method reads warmup blocks and
 		measures the median RMS across blocks to determine the typical
 		noise floor level.
@@ -489,7 +489,7 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 			logger.debug(f"IQ sample scale: no normalisation needed (median RMS {median_rms:.6f})")
 			return 1.0
 
-		# Samples are very small (e.g., AirSpy HF+ with attenuation).
+		# Samples are very small (e.g., Airspy HF+ with attenuation).
 		# Scale so that the median noise floor RMS maps to ~0.01, which is
 		# typical for RTL-SDR and produces good demodulated audio levels.
 		# This branch stays at INFO because a non-trivial scale factor
@@ -555,7 +555,7 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 		self._device.activateStream(self._stream)
 
 		# Calibrate IQ scale from initial samples.  Some devices (e.g.,
-		# AirSpy HF+) deliver CF32 at a much smaller scale than [-1, 1].
+		# Airspy HF+) deliver CF32 at a much smaller scale than [-1, 1].
 		# See _calibrate_iq_scale for the median-RMS measurement strategy
 		# and the rationale for picking it over peak detection.
 		self._iq_scale = self._calibrate_iq_scale(self._stream, self._stream_format)
@@ -642,7 +642,7 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 
 				elif sr.ret == 0:
 
-					# No samples and no error code, which is what the AirSpy
+					# No samples and no error code, which is what the Airspy
 					# R2's driver returns once the device is unplugged.
 					# Retrying would wait on a device that has gone.
 					logger.error("The SDR returned no IQ samples and no error, so it has most likely been unplugged")
@@ -771,7 +771,7 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 
 		Stops any active streaming, then deactivates and closes the stream
 		and releases the SoapySDR device handle on a separate thread.  Once
-		an AirSpy HF+ has been unplugged, its driver never returns from that
+		an Airspy HF+ has been unplugged, its driver never returns from that
 		teardown, and waiting on it here would stop the scan from ever
 		exiting, even on Ctrl+C.  So close() waits CLOSE_TIMEOUT_SECONDS,
 		and then carries on without it.

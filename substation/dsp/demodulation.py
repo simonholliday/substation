@@ -46,7 +46,7 @@ def _pick_if_decimation (sample_rate: float, audio_sample_rate: int, oversample:
 	   resample_poly implementation.
 
 	2. **Any integer divisor of sample_rate.**  Falls back when no clean
-	   chain exists (e.g. AirSpy R2 at 2.5 MHz → 16 kHz: 2500000 = 2^5·5^7
+	   chain exists (e.g. Airspy R2 at 2.5 MHz → 16 kHz: 2500000 = 2^5·5^7
 	   and 16000 = 2^7·5^3 have incompatible power-of-two factors, so no
 	   integer divisor of 2500000 is also a multiple of 16000).  The
 	   rational-resample path still kicks in here; it's the lesser evil
@@ -493,7 +493,7 @@ def demodulate_nfm (
 	# the input sample rate AND keeps the IF at roughly NFM_IF_OVERSAMPLE x
 	# the audio rate.  Picking a clean divisor here is essential — see the
 	# _pick_if_decimation helper for the gory details.  Without this, a
-	# 2.5 MHz AirSpy R2 → 16 kHz audio path would round to 39, producing
+	# 2.5 MHz Airspy R2 → 16 kHz audio path would round to 39, producing
 	# if_rate=64103 (coprime with 2500000) and a 50 million tap rational
 	# resampling filter that locks the system up.
 	if_decimation = _pick_if_decimation(
@@ -619,7 +619,7 @@ def demodulate_am (
 
 	The IF decimation step keeps the resampling chain manageable: without
 	it, sample rates that don't have a small-gcd ratio with the audio rate
-	(e.g. AirSpy R2 at 2.5 MHz → 16 kHz audio) would force decimate_audio
+	(e.g. Airspy R2 at 2.5 MHz → 16 kHz audio) would force decimate_audio
 	into a multi-million-tap rational resampler.  See _pick_if_decimation
 	for the helper that chooses a decimation factor.
 	"""

@@ -25,6 +25,13 @@ scanner:
     # each slice up to a whole number of `sdr_device_sample_size` blocks, so at
     # low sample rates a slice can be longer than this. Shorter slices detect
     # brief transmissions sooner; longer slices use less CPU and more memory.
+    #
+    # On an RTL-SDR, a slice of more than about 559,000 IQ samples, once
+    # rounded, fails to stream with `Failed to submit transfer` until Linux's
+    # limit on USB transfers, 16 MB by default, is raised: the driver keeps 15
+    # transfers of one slice each in flight. At 2.4 MHz with the default
+    # `sdr_device_sample_size`, that is any slice longer than about 218
+    # milliseconds.
     band_time_slice_ms: 200
 
     # Number of slices of IQ samples the scanner holds while processing catches
@@ -75,12 +82,12 @@ recording:
     audio_sample_rate: 16000
 
     # File format for recordings. WAV is uncompressed and embeds Broadcast WAV
-    # (BEXT) metadata with the time each recording starts, so audio editors
-    # such as Audacity, Reaper, and iZotope RX place each recording on a
-    # timeline at its real capture time. FLAC is lossless and smaller than WAV,
-    # by an amount that depends on the band and the signal, but cannot carry
-    # BEXT timeline metadata: the date, time, and frequency are stored as text
-    # tags.
+    # (BEXT) metadata with the time each recording starts, so an audio editor
+    # that reads it, such as Ardour or REAPER, can place each recording on a
+    # timeline at the time it was made. Audacity plays the files but does not
+    # read that time. FLAC is lossless and smaller than WAV, by an amount that
+    # depends on the band and the signal, but cannot carry BEXT timeline
+    # metadata: the date, time, and frequency are stored as text tags.
     audio_format: wav
 
     # Directory where the scanner saves recordings, in a folder for each date
@@ -98,7 +105,9 @@ recording:
 
     # Drive of the soft limiter that keeps recordings from clipping. Higher
     # values compress loud signals more strongly; lower values leave more of
-    # the dynamic range untouched.
+    # the dynamic range untouched. Whatever the drive, audio up to full scale
+    # comes out at no more than 0.98 of it (-0.18 dBFS), which leaves room for
+    # the small overshoot between audio samples that voice-band audio produces.
     soft_limit_drive: 1.25
 
     # Whether the scanner applies spectral-subtraction noise reduction to
@@ -107,15 +116,20 @@ recording:
 
     # Time in milliseconds the scanner keeps recording after a radio channel's
     # signal drops below its off threshold. The hold is recorded, but does not
-    # count towards `min_recording_seconds`.
+    # count towards `min_recording_seconds`. On an AM band, a hold much longer
+    # than the transmission can make `discard_empty_enabled` discard the
+    # recording, because most of what it measures is then hiss.
     recording_hold_time_ms: 500
 
-    # Whether the scanner discards noise-only recordings, using spectral
-    # flatness analysis. It rejects noise triggers before a recording starts,
-    # and discards files that turn out to be mostly noise when they close. At
-    # present this works only on AM bands: NFM, USB and LSB audio is filtered
-    # to the voice band before it is measured, which makes hiss measure as
-    # peaked, so on those bands hiss is kept.
+    # Whether the scanner rejects noise using spectral flatness analysis. When
+    # a radio channel turns on, it rejects a noise trigger before the
+    # activation is reported or a recording starts. This happens on every band
+    # with a demodulator, including one that only detects, so its
+    # `channel_state` events stay clean too. When a recording closes, it
+    # discards the file if it turns out to be mostly noise. At present this
+    # works only on AM bands: NFM, USB and LSB audio is filtered to the voice
+    # band before it is measured, which makes hiss measure as peaked, so on
+    # those bands hiss is kept.
     discard_empty_enabled: true
 
     # Shortest transmission the scanner keeps a recording of, in seconds, not
@@ -157,11 +171,14 @@ recording:
         cut_db: 6
 
         # Largest gain boost in dB, at the peak of the boost hump. Set to 0 to
-        # turn the boost region off.
+        # turn the boost region off. If the boost would take the loudest audio
+        # above 0 dBFS, the scanner logs a warning at startup, and the curve is
+        # limited at full scale instead of keeping its shape.
         boost_db: 1.5
 
         # Level in dBFS below which the output is silenced. Must be below
-        # `threshold_dbfs`.
+        # `threshold_dbfs`. If recordings sound completely silent, this is
+        # probably set too high: try -60 or lower.
         floor_dbfs: -60
 
         # Where the cut S-curve is steepest. 0.5 is symmetric; lower values
@@ -355,9 +372,9 @@ osc:
 #     SDR gain in dB, or `auto` for automatic gain control. `auto` is
 #     convenient, but a manual gain, for example 20-40 dB on RTL-SDR, often
 #     works better. What `auto` does depends on the receiver. An RTL-SDR, an
-#     AirSpy HF+, and any other SoapySDR device with automatic gain control use
+#     Airspy HF+, and any other SoapySDR device with automatic gain control use
 #     their own. The HackRF One has none, so `auto` sets 32 dB on its LNA and
-#     30 dB on its VGA, with a warning. The AirSpy R2 reports automatic gain
+#     30 dB on its VGA, with a warning. The Airspy R2 reports automatic gain
 #     control that does not work, so `auto` sets 10 dB on its LNA, 5 dB on its
 #     mixer and 12 dB on its VGA, 27 dB in all. Any other SoapySDR device
 #     without automatic gain control is set to the middle of its gain range,
@@ -365,7 +382,7 @@ osc:
 #
 #   sdr_gain_elements: null
 #     Gain in dB for each gain stage, on devices with several, keyed by stage
-#     name: the AirSpy R2, for example, has `LNA`, `MIX`, and `VGA`. Stage
+#     name: the Airspy R2, for example, has `LNA`, `MIX`, and `VGA`. Stage
 #     names depend on the device, and the scanner logs the available stages and
 #     their ranges at startup. When set, it takes priority over `sdr_gain_db`.
 #     Example: {LNA: 10, MIX: 5, VGA: 12}
@@ -495,7 +512,7 @@ band_defaults:
         snr_threshold_db: 3.5
         sdr_gain_db: 36
 
-    # HF / shortwave on AirSpy HF+ Discovery.
+    # HF / shortwave on Airspy HF+ Discovery.
     # Each HF band sets its own reception_class, and its own modulation
     # (USB / LSB / AM) explicitly, because both depend on the band's content:
     #   - 80m, 40m  → LSB by amateur convention (below 10 MHz)
@@ -526,10 +543,12 @@ band_defaults:
 bands:
 
     # Practical maximum sample rates:
-    # - RTL-SDR Blog V4: 2.4MHz
-    # - HackRF One: 16MHz
-    # - AirSpy R2: 10MHz
-    # - AirSpy HF+ Discovery: 912kHz
+    # - RTL-SDR Blog V4: 2.4 MHz, or 2.56 MHz by its datasheet, which has not
+    #   yet been tested with Substation
+    # - HackRF One: 16 MHz
+    # - Airspy R2: 10 MHz, of which Airspy gives up to 9 MHz as usable
+    # - Airspy HF+ Discovery: up to 912 kHz, depending on its firmware; Airspy
+    #   gives 660 kHz free of aliases and images at 768 kHz
 
     pmr:
         type: PMR
@@ -551,7 +570,9 @@ bands:
         freq_end: 137.0e+6
         sample_rate: 12.5e+6
 
-    # Specific Bristol/Local Area (Faster scanning)
+    # Specific Bristol/Local Area (Faster scanning).  Its excluded radio
+    # channels and its Airspy HF+ overrides were tuned for one location and
+    # one receiver, so review them for yours.
 
     air_civil_bristol:
         type: AIR
@@ -560,7 +581,7 @@ bands:
         sample_rate: 1.024e6
         exclude_channel_indices: [26, 27, 34, 35]
         device_overrides:
-            # AirSpy HF+ Discovery - sensitive narrow-band receiver.
+            # Airspy HF+ Discovery - sensitive narrow-band receiver.
             # The HF+ is sensitive enough that the standard SNR threshold
             # catches stationary noise as well as real signals;
             # activation_variance_db filters out those noise triggers.
@@ -848,7 +869,7 @@ bands:
         sample_rate: 2.4e+6
 
     # -----------------------------------------------------------------
-    # HF / Shortwave (for AirSpy HF+ Discovery or similar)
+    # HF / Shortwave (for Airspy HF+ Discovery or similar)
     # -----------------------------------------------------------------
     #
     # Amateur voice, which records out of the box, and numbers stations,
@@ -869,7 +890,7 @@ bands:
     # SAMPLE RATES: the values below are deliberately wide enough to
     # cover the full band of interest in a single tune.  If CPU load is
     # a concern, narrowing each band's freq_start/freq_end and dropping
-    # to a smaller AirSpy HF+ supported rate (192 / 228 / 384 / 456 /
+    # to a smaller Airspy HF+ supported rate (192 / 228 / 384 / 456 /
     # 650 / 768 / 912 kHz) would reduce per-slice work proportionally.
 
     # 80m amateur phone - European LSB voice, many languages, night band.

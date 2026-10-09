@@ -36,12 +36,15 @@ def create_device (device_type: str, device_index: int = 0, **kwargs: typing.Any
 	- HackRF (aliases: 'hackrf', 'hackrf-one', 'hackrfone')
 	  Wideband transceiver, 1 MHz - 6 GHz, 2-20 MHz sample rate
 
-	- AirSpy R2 (aliases: 'airspy', 'airspy-r2', 'airspyr2')
-	  High-dynamic-range receiver, 24 MHz - 1.8 GHz, 2.5/10 MHz sample rate
+	- Airspy R2 (aliases: 'airspy', 'airspy-r2', 'airspyr2')
+	  High-dynamic-range receiver, 24 MHz - 1.7 GHz, 2.5/10 MHz sample rate,
+	  up to 9 MHz usable, by Airspy's figures
 	  Requires: soapysdr-module-airspy (system package)
 
-	- AirSpy HF+ Discovery (aliases: 'airspyhf', 'airspy-hf', 'airspyhf+')
-	  HF/VHF receiver, 0.5 kHz - 31 MHz + 60-260 MHz, up to 768 kHz BW
+	- Airspy HF+ Discovery (aliases: 'airspyhf', 'airspy-hf', 'airspyhf+')
+	  HF/VHF receiver, 0.5 kHz - 31 MHz + 64-260 MHz, sample rates up to
+	  912 kHz depending on firmware, and 660 kHz free of aliases and images
+	  at 768 kHz, by Airspy's figures
 	  Requires: soapysdr-module-airspyhf (system package)
 
 	- Generic SoapySDR (prefix: 'soapy:<driver>')
@@ -74,7 +77,7 @@ def create_device (device_type: str, device_index: int = 0, **kwargs: typing.Any
 
 	# Lazy imports: only load the binding for the requested device type.
 
-	# SoapySDR-based devices (AirSpy R2, AirSpy HF+, generic).  Checked
+	# SoapySDR-based devices (Airspy R2, Airspy HF+, generic).  Checked
 	# first, because 'soapy:rtlsdr' and 'soapy:hackrf' name a family that
 	# also has a native wrapper below.
 	if device_type.lower().startswith('soapy:') or family in ('airspy', 'airspyhf'):

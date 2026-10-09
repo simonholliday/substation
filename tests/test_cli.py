@@ -9,6 +9,7 @@ import yaml
 
 import substation.cli
 import substation.config
+import substation.device_families
 
 
 class TestListBands:
@@ -120,6 +121,15 @@ class TestParser:
 		assert "Exit status:" in text
 		for status in ("  0  The scan ended", "  1  A scan stopped because of an error", "  2  The command line was not understood"):
 			assert status in text
+
+	def test_the_device_type_help_names_every_spelling_it_accepts (self):
+		"""The README's device cards listed the other spellings, and the help, which the command-line reference prints, did not."""
+		action = next(action for action in substation.cli.parser()._actions if "--device-type" in action.option_strings)
+		named = {word.strip(".,()") for word in action.help.split()}
+
+		for spelling in substation.device_families.DEVICE_FAMILY_ALIASES:
+			if spelling != "file":
+				assert spelling in named, spelling
 
 	def test_an_unknown_option_exits_2 (self, capsys):
 		"""The help says an option it does not recognise exits 2."""

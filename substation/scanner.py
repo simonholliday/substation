@@ -1185,7 +1185,7 @@ class RadioScanner:
 		self.sdr.sample_rate = self.sample_rate
 
 		# Use the actual rate the device applied (may differ from requested
-		# for devices with discrete supported rates, e.g., AirSpy HF+).
+		# for devices with discrete supported rates, e.g., Airspy HF+).
 		# The getter is typed as `float | None` on BaseDevice to allow a
 		# "not yet set" state before open(), but we've just assigned to it
 		# so a None here would indicate a driver bug.  Narrow via a local.
@@ -1211,7 +1211,7 @@ class RadioScanner:
 			self.center_freq = device_center
 
 		# Per-element gain takes priority over overall gain for devices with
-		# multiple gain stages (e.g., AirSpy R2: LNA, Mixer, VGA).  Only the
+		# multiple gain stages (e.g., Airspy R2: LNA, Mixer, VGA).  Only the
 		# SoapySDR wrapper has them; other devices use sdr_gain_db, and the
 		# log says which happened.
 		gain_elements = self.band_config.sdr_gain_elements
@@ -2084,7 +2084,7 @@ class RadioScanner:
 		try:
 			# Phase 1: sanity check for ADC saturation.
 			# The threshold is scaled by the device's calibration factor —
-			# some SDR wrappers (notably the SoapySDR AirSpy HF+ path)
+			# some SDR wrappers (notably the SoapySDR Airspy HF+ path)
 			# multiply raw IQ samples by a normalisation factor so that
 			# weak signals fall in a sensible amplitude range.  Without
 			# this scaling, the 0.95 threshold would treat ordinary

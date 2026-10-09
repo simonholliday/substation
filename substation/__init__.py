@@ -6,7 +6,7 @@ A Python application for scanning and recording activity on radio bands.
 Supported hardware:
 - RTL-SDR (native driver)
 - HackRF One (native driver)
-- AirSpy R2, AirSpy HF+ Discovery, and any other SoapySDR-supported
+- Airspy R2, Airspy HF+ Discovery, and any other SoapySDR-supported
   device (via the SoapySDR wrapper)
 
 Features:

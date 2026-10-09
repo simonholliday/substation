@@ -3,7 +3,7 @@ RTL-SDR device implementation.
 
 RTL-SDR is a low-cost SDR receiver based on TV tuner dongles (RTL2832U chip).
 Typical specifications:
-- Frequency range: 24 MHz - 1766 MHz (with gaps) on the tuner alone.  The
+- Frequency range: 24 MHz - 1766 MHz on the tuner alone.  The
   RTL-SDR Blog V4 reaches down to 500 kHz through its HF upconverter, and the
   RTL-SDR Blog driver switches a V3 into direct sampling below 24 MHz.  HF
   has not yet been tested with Substation.

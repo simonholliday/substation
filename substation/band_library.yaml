@@ -64,7 +64,7 @@ band_defaults:
         snr_threshold_db: 3.5
         sdr_gain_db: 36
 
-    # HF / shortwave on AirSpy HF+ Discovery.
+    # HF / shortwave on Airspy HF+ Discovery.
     # Each HF band sets its own reception_class, and its own modulation
     # (USB / LSB / AM) explicitly, because both depend on the band's content:
     #   - 80m, 40m  → LSB by amateur convention (below 10 MHz)
@@ -95,10 +95,12 @@ band_defaults:
 bands:
 
     # Practical maximum sample rates:
-    # - RTL-SDR Blog V4: 2.4MHz
-    # - HackRF One: 16MHz
-    # - AirSpy R2: 10MHz
-    # - AirSpy HF+ Discovery: 912kHz
+    # - RTL-SDR Blog V4: 2.4 MHz, or 2.56 MHz by its datasheet, which has not
+    #   yet been tested with Substation
+    # - HackRF One: 16 MHz
+    # - Airspy R2: 10 MHz, of which Airspy gives up to 9 MHz as usable
+    # - Airspy HF+ Discovery: up to 912 kHz, depending on its firmware; Airspy
+    #   gives 660 kHz free of aliases and images at 768 kHz
 
     pmr:
         type: PMR
@@ -120,7 +122,9 @@ bands:
         freq_end: 137.0e+6
         sample_rate: 12.5e+6
 
-    # Specific Bristol/Local Area (Faster scanning)
+    # Specific Bristol/Local Area (Faster scanning).  Its excluded radio
+    # channels and its Airspy HF+ overrides were tuned for one location and
+    # one receiver, so review them for yours.
 
     air_civil_bristol:
         type: AIR
@@ -129,7 +133,7 @@ bands:
         sample_rate: 1.024e6
         exclude_channel_indices: [26, 27, 34, 35]
         device_overrides:
-            # AirSpy HF+ Discovery - sensitive narrow-band receiver.
+            # Airspy HF+ Discovery - sensitive narrow-band receiver.
             # The HF+ is sensitive enough that the standard SNR threshold
             # catches stationary noise as well as real signals;
             # activation_variance_db filters out those noise triggers.
@@ -417,7 +421,7 @@ bands:
         sample_rate: 2.4e+6
 
     # -----------------------------------------------------------------
-    # HF / Shortwave (for AirSpy HF+ Discovery or similar)
+    # HF / Shortwave (for Airspy HF+ Discovery or similar)
     # -----------------------------------------------------------------
     #
     # Amateur voice, which records out of the box, and numbers stations,
@@ -438,7 +442,7 @@ bands:
     # SAMPLE RATES: the values below are deliberately wide enough to
     # cover the full band of interest in a single tune.  If CPU load is
     # a concern, narrowing each band's freq_start/freq_end and dropping
-    # to a smaller AirSpy HF+ supported rate (192 / 228 / 384 / 456 /
+    # to a smaller Airspy HF+ supported rate (192 / 228 / 384 / 456 /
     # 650 / 768 / 912 kHz) would reduce per-slice work proportionally.
 
     # 80m amateur phone - European LSB voice, many languages, night band.

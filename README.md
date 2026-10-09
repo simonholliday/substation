@@ -35,7 +35,7 @@ High-sensitivity receivers often trigger on noise that crosses the SNR threshold
 
 Each modulation type has a dedicated, stateful demodulator that maintains phase and filter continuity across processing blocks, eliminating the pops and glitches that occur at block boundaries in stateless designs.
 
-**NFM** - the most common mode for PMR, amateur, and public safety - runs through a complete processing chain: IF decimation, polar discriminator, Hampel impulse blanker (suppresses glitches from IQ samples dropped over USB by devices like the AirSpy R2), 300µs de-emphasis, DC blocking, voice bandpass filter (300-3400 Hz), and CTCSS/DCS subaudible tone detection. The voice bandpass reduces subaudible signalling in the recording: the lowest CTCSS tones strongly, and the highest, near 250 Hz, only slightly, so they can remain faintly audible. A Goertzel detector looks for CTCSS tones and a Golay decoder reads DCS codes. A tone found is embedded in the file's metadata and delivered live on the scanner's `channel_state` event (as `ctcss_hz` / `dcs_code` kwargs), so OSC or dashboard consumers see the tone as a property of the activation, with no file parsing required. Tone detection has not yet been thoroughly tested with real radios, so treat a reported tone as a guide rather than a certainty, and the absence of one as inconclusive.
+**NFM** - the most common mode for PMR, amateur, and public safety - runs through a complete processing chain: IF decimation, polar discriminator, Hampel impulse blanker (suppresses glitches from IQ samples dropped over USB by devices like the Airspy R2), 300µs de-emphasis, DC blocking, voice bandpass filter (300-3400 Hz), and CTCSS/DCS subaudible tone detection. The voice bandpass reduces subaudible signalling in the recording: the lowest CTCSS tones strongly, and the highest, near 250 Hz, only slightly, so they can remain faintly audible. A Goertzel detector looks for CTCSS tones and a Golay decoder reads DCS codes. A tone found is embedded in the file's metadata and delivered live on the scanner's `channel_state` event (as `ctcss_hz` / `dcs_code` kwargs), so OSC or dashboard consumers see the tone as a property of the activation, with no file parsing required. Tone detection has not yet been thoroughly tested with real radios, so treat a reported tone as a guide rather than a certainty, and the absence of one as inconclusive.
 
 **AM** - used for civil and military airband - uses envelope detection with an AGC that follows the audio's peaks, rising at once and releasing slowly, so it adapts to varying signal strength without pumping or clipping.
 
@@ -49,7 +49,7 @@ Each recording passes through several stages between demodulation and disk:
 - **Carrier transient trimming** (optional) detects and removes the sharp clicks that AM transmitters produce at key-on and key-off, using shape-based detection that distinguishes carrier transients from voice plosives.
 - **Half-cosine fades** at recording boundaries prevent clicks from sudden onset or cutoff.
 - **Soft limiting** via a tanh waveshaper rounds off peaks as they near full scale: audio up to full scale comes out at no more than 0.98 of it (-0.18 dBFS), leaving headroom for the small overshoot between audio samples that voice-band audio produces.
-- **Broadcast WAV metadata** (BEXT, EBU Tech 3285) embeds each recording's start time, frequency, and modulation directly in the file, with any CTCSS tone or DCS code detected. Audio editors like Audacity, Reaper, and iZotope RX can place recordings on a timeline at their real capture time.
+- **Broadcast WAV metadata** (BEXT, EBU Tech 3285) embeds each recording's start time, frequency, and modulation directly in the file, with any CTCSS tone or DCS code detected. An audio editor that reads it, such as Ardour or REAPER, can place each recording on a timeline at the time it was made; Audacity plays the files but does not read that time.
 - **FLAC output** (optional) compresses recordings losslessly, to a size that depends on the band and the signal, with metadata stored as Vorbis comments. Its compression level was chosen by encoding real PMR recordings on a Raspberry Pi at every level: the highest levels gave almost no further reduction and cost noticeably more CPU time.
 
 ### Efficiency
@@ -68,8 +68,8 @@ To use this software, a compatible Software Defined Radio (SDR) USB device is re
 | :---------------------- | :----------------------------- | :------- | :----- | :------------------------ |
 | RTL-SDR Blog V4 / V3    | 500 kHz - 1.766 GHz            | 2.56 MHz | 8-bit  | General VHF/UHF, low cost |
 | HackRF One              | 1 MHz - 6 GHz                  | 20 MHz   | 8-bit  | Wideband monitoring       |
-| AirSpy R2               | 24 MHz - 1.8 GHz               | 10 MHz   | 12-bit | High-quality VHF/UHF      |
-| AirSpy HF+ Discovery    | 0.5 kHz - 31 MHz, 64 - 260 MHz | 912 kHz  | 18-bit | HF / VHF precision        |
+| Airspy R2               | 24 MHz - 1.7 GHz               | 9 MHz    | 12-bit | High-quality VHF/UHF      |
+| Airspy HF+ Discovery    | 0.5 kHz - 31 MHz, 64 - 260 MHz | 660 kHz  | 18-bit | HF / VHF precision        |
 
 Any other device with a SoapySDR driver module installed can be used too - see [Other SoapySDR devices](#other-soapysdr-devices) below.
 
@@ -79,7 +79,7 @@ A high-quality, low-cost general-purpose receiver. The natural starting point fo
 
 | Spec               | Value                                                  |
 | :----------------- | :----------------------------------------------------- |
-| Frequency range    | 500 kHz - 1.766 GHz (with gaps), by the V4's datasheet; below 24 MHz not yet tested with Substation |
+| Frequency range    | 500 kHz - 1.766 GHz, by the V4's datasheet; below 24 MHz not yet tested with Substation |
 | Max bandwidth      | 2.56 MHz stable, by the V4's datasheet (3.2 MHz with dropped IQ samples) |
 | Sample rates       | Continuous, up to 2.56 MHz (typical: 2.048 MHz)        |
 | ADC resolution     | 8-bit                                                  |
@@ -122,7 +122,7 @@ air_civil_bristol:
         activation_variance_db: 3.0
 ```
 
-The excluded radio channels and the AirSpy HF+ overrides were both tuned for one location and one receiver, so review them for yours. `device_overrides` applies only when that device is selected, so an RTL-SDR uses the base values.
+The excluded radio channels and the Airspy HF+ overrides were both tuned for one location and one receiver, so review them for yours. `device_overrides` applies only when that device is selected, so an RTL-SDR uses the base values.
 
 **References**
 - Manufacturer page: [https://www.rtl-sdr.com/about-rtl-sdr/](https://www.rtl-sdr.com/about-rtl-sdr/)
@@ -176,14 +176,14 @@ Scanning a band this wide in real time also depends on the computer keeping up w
 - Manufacturer page: [https://greatscottgadgets.com/hackrf/one/](https://greatscottgadgets.com/hackrf/one/)
 - Python binding: [https://pypi.org/project/python-hackrf/](https://pypi.org/project/python-hackrf/)
 
-### AirSpy R2
+### Airspy R2
 
-A high-dynamic-range VHF/UHF receiver with a 12-bit ADC (≈16-bit effective from oversampling) and three independently tuneable gain stages. Its 10 MHz of bandwidth covers a wide band in a single tune.
+A high-dynamic-range VHF/UHF receiver with a 12-bit ADC (≈16-bit effective from oversampling) and three independently tuneable gain stages. It takes 10 million IQ samples a second, of which Airspy gives up to 9 MHz as usable bandwidth, so it covers a wide band in a single tune.
 
 | Spec               | Value                                                                         |
 | :----------------- | :---------------------------------------------------------------------------- |
-| Frequency range    | 24 MHz - 1.8 GHz                                                              |
-| Max bandwidth      | 10 MHz                                                                        |
+| Frequency range    | 24 MHz - 1.7 GHz, by Airspy's figures                                         |
+| Max bandwidth      | Up to 9 MHz usable, at 10 million IQ samples a second, by Airspy's figures    |
 | Sample rates       | Discrete: 2.5 MHz or 10 MHz                                                   |
 | ADC resolution     | 12-bit (≈16-bit effective from oversampling)                                  |
 | Gain architecture  | LNA + Mixer + VGA (per-element control via `sdr_gain_elements`)               |
@@ -192,7 +192,7 @@ A high-dynamic-range VHF/UHF receiver with a 12-bit ADC (≈16-bit effective fro
 | `--device-type`    | `airspy`, `airspy-r2`, `airspyr2`                                             |
 | Best for           | High-quality VHF/UHF, wide single-band capture, weak-signal work              |
 
-**Setup** - see [INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md#4-soapysdr--airspy-support) for the SoapySDR core and the AirSpy module. The Python venv **must** be created with `--system-site-packages` so it can access the system-installed SoapySDR Python bindings.
+**Setup** - see [INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md#4-soapysdr--airspy-support) for the SoapySDR core and the Airspy module. The Python venv **must** be created with `--system-site-packages` so it can access the system-installed SoapySDR Python bindings.
 
 **Recommended starting config**
 - `snr_threshold_db: 6` (the higher sensitivity makes the RTL default 4.5 dB too noisy)
@@ -231,14 +231,14 @@ substation --band pmr_airspy --device-type airspy --device-index 0
 - SoapySDR driver: [https://github.com/pothosware/SoapyAirspy](https://github.com/pothosware/SoapyAirspy)
 - SoapySDR project: [https://github.com/pothosware/SoapySDR](https://github.com/pothosware/SoapySDR)
 
-### AirSpy HF+ Discovery
+### Airspy HF+ Discovery
 
-A precision HF and lower-VHF receiver, with high sensitivity and dynamic range in its bands. It is not a wideband scanner: its maximum bandwidth is 912 kHz. It suits HF listening, weak-signal work, and narrow-band airband and amateur scanning.
+A precision HF and lower-VHF receiver, with high sensitivity and dynamic range in its bands. It is not a wideband scanner: Airspy gives it 660 kHz free of aliases and images, at 768 thousand IQ samples a second. It suits HF listening, weak-signal work, and narrow-band airband and amateur scanning.
 
 | Spec               | Value                                                                              |
 | :----------------- | :--------------------------------------------------------------------------------- |
 | Frequency range    | 0.5 kHz - 31 MHz, 64 - 260 MHz (two separate bands, not contiguous)                |
-| Max bandwidth      | 912 kHz                                                                            |
+| Max bandwidth      | 660 kHz free of aliases and images at 768 thousand IQ samples a second, by Airspy's figures; up to 912 thousand a second, depending on firmware |
 | Sample rates       | Discrete: typically 0.192, 0.228, 0.384, 0.456, 0.650, 0.768, 0.912 MHz (see log)  |
 | ADC resolution     | 18-bit                                                                             |
 | Gain architecture  | LNA on/off (0 or +6 dB) + RF *attenuator* (-48 to 0 dB)                            |
@@ -247,7 +247,7 @@ A precision HF and lower-VHF receiver, with high sensitivity and dynamic range i
 | `--device-type`    | `airspyhf`, `airspy-hf`, `airspyhf+`                                               |
 | Best for           | HF and lower-VHF precision work, weak-signal listening, narrow-band scanning       |
 
-**Setup** - see [INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md#4-soapysdr--airspy-support). On Raspberry Pi OS the `soapysdr-module-airspyhf` package may not be available in the distro repos; the install guide covers building it from source. As with the AirSpy R2, the venv **must** be created with `--system-site-packages`.
+**Setup** - see [INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md#4-soapysdr--airspy-support). On Raspberry Pi OS the `soapysdr-module-airspyhf` package may not be available in the distro repos; the install guide covers building it from source. As with the Airspy R2, the venv **must** be created with `--system-site-packages`.
 
 **Recommended starting config**
 - `snr_threshold_db: 6` (essential - the device is sensitive enough that the RTL default 4.5 dB triggers on near-noise)
@@ -299,7 +299,7 @@ Any device with a SoapySDR driver module installed can be used via `--device-typ
 SoapySDRUtil --find
 ```
 
-The same `sdr_gain_db`, `sdr_gain_elements`, and `sdr_device_settings` config keys apply. The wrapper logs the available gain elements, sample rates, antennas, and device-specific settings reported by the driver at DEBUG level on startup - run with `--log-level DEBUG` when configuring a new device and use that capability dump to guide your configuration in the same way as the AirSpy cards above.
+The same `sdr_gain_db`, `sdr_gain_elements`, and `sdr_device_settings` config keys apply. The wrapper logs the available gain elements, sample rates, antennas, and device-specific settings reported by the driver at DEBUG level on startup - run with `--log-level DEBUG` when configuring a new device and use that capability dump to guide your configuration in the same way as the Airspy cards above.
 
 **Reference:** [SoapySDR project](https://github.com/pothosware/SoapySDR)
 
@@ -560,7 +560,7 @@ A key that names no device family the scanner knows logs a warning at startup, i
 
 **Supported override fields:** `sample_rate`, `sdr_gain_db`, `sdr_gain_elements`, `sdr_device_settings`, `snr_threshold_db`, `activation_variance_db`.
 
-The default config ships with some device overrides already set - for example, `air_civil_bristol` has an `airspyhf` override with tuning appropriate for the AirSpy HF+ Discovery. You can add your own overrides in `config.yaml` using the standard inheritance mechanism:
+The default config ships with some device overrides already set - for example, `air_civil_bristol` has an `airspyhf` override with tuning appropriate for the Airspy HF+ Discovery. You can add your own overrides in `config.yaml` using the standard inheritance mechanism:
 
 ```yaml
 # config.yaml - user overrides only
@@ -572,14 +572,14 @@ bands:
         sdr_gain_elements: {LNA: 14, MIX: 5, VGA: 12}
 ```
 
-## SoapySDR installation (AirSpy and other devices)
+## SoapySDR installation (Airspy and other devices)
 
-AirSpy devices, and any other `soapy:<driver>` device, need SoapySDR installed at the system level, with a module for each kind of device. The Python virtual environment **must** then be created with `--system-site-packages`, so that it can see SoapySDR's system-installed bindings. The steps for Debian, Ubuntu, Raspberry Pi OS, and Fedora are in [section 4 of INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md#4-soapysdr--airspy-support).
+Airspy devices, and any other `soapy:<driver>` device, need SoapySDR installed at the system level, with a module for each kind of device. The Python virtual environment **must** then be created with `--system-site-packages`, so that it can see SoapySDR's system-installed bindings. The steps for Debian, Ubuntu, Raspberry Pi OS, and Fedora are in [section 4 of INSTALL.md](https://github.com/simonholliday/substation/blob/main/INSTALL.md#4-soapysdr--airspy-support).
 
 ## Recording metadata
 Each recording embeds metadata directly in the audio file.
 
-**WAV format** (default): Industry-standard Broadcast WAV (BWF/BEXT, EBU Tech 3285) with the time each recording starts, at the transmission's onset. Audio editors like Audacity, Reaper, and iZotope RX can place recordings on a timeline at their real capture time. These are standard `.wav` files that play in any audio player.
+**WAV format** (default): Industry-standard Broadcast WAV (BWF/BEXT, EBU Tech 3285) with the time each recording starts, at the transmission's onset. An audio editor that reads it, such as Ardour or REAPER, can place each recording on a timeline at the time it was made; Audacity plays the files but does not read that time. These are standard `.wav` files that play in any audio player.
 
 **FLAC format**: Vorbis comment tags store the same fields (band, frequency, date, time, modulation) as text. FLAC files are smaller than WAV, by an amount that depends on the band and the signal, and audio editors cannot use their `time_reference` tag for timeline placement, which they read only from a BEXT chunk.
 
@@ -603,7 +603,7 @@ SDR gain controls how much the received signal is amplified before digitisation.
 
 **Simple approach (recommended starting point)**: set `sdr_gain_db` to a numeric value or `auto`. When set to a single number, the driver distributes the gain across the device's internal stages automatically - this produces good results for most setups without any per-element knowledge. Start here and only move to per-element tuning if you want to squeeze out the last bit of performance.
 
-**Per-element tuning (advanced)**: devices with multiple gain stages (like the AirSpy R2) allow individual control via `sdr_gain_elements`. This can improve reception quality because the *order* of gain stages matters for noise performance:
+**Per-element tuning (advanced)**: devices with multiple gain stages (like the Airspy R2) allow individual control via `sdr_gain_elements`. This can improve reception quality because the *order* of gain stages matters for noise performance:
 
 | Stage | Role | Tuning guidance |
 | :--- | :--- | :--- |
@@ -624,14 +624,14 @@ The `snr_threshold_db` setting controls how far above the noise floor a signal m
 **General tips**:
 - Available gain element names and their valid ranges are logged at DEBUG level on startup. Run with `--log-level DEBUG` and check these before setting values (the *active* values are logged at INFO once applied).
 - Optimal values depend on your antenna, band, and local RF environment - a rooftop antenna in a city needs different gain from a small whip in a rural area.
-- Airband (AM, 118-137 MHz) typically needs less gain than PMR (NFM, 446 MHz) because aircraft transmitters are more powerful (5-25W) than PMR handhelds (0.5W).
+- Airband (AM, 118-137 MHz) typically needs less gain than PMR (NFM, 446 MHz) because an aircraft's radio commonly sends 6 to 16 W, and a PMR446 handheld 0.5 W.
 - A transmitter close to the antenna, such as your own handheld radio, can overload the receiver at a band's shipped gain. The scanner then discards every overloaded slice rather than risk false detections, so nothing is recorded, and the log shows `ADC SATURATION` warnings. Lower `sdr_gain_db` for that band, or move the radio further away.
 
 ## Rejecting empty/noise recordings
 
 ### The problem
 
-SNR thresholds detect any signal that's louder than the noise floor - but they can't distinguish a *real* signal from a *noisy* one. With sensitive receivers like the AirSpy HF+ Discovery, you'll often see radio channels register 6-10 dB SNR yet contain only hissing static when played back. Raising `snr_threshold_db` doesn't help: the SNR is genuinely high, because the noise in that radio channel really is louder than the band-wide noise floor.
+SNR thresholds detect any signal that's louder than the noise floor - but they can't distinguish a *real* signal from a *noisy* one. With sensitive receivers like the Airspy HF+ Discovery, you'll often see radio channels register 6-10 dB SNR yet contain only hissing static when played back. Raising `snr_threshold_db` doesn't help: the SNR is genuinely high, because the noise in that radio channel really is louder than the band-wide noise floor.
 
 What's needed is a way to tell **noise** apart from **real signals** - and a single check isn't enough, because noise comes in different flavours that fool different detectors.
 

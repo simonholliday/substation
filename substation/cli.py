@@ -300,7 +300,12 @@ Exit status:
 	command.add_argument(
 		'--device-type', '-t',
 		default='rtlsdr',
-		help='The receiver: rtlsdr, hackrf, airspy, airspyhf, or soapy:<driver> for any other SoapySDR device (default: rtlsdr)'
+		help=(
+			'The receiver: rtlsdr, hackrf, airspy for an Airspy R2, airspyhf for an Airspy HF+ Discovery, '
+			'or soapy:<driver> for any other SoapySDR device (default: rtlsdr). Other spellings work too, '
+			'in any letter case: rtl and rtl-sdr, hackrf-one and hackrfone, airspy-r2 and airspyr2, '
+			'and airspy-hf and airspyhf+.'
+		)
 	)
 
 	# Device index for systems with multiple SDRs
