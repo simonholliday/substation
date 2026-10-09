@@ -556,8 +556,9 @@ class BandTypeConfig(pydantic.BaseModel):
 	sdr_gain_db: float | str | None = 'auto'
 	"""
 	SDR gain in dB, or `auto` for automatic gain control. Higher gain is more
-	sensitive, and also amplifies noise and can cause clipping. What `auto` does
-	on each receiver is described under a band's `sdr_gain_db`.
+	sensitive, and also amplifies noise and can cause clipping. A band's
+	`sdr_gain_db` describes what `auto` does on each receiver, and what a number
+	does on a HackRF One.
 	"""
 
 	@pydantic.field_validator('modulation', mode='before')
@@ -591,8 +592,9 @@ class DeviceOverrideConfig(pydantic.BaseModel):
 
 	sdr_gain_db: float | str | None = None
 	"""
-	SDR gain in dB on this device, or `auto` for automatic gain control. What
-	`auto` does on each receiver is described under a band's `sdr_gain_db`.
+	SDR gain in dB on this device, or `auto` for automatic gain control. A band's
+	`sdr_gain_db` describes what `auto` does on each receiver, and what a number
+	does on a HackRF One.
 	"""
 
 	sdr_gain_elements: dict[str, float] | None = pydantic.Field(default=None, examples=[{'LNA': 10, 'MIX': 5, 'VGA': 12}])
@@ -740,6 +742,12 @@ class BandConfig(pydantic.BaseModel):
 	so `auto` sets 10 dB on its LNA, 5 dB on its mixer and 12 dB on its VGA,
 	27 dB in all. Any other SoapySDR device without automatic gain control is
 	set to the middle of its gain range, with a warning.
+
+	On a HackRF One, a number sets each of its two gain stages to the highest
+	gain that stage takes at or below the number, so the total gain is about
+	twice the number. Its LNA takes 0 to 40 dB in 8 dB steps, and its VGA 0 to
+	62 dB in 2 dB steps. For example, 36 dB sets 32 dB on the LNA and 36 dB on
+	the VGA, 68 dB in all, which is more than the 62 dB that `auto` sets.
 	"""
 
 	sdr_gain_elements: dict[str, float] | None = pydantic.Field(default=None, examples=[{'LNA': 10, 'MIX': 5, 'VGA': 12}])

@@ -291,8 +291,9 @@ osc:
 #
 #   sdr_gain_db: auto
 #     SDR gain in dB, or `auto` for automatic gain control. Higher gain is more
-#     sensitive, and also amplifies noise and can cause clipping. What `auto`
-#     does on each receiver is described under a band's `sdr_gain_db`.
+#     sensitive, and also amplifies noise and can cause clipping. A band's
+#     `sdr_gain_db` describes what `auto` does on each receiver, and what a
+#     number does on a HackRF One.
 #
 # Settings for each band in `bands`
 #
@@ -380,6 +381,13 @@ osc:
 #     without automatic gain control is set to the middle of its gain range,
 #     with a warning.
 #
+#     On a HackRF One, a number sets each of its two gain stages to the highest
+#     gain that stage takes at or below the number, so the total gain is about
+#     twice the number. Its LNA takes 0 to 40 dB in 8 dB steps, and its VGA 0
+#     to 62 dB in 2 dB steps. For example, 36 dB sets 32 dB on the LNA and
+#     36 dB on the VGA, 68 dB in all, which is more than the 62 dB that `auto`
+#     sets.
+#
 #   sdr_gain_elements: null
 #     Gain in dB for each gain stage, on devices with several, keyed by stage
 #     name: the Airspy R2, for example, has `LNA`, `MIX`, and `VGA`. Stage
@@ -424,8 +432,9 @@ osc:
 #     SDR sample rate in Hz on this device. Must cover the band's span.
 #
 #   sdr_gain_db: null
-#     SDR gain in dB on this device, or `auto` for automatic gain control. What
-#     `auto` does on each receiver is described under a band's `sdr_gain_db`.
+#     SDR gain in dB on this device, or `auto` for automatic gain control. A
+#     band's `sdr_gain_db` describes what `auto` does on each receiver, and
+#     what a number does on a HackRF One.
 #
 #   sdr_gain_elements: null
 #     Gain in dB for each of this device's gain stages, keyed by stage name,
