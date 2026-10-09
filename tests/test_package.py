@@ -14,7 +14,7 @@ import substation.scanner
 class TestPythonInterface:
 
 	def test_all_names_the_documented_interface (self):
-		"""__all__ is the surface the README documents and subsystem.co's Python reference prints."""
+		"""__all__ is the Python interface subsystem.co's Python reference prints."""
 		assert substation.__all__ == ["load_config", "RadioScanner", "OscEventSender"]
 
 	@pytest.mark.parametrize(("name", "module"), [

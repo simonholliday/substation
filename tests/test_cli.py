@@ -92,7 +92,7 @@ class TestMainArgParsing:
 class TestLogLevel:
 
 	def test_log_level_option_sets_the_level (self, tmp_path, minimal_config_dict, monkeypatch):
-		"""The README tells users to enable debug logging, which --log-level DEBUG now does."""
+		"""The README told users to enable debug logging, which --log-level DEBUG now does."""
 		cfg_path = tmp_path / "config.yaml"
 		cfg_path.write_text(yaml.dump(minimal_config_dict))
 		levels = []
@@ -115,7 +115,7 @@ class TestParser:
 		assert command.prog == "substation"
 
 	def test_the_help_says_each_exit_status (self):
-		"""The exit status is said in the help, which the command-line reference prints, as well as in the README."""
+		"""The exit status is said in the help, which the command-line reference prints."""
 		text = substation.cli.parser().format_help()
 
 		assert "Exit status:" in text

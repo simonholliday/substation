@@ -34,8 +34,8 @@ dependencies = [
     "pydantic>=2.7",
     # pyrtlsdr 0.4.0+ requires the rtlsdr_set_dithering symbol from the
     # rtl-sdr-blog fork.  Pinning below 0.4.0 keeps the package working
-    # against distro-packaged librtlsdr too — see INSTALL.md for
-    # the fork build instructions.  0.3.0 imports pkg_resources at load time,
+    # against distro-packaged librtlsdr too — the guide's install chapter,
+    # https://subsystem.co/substation/guide/installing-substation, builds the fork.  0.3.0 imports pkg_resources at load time,
     # which substation/devices/rtlsdr.py provides a stand-in for when setuptools
     # is absent (the default in Python 3.12+ venvs).
     "pyrtlsdr>=0.3.0,<0.4.0",
@@ -47,9 +47,9 @@ dependencies = [
     "scipy>=1.10.0",
     "soundfile>=0.12.1",
     "mutagen>=1.45",
-    # SoapySDR (for AirSpy and other devices) is a system package — install
-    # via apt (python3-soapysdr) and use --system-site-packages on the venv.
-    # See INSTALL.md section 4.
+    # SoapySDR (for Airspy and other devices) is a system package — install
+    # via apt (python3-soapysdr) and use --system-site-packages on the venv,
+    # as the guide's install chapter shows.
 ]
 
 [project.optional-dependencies]
@@ -82,7 +82,7 @@ noisereduce = [
 
 # HackRF One support — install with `pip install "substation[hackrf]"`.
 # python_hackrf publishes source only, so installing it compiles the binding
-# against libhackrf's headers (libhackrf-dev, see INSTALL.md).  Keeping it
+# against libhackrf's headers (libhackrf-dev, see the guide's install chapter).  Keeping it
 # optional spares everyone without a HackRF that build, and its failure
 # where the headers are missing.
 hackrf = [
