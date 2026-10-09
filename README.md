@@ -8,7 +8,7 @@ The scanner is designed for unattended, long-running operation. It handles the e
 
 Substation runs as a command-line tool or as a Python module in your own applications, including on low-power hardware such as a Raspberry Pi scanning a narrower band. The widest shipped bands, at 12.5 MHz, have not yet been shown to keep up in real time, and CTCSS and DCS tone detection has not yet been thoroughly tested with real radios: see [Limitations](#limitations).
 
-**Full documentation: [https://subsystem.co/substation/](https://subsystem.co/substation/)**
+**Full documentation: [https://subsystem.co/substation](https://subsystem.co/substation)**
 
 - Guide: [https://subsystem.co/substation/guide](https://subsystem.co/substation/guide)
 - Configuration reference: [https://subsystem.co/substation/configuration](https://subsystem.co/substation/configuration)

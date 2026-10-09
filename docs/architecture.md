@@ -1,7 +1,7 @@
 # Architecture
 
 This file is for people changing Substation's code, and subsystem.co does not
-publish it. For using Substation, see [https://subsystem.co/substation/](https://subsystem.co/substation/).
+publish it. For using Substation, see [https://subsystem.co/substation](https://subsystem.co/substation).
 
 Substation's signal processing is written in Python, with NumPy and SciPy doing the numerical work.
 

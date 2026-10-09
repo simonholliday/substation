@@ -35,8 +35,9 @@ dependencies = [
     # pyrtlsdr 0.4.0+ requires the rtlsdr_set_dithering symbol from the
     # rtl-sdr-blog fork.  Pinning below 0.4.0 keeps the package working
     # against distro-packaged librtlsdr too — the guide's install chapter,
-    # https://subsystem.co/substation/guide/installing-substation, builds the fork.  0.3.0 imports pkg_resources at load time,
-    # which substation/devices/rtlsdr.py provides a stand-in for when setuptools
+    # https://subsystem.co/substation/guide/installing-substation, builds the
+    # fork.  0.3.0 imports pkg_resources at load time, which
+    # substation/devices/rtlsdr.py provides a stand-in for when setuptools
     # is absent (the default in Python 3.12+ venvs).
     "pyrtlsdr>=0.3.0,<0.4.0",
     "PyYAML>=6.0",
@@ -90,7 +91,7 @@ hackrf = [
 ]
 
 [project.urls]
-Documentation = "https://subsystem.co/substation/"
+Documentation = "https://subsystem.co/substation"
 Repository = "https://github.com/simonholliday/substation"
 Issues = "https://github.com/simonholliday/substation/issues"
 
