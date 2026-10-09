@@ -21,6 +21,7 @@ import sys
 
 import substation
 import substation.config
+import substation.devices.file
 import substation.scanner
 
 logger = logging.getLogger(__name__)
@@ -215,10 +216,10 @@ async def run_scanner_file (config_path: pathlib.Path | None, band_name: str, iq
 			logger.error(f"Band '{band_name}' not found. Available bands: {available}")
 			sys.exit(1)
 
-		# Read sample rate from the WAV file to initialise the virtual clock
-		import soundfile
-		info = soundfile.info(iq_file)
-		file_sample_rate = float(info.samplerate)
+		# The virtual clock runs at the file's rate, read by the parser the
+		# file device itself uses: libsndfile refuses BW64 and some headers
+		# that the file device accepts (#4831)
+		file_sample_rate = float(substation.devices.file.parse_wav_header(iq_file)[0])
 
 		clock = substation.scanner.VirtualClock(start_time, file_sample_rate)
 

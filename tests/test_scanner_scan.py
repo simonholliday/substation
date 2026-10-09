@@ -263,6 +263,65 @@ class TestCliExitStatus:
 		assert ("--log-level DEBUG" in failure.getMessage()) == (level != logging.DEBUG)
 
 
+class TestCancelDuringSetup:
+
+	def test_a_scan_cancelled_during_setup_does_not_cancel_a_read_it_never_started (self, app_config, caplog):
+		"""Regression (#4820): scan() cancelled the device's read before waiting for setup, and pyrtlsdr closes an RTL-SDR whose cancel finds no read running, under calibration's reads."""
+
+		class CountingDevice (FakeLiveDevice):
+			"""A receiver that counts the cancels it is sent."""
+			cancels = 0
+			def cancel_read_async (self) -> None:
+				"""Count the cancel."""
+				self.cancels += 1
+
+		device = CountingDevice(blocks=1)
+		scanner = substation.scanner.RadioScanner(config=app_config, band_name="test_nfm", device_type="rtlsdr")
+		in_setup, release = threading.Event(), threading.Event()
+
+		def slow_setup () -> None:
+			"""Open the device, then wait, as calibration's reads do."""
+			scanner.sdr = device
+			in_setup.set()
+			release.wait(5)
+
+		scanner._setup_sdr = slow_setup
+
+		async def scenario ():
+			task = asyncio.create_task(scanner.scan())
+			await asyncio.get_running_loop().run_in_executor(None, in_setup.wait, 5)
+			task.cancel()
+			await asyncio.sleep(0.05)
+			release.set()
+			with pytest.raises(asyncio.CancelledError):
+				await task
+
+		with caplog.at_level(logging.INFO, logger="substation"):
+			asyncio.run(scenario())
+
+		assert device.cancels == 0
+		assert device.closed
+		assert not any("cancelling async read" in record.getMessage() for record in caplog.records)
+
+
+class TestIqFilePlayback:
+
+	def test_a_bw64_file_plays_from_the_command_line (self, minimal_config_dict, tmp_path):
+		"""Regression (#4831): --iq-file read the file's rate with libsndfile, which refuses BW64, though the file reader accepts it."""
+		config_path = tmp_path / "config.yaml"
+		config_path.write_text(yaml.dump(minimal_config_dict))
+		probe = substation.scanner.RadioScanner(config=substation.config.validate_config(minimal_config_dict), band_name="test_nfm", device_type="file")
+
+		path = tmp_path / "playback.wav"
+		noise = 0.01 * numpy.random.default_rng(1).standard_normal((300_000, 2))
+		soundfile.write(str(path), noise, 1_024_000, subtype="PCM_16", format="RF64")
+		data = bytearray(path.read_bytes())
+		data[0:4] = b"BW64"
+		path.write_bytes(bytes(data))
+
+		asyncio.run(substation.cli.run_scanner_file(config_path, "test_nfm", str(path), probe.center_freq, datetime.datetime(2000, 1, 1)))
+
+
 def _play_transmissions (config_dict, tmp_path, seconds, transmissions, handlers=(), sample_rate=256e3):
 
 	"""
@@ -889,3 +948,17 @@ class TestTimestamps:
 		asyncio.run(scenario())
 
 		assert list(scanner_instance._slice_arrivals) == [100.0]
+
+	def test_a_slice_discarded_when_a_live_stream_ends_takes_its_arrival_time_with_it (self, scanner_instance):
+		"""Regression (#4823): the discarded slice's arrival stayed behind, so every later slice took the time of the one before."""
+
+		async def scenario ():
+			scanner_instance.sample_queue = asyncio.Queue(maxsize=2)
+			block = numpy.zeros(4, dtype=numpy.complex64)
+			scanner_instance._safe_queue_put(block, 100.0)
+			scanner_instance._safe_queue_put(block, 101.0)
+			scanner_instance._signal_stream_end()
+
+		asyncio.run(scenario())
+
+		assert list(scanner_instance._slice_arrivals) == [101.0]

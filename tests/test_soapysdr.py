@@ -1,5 +1,6 @@
 """Tests for the SoapySDR device wrapper."""
 
+import logging
 import threading
 import time
 import types
@@ -146,6 +147,22 @@ class TestSoapySdrInit:
 		mock_device.getStreamFormats.assert_called()
 
 
+class TestIqCalibration:
+
+	@pytest.mark.parametrize(("level", "expected"), [(0.0005, 20.0), (0.02, 1.0)], ids=["quiet", "already sensible"])
+	def test_the_first_blocks_set_the_scale_by_the_shared_rule (self, level, expected):
+		"""Regression guard (#4832): the SoapySDR device's thresholds had no direct test, and it now takes the decision the file device shares."""
+		sdr_device, mock_device, mock_soapy = _create_soapy_device()
+
+		def read_stream (stream, buffers, count, timeoutUs):
+			buffers[0][:count] = level
+			return types.SimpleNamespace(ret=count)
+
+		mock_device.readStream.side_effect = read_stream
+
+		assert sdr_device._calibrate_iq_scale('mock_stream', mock_soapy.SOAPY_SDR_CF32) == pytest.approx(expected)
+
+
 class TestSoapySdrProperties:
 
 	def test_sample_rate (self):
@@ -157,6 +174,39 @@ class TestSoapySdrProperties:
 		sdr_device.sample_rate = 10e6
 		mock_device.setSampleRate.assert_called_with(mock_soapy.SOAPY_SDR_RX, 0, 10e6)
 		assert sdr_device.sample_rate == 10e6
+
+	@staticmethod
+	def _rate_range (minimum: float, maximum: float, step: float = 0.0) -> unittest.mock.MagicMock:
+		"""A SoapySDR.Range of sample rates."""
+		rate_range = unittest.mock.MagicMock()
+		rate_range.minimum.return_value = minimum
+		rate_range.maximum.return_value = maximum
+		rate_range.step.return_value = step
+		return rate_range
+
+	def test_a_rate_inside_a_range_the_driver_reports_is_kept (self, caplog):
+		"""Regression (#4828): SoapyRTLSDR lists no 2.4 MHz but accepts it, and the rate was snapped to 2.56 MHz with a warning."""
+		sdr_device, mock_device, mock_soapy = _create_soapy_device('rtlsdr')
+		mock_device.listSampleRates.return_value = [250e3, 1.024e6, 1.536e6, 1.792e6, 1.92e6, 2.048e6, 2.16e6, 2.56e6, 2.88e6, 3.2e6]
+		mock_device.getSampleRateRange.return_value = [self._rate_range(225001, 300000), self._rate_range(900001, 3.2e6)]
+
+		with caplog.at_level(logging.WARNING, logger="substation.devices.soapysdr"):
+			sdr_device.sample_rate = 2.4e6
+
+		mock_device.setSampleRate.assert_called_with(mock_soapy.SOAPY_SDR_RX, 0, 2.4e6)
+		assert sdr_device.sample_rate == 2.4e6
+		assert not caplog.records
+
+	def test_a_discrete_rate_device_still_snaps_to_its_nearest_listed_rate (self, caplog):
+		"""An Airspy R2 reports its two rates as ranges of no width, and a rate between them is not one it can take."""
+		sdr_device, mock_device, mock_soapy = _create_soapy_device()
+		mock_device.getSampleRateRange.return_value = [self._rate_range(2.5e6, 2.5e6), self._rate_range(10e6, 10e6)]
+
+		with caplog.at_level(logging.WARNING, logger="substation.devices.soapysdr"):
+			sdr_device.sample_rate = 3e6
+
+		mock_device.setSampleRate.assert_called_with(mock_soapy.SOAPY_SDR_RX, 0, 2.5e6)
+		assert any("not supported" in record.getMessage() for record in caplog.records)
 
 	def test_center_freq (self):
 

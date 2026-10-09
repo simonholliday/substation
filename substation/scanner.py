@@ -583,7 +583,9 @@ class RadioScanner:
 		if not handlers:
 			return
 
-		for handler in handlers:
+		# A copy, so that a handler unsubscribing itself with off() as it runs
+		# does not shift the list under the loop and skip the next one (#4825).
+		for handler in tuple(handlers):
 			try:
 				if inspect.iscoroutinefunction(handler):
 					target_loop = loop or self.loop
@@ -1400,6 +1402,11 @@ class RadioScanner:
 				self.sample_queue.get_nowait()
 			except asyncio.QueueEmpty:
 				pass
+			else:
+				# The discarded slice's arrival goes with it, or every later
+				# slice would take the time of the one before (#4823).
+				if self._slice_arrivals:
+					self._slice_arrivals.popleft()
 
 			try:
 				self.sample_queue.put_nowait(None)
@@ -2454,6 +2461,11 @@ class RadioScanner:
 		self._stopping = False
 		self._processing_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="substation-slice")
 
+		# Whether the device was asked to stream.  Only then is there a read to
+		# cancel: pyrtlsdr closes an RTL-SDR whose cancel finds none running,
+		# which during setup frees the device under calibration's reads (#4820).
+		streaming_started = False
+
 		try:
 			# Device setup, calibration included, blocks for seconds at a time,
 			# so it runs off the event loop and a program embedding the scanner
@@ -2483,6 +2495,10 @@ class RadioScanner:
 				queue_size = min(queue_size, substation.constants.PLAYBACK_QUEUE_SLICES)
 
 			self.sample_queue = asyncio.Queue(maxsize=queue_size)
+
+			# A scanner scanned before may hold arrivals its last scan never
+			# processed, which would be paired with this scan's slices (#4823).
+			self._slice_arrivals.clear()
 
 			# Start async SDR streaming in background thread (non-blocking)
 			# This must run in an executor because read_samples_async blocks
@@ -2520,6 +2536,7 @@ class RadioScanner:
 						self._signal_stream_end()
 
 			# Start streaming task in background.
+			streaming_started = True
 			streaming_task = asyncio.create_task(start_streaming())
 
 			def _on_streaming_done (task: asyncio.Task) -> None:
@@ -2571,8 +2588,9 @@ class RadioScanner:
 		finally:
 			self._stopping = True
 
-			# Cancel async streaming
-			if self.sdr:
+			# Cancel async streaming.  Setup still running, if the scan was
+			# cancelled during it, is waited for by the cleanup below.
+			if self.sdr and streaming_started:
 				try:
 					self.sdr.cancel_read_async()
 					logger.info("Cancelled async SDR streaming")

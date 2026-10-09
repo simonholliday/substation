@@ -995,12 +995,12 @@ class ChannelRecorder:
 			with self._write_lock:
 				self.audio_file.close()
 
-		# Write metadata after the file is closed
+		# Write metadata after the file is closed, off the event loop: tagging
+		# a FLAC rewrites the whole file, because libsndfile leaves no padding
+		# for the tags, and a long recording would stall live slices (#4822)
 		if self.bext_metadata:
-			if self.audio_format == 'flac':
-				self._write_flac_metadata()
-			else:
-				self._append_bext_chunk()
+			write_metadata = self._write_flac_metadata if self.audio_format == 'flac' else self._append_bext_chunk
+			await asyncio.get_running_loop().run_in_executor(None, write_metadata)
 
 		duration_seconds = self.total_samples_written / self.audio_sample_rate
 		logger.debug(f"Stopped recording radio channel {self.channel_index} (f = {self.channel_freq/1e6:.5f} MHz) - Duration: {duration_seconds:.1f}s, File: {self.filepath}")

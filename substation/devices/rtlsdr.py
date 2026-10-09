@@ -19,6 +19,7 @@ import importlib
 import importlib.util
 import logging
 import sys
+import threading
 import types
 import typing
 
@@ -101,6 +102,15 @@ class RtlSdrDevice (substation.devices.base.BaseDevice):
 		# pyrtlsdr rounds the value it reports to the nearest kHz, while the
 		# tuner keeps the exact frequency it was given.
 		self._center_freq: float | None = None
+
+		# pyrtlsdr closes the device when librtlsdr's cancel fails, and it fails
+		# whenever librtlsdr's read is not running, including the moment before
+		# it starts.  So pyrtlsdr's cancel is called only once a block has
+		# arrived, which shows the read is running, and a cancel asked for
+		# before then is made by the first block's callback (#4820).
+		self._read_lock = threading.Lock()
+		self._cancel_requested = False
+		self._block_arrived = False
 
 	def _driver (self) -> typing.Any:
 
@@ -258,8 +268,24 @@ class RtlSdrDevice (substation.devices.base.BaseDevice):
 		"""
 
 		def deliver (samples: typing.Any, context: typing.Any) -> None:
-			"""Pass one block on as complex64."""
+			"""Pass one block on as complex64, or end the read if a cancel came before it started."""
+
+			with self._read_lock:
+				self._block_arrived = True
+				cancel_now = self._cancel_requested
+
+			if cancel_now:
+				# Inside the callback librtlsdr's read is running, so the cancel
+				# succeeds, and pyrtlsdr skips the callbacks after it.
+				self._device.cancel_read_async()
+				return
+
 			callback(numpy.asarray(samples).astype(numpy.complex64), context)
+
+		with self._read_lock:
+			if self._cancel_requested:
+				return
+			self._block_arrived = False
 
 		self._driver().read_samples_async(deliver, num_samples)
 
@@ -269,10 +295,17 @@ class RtlSdrDevice (substation.devices.base.BaseDevice):
 		Cancel asynchronous sample reading.
 
 		Does nothing once the device is closed: streaming has already stopped,
-		and librtlsdr's handle may have been freed.
+		and librtlsdr's handle may have been freed.  Before the read's first
+		block, the cancel is left to that block's callback, since pyrtlsdr
+		would close the device under the starting read, and a read not yet
+		started then does not start.
 		"""
 
-		if not getattr(self._device, 'device_opened', False):
+		with self._read_lock:
+			self._cancel_requested = True
+			running = self._block_arrived
+
+		if not running or not getattr(self._device, 'device_opened', False):
 			return
 
 		self._device.cancel_read_async()

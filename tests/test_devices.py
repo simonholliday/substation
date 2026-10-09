@@ -5,6 +5,7 @@ import datetime
 import importlib
 import importlib.machinery
 import importlib.util
+import logging
 import struct
 import subprocess
 import sys
@@ -18,6 +19,7 @@ import pytest
 import soundfile
 
 import substation.devices
+import substation.devices.base
 import substation.devices.file
 import substation.scanner
 
@@ -32,17 +34,25 @@ def _mock_create_device (alias, device_type, mock_class_name):
 	patches = {
 		f"substation.devices.{device_type}": fake_module,
 	}
-	with unittest.mock.patch.dict(sys.modules, patches):
-		# Also set the attribute on the parent module so `substation.devices.rtlsdr` resolves
-		setattr(substation.devices, device_type, fake_module)
-		try:
-			device = substation.devices.create_device(alias, device_index=0)
-		finally:
-			delattr(substation.devices, device_type)
+
+	# The parent module's attribute too, so `substation.devices.rtlsdr` resolves.
+	# patch.object puts back the real submodule if a test imported it earlier,
+	# where deleting the attribute left it in sys.modules but unreachable (#4830).
+	with unittest.mock.patch.dict(sys.modules, patches), unittest.mock.patch.object(substation.devices, device_type, fake_module, create=True):
+		device = substation.devices.create_device(alias, device_index=0)
+
 	return mock_cls
 
 
 class TestCreateDevice:
+
+	def test_mocking_a_device_module_leaves_the_real_one_in_place (self):
+		"""Regression (#4830): the helper deleted substation.devices.hackrf, so a test that used it afterwards failed, depending on the order tests ran in."""
+		real = importlib.import_module("substation.devices.hackrf")
+
+		_mock_create_device("hackrf", "hackrf", "HackRfDevice")
+
+		assert substation.devices.hackrf is real
 
 	def test_unknown_type_raises (self):
 		with pytest.raises(ValueError, match="Unsupported"):
@@ -290,6 +300,12 @@ class FakePyRtlSdr:
 		self._center_freq = 100e6
 		self._sample_rate = 2.048e6
 
+		# librtlsdr's read counts as running only once it is delivering
+		# blocks, and pyrtlsdr skips the callbacks after a cancel.
+		self.running = False
+		self.read_async_canceling = False
+		self.before_first_block = None
+
 	def _call (self, name: str) -> None:
 
 		"""Record a call into librtlsdr, marking any that would use a freed handle."""
@@ -318,16 +334,37 @@ class FakePyRtlSdr:
 
 	def read_samples_async (self, callback, num_samples: int) -> None:
 
-		"""Deliver one block of complex128, as pyrtlsdr's converter does, then return as if cancelled."""
+		"""Deliver one block of complex128, as pyrtlsdr's converter does, then return as if cancelled.
+
+		before_first_block, when set, runs as the read starts and before it is
+		running, the moment in which a cancel finds no read to cancel.
+		"""
 
 		self._call("read_samples_async")
-		callback(numpy.full(num_samples, 0.5 - 0.25j, dtype=numpy.complex128), self)
+		self.read_async_canceling = False
+
+		if self.before_first_block is not None:
+			self.before_first_block()
+
+		self.running = True
+
+		try:
+			if not self.read_async_canceling:
+				callback(numpy.full(num_samples, 0.5 - 0.25j, dtype=numpy.complex128), self)
+		finally:
+			self.running = False
 
 	def cancel_read_async (self) -> None:
 
-		"""Record the cancel."""
+		"""Like pyrtlsdr, close the device and raise when no read is running, unless a cancel is already under way."""
 
 		self._call("cancel_read_async")
+
+		if not self.running and not self.read_async_canceling:
+			self.close()
+			raise OSError("Error code -2: Could not cancel async read")
+
+		self.read_async_canceling = True
 
 	@property
 	def center_freq (self) -> float:
@@ -393,14 +430,13 @@ def rtlsdr_device_class ():
 	fake_rtlsdr = types.ModuleType("rtlsdr")
 	fake_rtlsdr.RtlSdr = FakePyRtlSdr
 
-	with unittest.mock.patch.dict(sys.modules, {"rtlsdr": fake_rtlsdr}):
+	# The import binds the fresh module to substation.devices.rtlsdr, and
+	# patch.object then puts back whatever was there before (#4830)
+	with unittest.mock.patch.dict(sys.modules, {"rtlsdr": fake_rtlsdr}), unittest.mock.patch.object(substation.devices, "rtlsdr", None, create=True):
 		sys.modules.pop("substation.devices.rtlsdr", None)
 		module = importlib.import_module("substation.devices.rtlsdr")
 
 		yield module.RtlSdrDevice
-
-	if hasattr(substation.devices, "rtlsdr"):
-		delattr(substation.devices, "rtlsdr")
 
 
 class TestRtlSdrFreqCorrection:
@@ -495,6 +531,46 @@ class TestRtlSdrClosedDevice:
 
 		assert device._device.calls == ["read_samples", "close"]
 
+	def test_a_cancel_before_any_read_leaves_the_device_open_and_stops_the_read_starting (self, rtlsdr_device_class):
+		"""Regression (#4820): pyrtlsdr closes a device whose cancel finds no read running, as during setup's calibration reads."""
+		device = rtlsdr_device_class(0)
+		received = []
+
+		device.cancel_read_async()
+		device.read_samples_async(lambda samples, context: received.append(samples), 1024)
+
+		assert device._device.device_opened
+		assert device._device.calls == []
+		assert received == []
+
+	def test_a_cancel_as_the_read_starts_is_made_by_its_first_block (self, rtlsdr_device_class):
+		"""Regression (#4820): a cancel in the moment before librtlsdr's read runs made pyrtlsdr free the device under it."""
+		device = rtlsdr_device_class(0)
+		received = []
+		device._device.before_first_block = device.cancel_read_async
+
+		device.read_samples_async(lambda samples, context: received.append(samples), 1024)
+
+		assert device._device.device_opened
+		assert device._device.calls == ["read_samples_async", "cancel_read_async"]
+		assert received == []
+
+	def test_a_cancel_during_a_running_read_reaches_the_driver (self, rtlsdr_device_class):
+		"""Once a block has arrived the read is running, so the cancel goes straight to pyrtlsdr."""
+		device = rtlsdr_device_class(0)
+		received = []
+
+		def deliver_then_cancel (samples, context):
+			received.append(samples)
+			device._device.running = True
+			device.cancel_read_async()
+
+		device.read_samples_async(deliver_then_cancel, 1024)
+
+		assert device._device.device_opened
+		assert device._device.calls == ["read_samples_async", "cancel_read_async"]
+		assert len(received) == 1
+
 	def test_cancel_and_close_are_safe_once_closed (self, rtlsdr_device_class):
 		"""The scan's shutdown cancels and closes unconditionally, so both must be harmless on a closed device."""
 		device = rtlsdr_device_class(0)
@@ -533,15 +609,13 @@ def import_rtlsdr_device_module (tmp_path, monkeypatch):
 	(package / "__init__.py").write_text(PYRTLSDR_0_3_0_INIT)
 	monkeypatch.syspath_prepend(str(tmp_path))
 
-	with unittest.mock.patch.dict(sys.modules):
+	# patch.object puts back whatever substation.devices.rtlsdr was before (#4830)
+	with unittest.mock.patch.dict(sys.modules), unittest.mock.patch.object(substation.devices, "rtlsdr", None, create=True):
 
 		for name in ("rtlsdr", "substation.devices.rtlsdr", "pkg_resources"):
 			sys.modules.pop(name, None)
 
 		yield lambda: importlib.import_module("substation.devices.rtlsdr")
-
-	if hasattr(substation.devices, "rtlsdr"):
-		delattr(substation.devices, "rtlsdr")
 
 
 class TestPyrtlsdrImport:
@@ -598,6 +672,23 @@ class TestPyrtlsdrImport:
 		)
 
 		assert result.returncode == 0, result.stderr
+
+
+class TestIqScaleFromRms:
+
+	@pytest.mark.parametrize(("rms_values", "expected"), [
+		([], 1.0),
+		([0.0], 1.0),
+		([1e-11], 1.0),
+		([0.02], 1.0),
+		([0.0011], 1.0),
+		([0.001], 10.0),
+		([0.0005], 20.0),
+		([0.0005, 0.0005, 0.5], 20.0),
+	], ids=["nothing to measure", "silence", "too weak", "already sensible", "just above the limit", "at the limit", "quiet", "a strong block among quiet ones"])
+	def test_the_factor_brings_the_median_to_the_target (self, rms_values, expected):
+		"""The decision the file and SoapySDR devices share (#4832): 1.0 unless the median RMS is measurable and at most 0.001, then 0.01 over it."""
+		assert substation.devices.base.iq_scale_from_rms(rms_values) == pytest.approx(expected)
 
 
 class TestFileDevice:
@@ -663,6 +754,29 @@ class TestFileDevice:
 		dev = substation.devices.create_device('file', file_path=str(path), center_freq=446e6)
 
 		assert len(self._stream_all(dev)) == 100
+
+	def test_an_unfinished_header_plays_to_the_end_of_the_file_with_a_warning (self, tmp_path, caplog):
+		"""Regression (#4826): a data size of 0, left by a recorder stopped before it finished the header, played nothing and exited 0."""
+		frames = numpy.tile([[1000, -1000]], (100, 1))
+		wav = bytearray(self._pcm16_wav_bytes(frames))
+		size_at = wav.index(b"data") + 4
+		wav[size_at:size_at + 4] = struct.pack('<I', 0)
+		path = tmp_path / "unfinished.wav"
+		path.write_bytes(bytes(wav))
+
+		with caplog.at_level(logging.WARNING, logger="substation.devices.file"):
+			dev = substation.devices.create_device('file', file_path=str(path), center_freq=446e6)
+
+		assert len(self._stream_all(dev)) == 100
+		assert any("data chunk's size is 0" in record.getMessage() for record in caplog.records)
+
+	def test_a_file_with_no_iq_samples_is_refused (self, tmp_path):
+		"""A file with a header and nothing else played nothing and reported success."""
+		path = tmp_path / "empty.wav"
+		path.write_bytes(self._pcm16_wav_bytes(numpy.zeros((0, 2))))
+
+		with pytest.raises(ValueError, match="no IQ samples"):
+			substation.devices.create_device('file', file_path=str(path), center_freq=446e6)
 
 	@pytest.mark.parametrize("container", ["WAVEX", "RF64"])
 	def test_extensible_and_rf64_files_play (self, tmp_path, container):

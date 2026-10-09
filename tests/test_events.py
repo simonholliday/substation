@@ -39,6 +39,21 @@ class TestEventEmitter:
 		assert len(a) == 1
 		assert len(b) == 1
 
+	def test_a_handler_that_unsubscribes_itself_does_not_make_the_next_one_miss_the_event (self, scanner_instance):
+		"""Regression (#4825): emit() iterated the live list, so off() during dispatch shifted it and the next handler was skipped."""
+		called = []
+
+		def once (**kw):
+			called.append('once')
+			scanner_instance.off('recording_saved', once)
+
+		scanner_instance.on('recording_saved', once)
+		scanner_instance.on('recording_saved', lambda **kw: called.append('second'))
+		scanner_instance.emit('recording_saved', band='pmr', index=1, freq=446e6, file_path='/tmp/a.wav', ctcss_hz=None, dcs_code=None)
+		scanner_instance.emit('recording_saved', band='pmr', index=1, freq=446e6, file_path='/tmp/b.wav', ctcss_hz=None, dcs_code=None)
+
+		assert called == ['once', 'second', 'second']
+
 	def test_emit_unknown_event_is_noop (self, scanner_instance):
 		"""Emitting an event with no handlers doesn't raise."""
 		scanner_instance.emit('nonexistent_event', foo=42)

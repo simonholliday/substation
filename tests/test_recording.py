@@ -464,6 +464,32 @@ class TestFlacOutput:
 		assert 'COMMENT' in flac
 		assert '446' in flac['COMMENT'][0]
 
+	@pytest.mark.parametrize(("audio_format", "method"), [("flac", "_write_flac_metadata"), ("wav", "_append_bext_chunk")])
+	def test_metadata_is_written_off_the_event_loop (self, tmp_path, monkeypatch, audio_format, method):
+		"""Regression (#4822): tagging a FLAC rewrites the whole file, and it ran on the event loop, stalling live slices."""
+		rec = substation.recording.ChannelRecorder(
+			channel_freq=446.00625e6, channel_index=0, band_name="test",
+			audio_sample_rate=16000, buffer_size_seconds=1.0,
+			disk_flush_interval_seconds=999, audio_output_dir=str(tmp_path),
+			modulation="NFM", noise_reduction_enabled=False, audio_format=audio_format,
+		)
+		threads = []
+		write = getattr(rec, method)
+
+		def spy ():
+			threads.append(threading.current_thread())
+			write()
+
+		monkeypatch.setattr(rec, method, spy)
+		rec.append_audio(numpy.ones(1600, dtype=numpy.float32) * 0.3)
+		loop = asyncio.new_event_loop()
+		loop.run_until_complete(rec._flush_buffer_to_disk())
+		loop.run_until_complete(rec.close())
+		loop.close()
+
+		assert len(threads) == 1
+		assert threads[0] is not threading.current_thread()
+
 	def test_flac_no_bext_chunk (self, tmp_path):
 		"""FLAC files should not contain a BEXT chunk."""
 		rec = substation.recording.ChannelRecorder(

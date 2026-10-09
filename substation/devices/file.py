@@ -39,14 +39,19 @@ _WAVE_FORMAT_EXTENSIBLE = 0xFFFE
 _RF64_SIZE_IN_DS64 = 0xFFFFFFFF
 
 
-def _parse_wav_header (file_path: str) -> tuple[int, int, int, int, int | None]:
+def parse_wav_header (file_path: str) -> tuple[int, int, int, int, int | None]:
 	"""Parse a WAV header and return (sample_rate, channels, bits_per_sample, data_offset, data_size).
+
+	`substation --iq-file` reads the file's rate here too, so the two can never
+	disagree about a file this accepts and libsndfile does not, such as BW64.
 
 	Reads only the header — does not load sample data.  data_size is the
 	data chunk's length in bytes where the header states it reliably, and
-	None where it cannot: an RF64 file whose ds64 chunk is missing, or a
-	RIFF file over 4 GB, whose 32-bit size fields have overflowed.  The
-	caller then takes the data to run to the end of the file.
+	None where it cannot: an RF64 file whose ds64 chunk is missing, a RIFF
+	file over 4 GB, whose 32-bit size fields have overflowed, or a data
+	chunk whose size is 0 although bytes follow it, as a recorder stopped
+	before it finished the header leaves it.  The caller then takes the
+	data to run to the end of the file.
 	"""
 
 	file_size = os.path.getsize(file_path)
@@ -88,6 +93,13 @@ def _parse_wav_header (file_path: str) -> tuple[int, int, int, int, int | None]:
 				data_offset = f.tell()
 				if chunk_size == _RF64_SIZE_IN_DS64:
 					data_size = ds64_data_size
+				elif chunk_size == 0 and file_size > data_offset:
+					# Trusting the 0 would play nothing and report success (#4826)
+					logger.warning(
+						f"IQ file {file_path}: its data chunk's size is 0, as a recorder "
+						f"stopped before it finished the header leaves it, so its IQ "
+						f"samples are read to the end of the file"
+					)
 				elif file_size - data_offset <= 0xFFFFFFFF:
 					data_size = chunk_size
 				break
@@ -128,7 +140,7 @@ class FileDevice (substation.devices.base.BaseDevice):
 		self._stop_event = threading.Event()
 
 		# Parse WAV header (works even if size fields overflowed)
-		sample_rate, channels, bits_per_sample, data_offset, data_size = _parse_wav_header(file_path)
+		sample_rate, channels, bits_per_sample, data_offset, data_size = parse_wav_header(file_path)
 
 		if channels != 2:
 			raise ValueError(
@@ -153,6 +165,9 @@ class FileDevice (substation.devices.base.BaseDevice):
 		if data_size is not None:
 			data_bytes = min(data_bytes, data_size)
 		self._frames = data_bytes // self._bytes_per_frame
+
+		if self._frames == 0:
+			raise ValueError(f"IQ file holds no IQ samples: {file_path}")
 
 		duration = self._frames / self._sample_rate
 		logger.info(
@@ -198,10 +213,9 @@ class FileDevice (substation.devices.base.BaseDevice):
 	def _calibrate_iq_scale (self) -> float:
 		"""Measure IQ amplitude and return a normalisation factor.
 
-		Reads a few initial chunks from the raw file, measures median
-		RMS, and returns a scale factor that brings the noise floor to
-		~0.01 RMS if the signal is very weak.  Returns 1.0 if the
-		amplitude is already in a sensible range.
+		Reads a few initial chunks from the raw file, measures each one's
+		RMS, and leaves the decision to substation.devices.base.iq_scale_from_rms,
+		which the SoapySDR device shares.
 		"""
 
 		rms_values = []
@@ -222,23 +236,7 @@ class FileDevice (substation.devices.base.BaseDevice):
 				if len(rms_values) >= 10:
 					break
 
-		if not rms_values:
-			return 1.0
-
-		median_rms = float(numpy.median(rms_values))
-
-		if median_rms > 0.001:
-			logger.debug(f"IQ scale: no normalisation needed (median RMS {median_rms:.6f})")
-			return 1.0
-
-		if median_rms < 1e-10:
-			logger.warning("IQ calibration: signal too weak, using scale 1.0")
-			return 1.0
-
-		target_rms = 0.01
-		scale = target_rms / median_rms
-		logger.info(f"IQ scale: median RMS {median_rms:.6f}, applying {scale:.1f}x normalisation")
-		return scale
+		return substation.devices.base.iq_scale_from_rms(rms_values)
 
 	def read_samples_async (self, callback: typing.Callable, num_samples: int) -> None:
 		"""Stream IQ samples from the WAV file at full speed.

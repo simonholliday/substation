@@ -2,7 +2,10 @@
 
 import fractions
 import logging
+import os
 import pathlib
+import subprocess
+import sys
 import typing
 
 import pydantic
@@ -36,6 +39,21 @@ class TestYamlLoading:
 		path.write_text(content)
 		data = yaml.load(path.read_text(), Loader=substation.config._YamlLoader)
 		assert data["value"] == fractions.Fraction(25000, 3)
+
+	def test_loads_where_the_system_encoding_is_not_utf8 (self, tmp_path):
+		"""Regression (#4829): the file was decoded in the system's encoding, and the shipped defaults' non-ASCII comments failed in ASCII."""
+		user_cfg = tmp_path / "config.yaml"
+		user_cfg.write_bytes("recording:\n  audio_output_dir: /home/José/radio\n".encode("utf-8"))
+		# PYTHONIOENCODING sets only standard output's encoding, so the path can be printed; open() still uses the C locale's
+		environment = {**os.environ, "LC_ALL": "C", "PYTHONUTF8": "0", "PYTHONCOERCECLOCALE": "0", "PYTHONIOENCODING": "utf-8"}
+
+		result = subprocess.run(
+			[sys.executable, "-c", f"import substation.config; print(substation.config.load_config({str(user_cfg)!r}).recording.audio_output_dir)"],
+			capture_output=True, env=environment,
+		)
+
+		assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
+		assert result.stdout.decode("utf-8").strip() == "/home/José/radio"
 
 	def test_empty_yaml_raises (self, tmp_path):
 		path = tmp_path / "empty.yaml"
@@ -725,6 +743,20 @@ class TestExcludeChannelIndices:
 		minimal_config_dict["bands"]["test_nfm"]["exclude_channel_indices"] = [-1]
 		with pytest.raises(pydantic.ValidationError):
 			substation.config.validate_config(minimal_config_dict)
+
+	@pytest.mark.parametrize("entry", [1.9, True, None, [1, 2], "3"], ids=["fraction", "true", "null", "list", "string"])
+	def test_an_entry_that_is_not_a_whole_number_is_a_configuration_error (self, minimal_config_dict, entry):
+		"""Regression (#4824): int() truncated 1.9 to radio channel 1, took true as 1, and let a raw TypeError out for null or a list."""
+		minimal_config_dict["bands"]["test_nfm"]["exclude_channel_indices"] = [entry]
+		with pytest.raises(pydantic.ValidationError, match="exclude_channel_indices"):
+			substation.config.validate_config(minimal_config_dict)
+
+	def test_a_bare_dash_in_the_yaml_list_names_the_setting (self, tmp_path):
+		"""An empty item in a YAML list is null, and load_config documents a ValidationError for it, not a TypeError."""
+		user_cfg = tmp_path / "config.yaml"
+		user_cfg.write_text("bands:\n  pmr:\n    exclude_channel_indices:\n      - 26\n      -\n")
+		with pytest.raises(pydantic.ValidationError, match="exclude_channel_indices"):
+			substation.config.load_config(user_cfg)
 
 	def test_the_shipped_pmr_band_skips_no_radio_channels (self, tmp_path, monkeypatch):
 		"""Regression: a local exclusion of radio channels 1 to 3, among them the busiest, reached every user of the shipped pmr band."""

@@ -207,20 +207,22 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 		Set the sample rate in Hz.
 
 		Some devices support only discrete rates, and may round a request
-		to the nearest one without saying so.  So the requested rate is
-		checked against the rates the device lists: if it is not one, the
-		nearest listed rate is set instead, with a warning, and that is the
-		rate the getter reports.  This matters because the scanner uses
-		the sample rate for all frequency calculations.
+		to the nearest one without saying so.  So a requested rate that is
+		neither one the device lists nor inside a continuous range its
+		driver reports is replaced by the nearest listed rate, with a
+		warning, and that is the rate the getter reports.  This matters
+		because the scanner uses the sample rate for all frequency
+		calculations.
 		"""
 
-		# Check if the requested rate matches a supported rate.
 		# Some devices (e.g., Airspy R2) only support discrete rates and
 		# may silently round to the nearest one without reporting the change.
+		# Others list a few rates but accept any in a range: SoapyRTLSDR lists
+		# no 2.4 MHz, and accepts it (#4828).
 
 		supported = self._device.listSampleRates(self._soapy.SOAPY_SDR_RX, 0)
 
-		if supported:
+		if supported and not self._in_a_sample_rate_range(value):
 
 			# Find the closest supported rate
 			closest = min(supported, key=lambda r: abs(r - value))
@@ -235,6 +237,28 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 
 		self._device.setSampleRate(self._soapy.SOAPY_SDR_RX, 0, value)
 		self._sample_rate = value
+
+	def _in_a_sample_rate_range (self, value: float) -> bool:
+
+		"""
+		Whether a continuous range of sample rates the driver reports holds
+		value, on its step where the range has one.
+
+		A driver with only discrete rates reports each as a range of no
+		width, and those are left to the listed rates.
+		"""
+
+		for rate_range in self._device.getSampleRateRange(self._soapy.SOAPY_SDR_RX, 0):
+
+			minimum, maximum, step = rate_range.minimum(), rate_range.maximum(), rate_range.step()
+
+			if maximum <= minimum or not minimum - 1.0 <= value <= maximum + 1.0:
+				continue
+
+			if step <= 0 or abs(value - (minimum + round((value - minimum) / step) * step)) <= 1.0:
+				return True
+
+		return False
 
 	@property
 	def center_freq (self) -> float | None:
@@ -420,10 +444,10 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 		during calibration — a strong signal shifts the peak drastically
 		but barely moves the median.
 
-		The target is to bring the noise floor RMS to ~0.01 (typical for
-		RTL-SDR), which leaves ample headroom for signals above the noise.
-
-		Returns 1.0 if samples are already in a sensible range.
+		The decision, and its thresholds, are substation.devices.base.iq_scale_from_rms's,
+		which the file device shares: the noise floor's RMS is brought to
+		about 0.01, typical of an RTL-SDR, which leaves ample headroom for
+		signals above the noise.
 		"""
 
 		is_cs16 = (stream_format == self._soapy.SOAPY_SDR_CS16)
@@ -457,47 +481,17 @@ class SoapySdrDevice (substation.devices.base.BaseDevice):
 				if len(rms_values) >= 10:
 					break
 
-		if not rms_values:
-			logger.warning("IQ calibration: no samples received, using scale factor 1.0")
-			return 1.0
-
-		median_rms = float(numpy.median(rms_values))
-
 		# Log the gain context so the normalisation is traceable.
 		# This is a logging convenience — failures are surfaced at DEBUG
 		# level so they're discoverable but don't break calibration.
-		try:
-			overall_gain = self._device.getGain(self._soapy.SOAPY_SDR_RX, 0)
-			logger.info(f"IQ calibration: device overall gain {overall_gain:.1f} dB, median RMS {median_rms:.6f}")
-		except Exception as exc:
-			logger.debug(f"IQ calibration: could not read overall gain ({exc}); median RMS {median_rms:.6f}")
+		if rms_values:
+			try:
+				overall_gain = self._device.getGain(self._soapy.SOAPY_SDR_RX, 0)
+				logger.info(f"IQ calibration: device overall gain {overall_gain:.1f} dB, median RMS {float(numpy.median(rms_values)):.6f}")
+			except Exception as exc:
+				logger.debug(f"IQ calibration: could not read overall gain ({exc})")
 
-		if median_rms < 1e-10:
-			logger.warning("IQ calibration: signal too weak to measure, using scale factor 1.0")
-			return 1.0
-
-		if median_rms > 0.001:
-			# Samples are large enough for the demodulator to work correctly.
-			# No normalisation needed — avoids overdriving the audio output.
-			# RTL-SDR typically produces RMS ~0.01-0.05; values above 0.001
-			# are well within float32 precision and demodulator range.
-			# Demoted to DEBUG because the preceding "IQ calibration ..."
-			# line already shows the median RMS, and no-op is the default
-			# case — only the non-trivial scale path below is load-bearing
-			# for interpreting downstream amplitudes (e.g. the ADC
-			# saturation check).
-			logger.debug(f"IQ sample scale: no normalisation needed (median RMS {median_rms:.6f})")
-			return 1.0
-
-		# Samples are very small (e.g., Airspy HF+ with attenuation).
-		# Scale so that the median noise floor RMS maps to ~0.01, which is
-		# typical for RTL-SDR and produces good demodulated audio levels.
-		# This branch stays at INFO because a non-trivial scale factor
-		# changes the meaning of every subsequent sample amplitude.
-		target_rms = 0.01
-		scale = target_rms / median_rms
-		logger.info(f"IQ sample scale: median RMS {median_rms:.6f}, applying {scale:.1f}x normalisation")
-		return scale
+		return substation.devices.base.iq_scale_from_rms(rms_values)
 
 	def _convert_cs16_to_complex64 (self, buf: numpy.ndarray, count: int) -> numpy.typing.NDArray[numpy.complex64]:
 

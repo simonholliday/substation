@@ -15,10 +15,20 @@ Also provides shared utilities used by multiple device wrappers.
 """
 
 import abc
+import logging
 import typing
 
 import numpy
 import numpy.typing
+
+logger = logging.getLogger(__name__)
+
+# A receiver's IQ samples are scaled up when the median RMS of its first
+# blocks is at or below MAX_UNSCALED_RMS, to bring it to TARGET_RMS, typical
+# of an RTL-SDR's noise floor; below MIN_MEASURABLE_RMS nothing can be measured.
+IQ_SCALE_TARGET_RMS = 0.01
+IQ_SCALE_MAX_UNSCALED_RMS = 0.001
+IQ_SCALE_MIN_MEASURABLE_RMS = 1e-10
 
 
 def rechunk_samples (
@@ -74,6 +84,48 @@ def rechunk_samples (
 		return combined[-leftover:]
 
 	return numpy.array([], dtype=numpy.complex64)
+
+
+def iq_scale_from_rms (rms_values: list[float]) -> float:
+
+	"""
+	Decide the factor a receiver's IQ samples are scaled by, from the RMS of
+	its first few blocks, and log the decision.
+
+	Some receivers deliver IQ samples far below the [-1, 1] range the
+	demodulators expect (an Airspy HF+ peaks around 0.001 to 0.005).  The
+	median RMS stands for the noise floor, unmoved by a strong signal in one
+	block.  When it is at or below IQ_SCALE_MAX_UNSCALED_RMS, the samples are
+	scaled to bring it to IQ_SCALE_TARGET_RMS.  Otherwise, or with nothing to
+	measure, the factor is 1.0.  The file and SoapySDR devices share it, so
+	the thresholds live in one place (#4832).
+
+	Args:
+		rms_values: The RMS of each block measured, in the order read.
+
+	Returns:
+		The factor to multiply every IQ sample by.
+	"""
+
+	if not rms_values:
+		logger.warning("IQ sample scale: no IQ samples to measure, using 1.0")
+		return 1.0
+
+	median_rms = float(numpy.median(rms_values))
+
+	if median_rms < IQ_SCALE_MIN_MEASURABLE_RMS:
+		logger.warning(f"IQ sample scale: signal too weak to measure (median RMS {median_rms:.3g}), using 1.0")
+		return 1.0
+
+	if median_rms > IQ_SCALE_MAX_UNSCALED_RMS:
+		logger.debug(f"IQ sample scale: no normalisation needed (median RMS {median_rms:.6f})")
+		return 1.0
+
+	# INFO, because a factor other than 1.0 changes what every later IQ
+	# sample's amplitude means, such as to the ADC saturation check
+	scale = IQ_SCALE_TARGET_RMS / median_rms
+	logger.info(f"IQ sample scale: median RMS {median_rms:.6f}, applying {scale:.1f}x normalisation")
+	return scale
 
 
 class BaseDevice (abc.ABC):

@@ -847,12 +847,17 @@ class BandConfig(pydantic.BaseModel):
 
 		indices: list[int] = []
 		for item in value:
-			idx = int(item)
 
-			if idx < 1:
+			# int() would truncate 1.9 to radio channel 1, accept true as 1,
+			# and raise a TypeError, which pydantic does not report as a
+			# validation error, for null or a list (#4824).  bool is an int.
+			if isinstance(item, bool) or not isinstance(item, int):
+				raise ValueError(f"exclude_channel_indices entries are whole radio channel numbers, counting from 1, and {item!r} is not one")
+
+			if item < 1:
 				raise ValueError("exclude_channel_indices entries are 1-based radio channel numbers and must be >= 1")
 
-			indices.append(idx)
+			indices.append(item)
 
 		return indices
 
@@ -1065,7 +1070,11 @@ def _load_raw_config (config_path: pathlib.Path) -> dict:
 	but doesn't validate the structure or types yet (that's done by Pydantic).
 	"""
 
-	with open(config_path, 'r') as f:
+	# Read as bytes, so PyYAML detects UTF-8 (or a byte order mark) itself
+	# rather than the file being decoded in the system's encoding, which
+	# fails on the shipped file's non-ASCII comments where that is not
+	# UTF-8 (#4829).
+	with open(config_path, 'rb') as f:
 		data = yaml.load(f, Loader=_YamlLoader)
 
 	if data is None:
